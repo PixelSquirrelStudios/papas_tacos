@@ -84,7 +84,7 @@
 .hero-photo { z-index: -20; object-position: 65% 40%; }
 .hero-shade { background: linear-gradient(90deg, rgb(12 18 14 / 94%) 0%, rgb(12 18 14 / 70%) 32%, rgb(12 18 14 / 12%) 68%, rgb(12 18 14 / 10%) 100%); }
 .hero-copy { animation: arrive 650ms ease-out both; }
-.festival-band { height: var(--festival-band-height); background: repeating-linear-gradient(135deg, transparent 0 9px, rgb(255 255 255 / 4%) 9px 10px), #087b55; }
+.festival-band { min-height: var(--festival-band-height); background: repeating-linear-gradient(135deg, transparent 0 9px, rgb(255 255 255 / 4%) 9px 10px), #087b55; }
 .auth-surface { background-image: radial-gradient(rgb(118 202 159 / 10%) 0.7px, transparent 0.7px); background-size: 16px 16px; }
 
 @layer components {

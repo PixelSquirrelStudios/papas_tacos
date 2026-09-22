@@ -38,7 +38,7 @@ export function MenuBrowser({ initial, featured = false }: { initial: Catalogue;
     {!featured && <div className="relative z-30 mb-8 grid grid-cols-[minmax(0,85fr)_minmax(0,15fr)] gap-3 border-y border-border py-5">
       <div className="relative min-w-0 basis-56 flex-1"><Search className="absolute left-3 top-3 size-5 text-muted-foreground" aria-hidden="true" /><Input type="search" aria-label="Search Menu" placeholder="Search the Menu" value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 pl-10" /></div>
       <Button className="h-11 min-w-0 px-0" aria-label="Reset Filters" title="Reset Filters" disabled={!hasFilters} onClick={resetFilters}><RotateCcw /><span className="hidden xl:inline">Reset Filters</span></Button>
-      <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3">
+      <div className="col-span-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
         <FilterSelect label="Menu Category" placeholder="All Categories" options={categories.map((entry) => ({ value: entry.id, label: entry.name }))} value={category} onChange={setCategory} />
         <FilterSelect label="Dietary Preference" placeholder="All Dietary Options" options={['vegetarian', 'vegan', 'gluten-free', 'dairy-free'].map((value) => ({ value, label: choiceLabel(value) }))} value={diet} onChange={setDiet} />
       </div>

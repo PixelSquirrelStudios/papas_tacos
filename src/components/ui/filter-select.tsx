@@ -7,7 +7,7 @@ type FilterOption = { value: string; label: string };
 
 export function FilterSelect({ label, placeholder, options, value, onChange }: { label: string; placeholder: string; options: FilterOption[]; value: string[]; onChange: (values: string[]) => void }) {
   const id = useId();
-  return <div className="min-w-0 basis-56 flex-1 text-sm">
+  return <div className="min-w-0 w-full text-sm sm:flex-1">
     <Select<FilterOption, true>
       instanceId={id}
       classNamePrefix="filter-select"
@@ -15,7 +15,7 @@ export function FilterSelect({ label, placeholder, options, value, onChange }: {
       aria-label={label}
       isMulti
       isClearable
-      closeMenuOnSelect={false}
+      closeMenuOnSelect
       options={options}
       value={options.filter((option) => value.includes(option.value))}
       onChange={(selected) => onChange(selected.map((option) => option.value))}
@@ -39,8 +39,8 @@ export function FilterSelect({ label, placeholder, options, value, onChange }: {
       }}
       styles={{
         control: (base) => ({ ...base, cursor: 'pointer' }),
-        valueContainer: (base) => ({ ...base, flexWrap: 'nowrap', overflowX: 'auto', overflowY: 'hidden', scrollbarWidth: 'none' }),
-        multiValue: (base) => ({ ...base, flexShrink: 0, maxWidth: 'calc(100% - 12px)' }),
+        valueContainer: (base) => ({ ...base, flexWrap: 'wrap', overflow: 'hidden' }),
+        multiValue: (base) => ({ ...base, maxWidth: '100%' }),
         multiValueRemove: (base) => ({ ...base, backgroundColor: 'rgba(0, 0, 0, 0.2)', ':hover': { backgroundColor: 'rgba(0, 0, 0, 0.3)' } }),
         input: (base) => ({ ...base, minWidth: 20 }),
         menu: (base) => ({ ...base, zIndex: 40 }),

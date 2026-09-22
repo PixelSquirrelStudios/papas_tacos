@@ -26,8 +26,8 @@ export default async function HomePage() {
       </div>
       <div className="absolute right-20 top-20 hidden rotate-12 text-center text-brand-yellow lg:block" aria-hidden="true"><Heart className="mx-auto mb-2 size-12" strokeWidth={1.3} /><p className="font-display text-2xl leading-tight">MADE WITH<br />LOVE</p></div>
     </section>
-    <div className="festival-band flex flex-wrap items-center justify-center gap-x-12 gap-y-4 border-y border-border px-5 py-4 text-xs font-bold uppercase sm:gap-x-32 lg:gap-x-48" aria-hidden="true">
-      {['Big flavour', 'Good company', 'Great Vibes'].map((label) => <span key={label} className="inline-flex items-center gap-2 whitespace-nowrap"><Skull className="size-5 shrink-0 text-brand-yellow" /><span>{label}</span></span>)}
+    <div className="festival-band grid grid-cols-3 items-center gap-x-12 gap-y-0 border-y border-border px-3 py-3 text-center text-xs font-bold uppercase sm:flex sm:flex-wrap sm:gap-x-32 sm:gap-y-4 sm:px-5 sm:py-4 lg:gap-x-48" aria-hidden="true">
+      {['Big flavour', 'Good company', 'Great Vibes'].map((label) => <span key={label} className="inline-flex min-w-0 items-center justify-center gap-1 text-[10px] leading-tight sm:gap-2 sm:text-xs"><Skull className="size-5 shrink-0 text-brand-yellow" /><span>{label}</span></span>)}
     </div>
     <section aria-labelledby="papas-choice-title" className="page-width pb-10 pt-16 sm:pt-20"><div className="mb-8 flex flex-wrap items-end justify-between gap-5"><div><p className="eyebrow text-primary">Handpicked by Papa</p><h2 id="papas-choice-title" className="section-title">Papa&apos;s Choice</h2></div><Button variant="outline" asChild className="h-11"><Link href="/menu">View Full Menu<ArrowUpRight className="size-4" /></Link></Button></div><MenuBrowser initial={catalogue} featured="papas-choice" /></section>
     <section aria-labelledby="crowd-favourites-title" className="page-width pb-16 pt-6 sm:pb-20"><p className="eyebrow text-primary">Loved by the crowd</p><h2 id="crowd-favourites-title" className="section-title mb-8">Crowd Favourites</h2><MenuBrowser initial={catalogue} featured="crowd-favourites" /></section>
