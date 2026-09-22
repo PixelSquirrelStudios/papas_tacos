@@ -1,0 +1,1 @@
+export { completeSignIn as GET } from '@/lib/auth/callback';
