@@ -81,6 +81,36 @@ For cache-friendly image updates, use a new filename and update the content row.
 display an honest image-unavailable placeholder. The homepage hero still uses development
 photography and must be replaced with approved client imagery before launch.
 
+## About and Event Enquiries
+
+Apply `supabase/sql/021_business_settings_about.sql` once after upgrade 020, followed by
+`supabase/sql/022_business_settings_about_full_story.sql`. Then use **Admin > Site Settings** to edit
+the About eyebrow, heading, short homepage content, rich full story, featured image and image description.
+The homepage uses the short content while `/about` uses the TinyMCE-authored full story. Upload About
+imagery through that form; it uses the existing public media bucket under `about/`.
+
+Apply `supabase/sql/024_business_settings_about_page_images.sql` after 023 to enable up to three optional
+story images used only by `/about`. Upload and describe each image separately in **Admin > Site Settings**;
+these do not replace or alter the homepage featured image.
+
+The homepage event enquiry form sends through Resend. Configure these server-only deployment values:
+
+```env
+RESEND_API_KEY=re_xxxxx
+RESEND_FROM_EMAIL=bookings@your-verified-domain.example
+BOOKING_ENQUIRY_TO=events@your-business.example
+```
+
+`RESEND_FROM_EMAIL` must belong to a domain verified in Resend. `BOOKING_ENQUIRY_TO` is optional when
+the Site Settings contact email is configured; the explicit variable takes precedence. `SITE_URL`
+must be the site's canonical HTTPS origin so cross-origin submissions are rejected. Never expose the
+Resend API key through a `NEXT_PUBLIC_` variable.
+
+The business receives a branded HTML and plain-text email with the customer's contact and event
+details. The customer's email is set as Reply-To. The form does not confirm a booking. Before launch,
+send one real enquiry from the deployed site and verify delivery, Reply-To, mobile email rendering,
+and the configured destination inbox. Automated tests mock Resend and send no live email.
+
 ## Bag behaviour
 
 - `/menu` supports category, dietary and text filters; required choices, optional extras, allergen details, quantity controls and sold-out states.
@@ -115,7 +145,7 @@ With the local dev server running:
 npm run test:browser
 ```
 
-Browser tests intercept only `/api/catalogue` to supply local test fixtures. They cover
+Browser tests intercept `/api/catalogue` and `/api/contact` to supply local test fixtures. They cover
 customisation, extra pricing, bag estimates, editing, reload persistence, navigation to login,
 unavailable extras, sold-out changes, filters and narrow layouts. They do not insert hosted content,
 create users, send email or place orders. Unit tests cover event status precedence and London time;

@@ -5,7 +5,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { descriptionHtml } from '@/lib/catalogue/rich-text';
 
 export function RichDescription({ content, className = '', ...props }: Omit<ComponentProps<'div'>, 'children' | 'dangerouslySetInnerHTML' | 'content'> & { content: string }) {
-  return <div {...props} className={`break-words [&_p+p]:mt-3 [&_p:empty]:min-h-4 [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li+li]:mt-1 [&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-brand-yellow [&_blockquote]:pl-3 [&_a]:text-brand-yellow [&_a]:underline [&_strong]:font-bold [&_b]:font-bold ${className}`} dangerouslySetInnerHTML={{ __html: descriptionHtml(content) }} />;
+  return <div {...props} className={`break-words [&_p+p]:mt-3 [&_p:empty]:min-h-4 [&_h2]:mb-3 [&_h2]:mt-8 [&_h2]:text-2xl [&_h2]:font-semibold [&_h3]:mb-2 [&_h3]:mt-6 [&_h3]:text-xl [&_h3]:font-semibold [&_h4]:mb-2 [&_h4]:mt-5 [&_h4]:text-lg [&_h4]:font-semibold [&_ul]:my-3 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:my-3 [&_ol]:list-decimal [&_ol]:pl-5 [&_li+li]:mt-1 [&_blockquote]:my-5 [&_blockquote]:border-l-2 [&_blockquote]:border-brand-yellow [&_blockquote]:pl-4 [&_blockquote]:italic [&_a]:text-brand-yellow [&_a]:underline [&_strong]:font-bold [&_b]:font-bold ${className}`} dangerouslySetInnerHTML={{ __html: descriptionHtml(content) }} />;
 }
 
 export function ExpandableDescription({ description, name, className, previewLines = 6, equalHeight = false }: { description: string; name: string; className?: string; previewLines?: number; equalHeight?: boolean }) {

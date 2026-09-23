@@ -2,11 +2,12 @@
 
 import { createContext, useContext, useEffect, useState } from 'react';
 import { lineKey, mergeLine, parseBag, type BagLine } from '@/lib/bag';
-import type { Catalogue, Settings } from '@/lib/catalogue/types';
+import type { Catalogue, Settings, TruckEvent } from '@/lib/catalogue/types';
+import { canOrder } from '@/lib/catalogue/format';
 
 const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
-  lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null;
+  lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null; orderingOpen: boolean;
   add: (line: BagLine, replacing?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
 };
 const BagContext = createContext<BagContextValue | null>(null);
@@ -15,14 +16,25 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const [lines, setLines] = useState<BagLine[]>([]);
   const [ready, setReady] = useState(false);
   const [storageError, setStorageError] = useState(false);
-  const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
+  const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
+  const [now, setNow] = useState(0);
+  const orderingOpen = data.catalogue.available && canOrder(data.events ?? [], data.settings, now);
+
+  useEffect(() => {
+    const current = Date.now();
+    const boundaries = (data.events ?? []).flatMap((event) => [event.orders_open_at || event.starts_at, event.orders_close_at || event.ends_at, event.ends_at]).map(Date.parse).filter((time) => time > current);
+    const timer = window.setTimeout(() => setNow(Date.now()), now === 0 ? 0 : Math.min(60000, ...boundaries.map((time) => time - current + 1)));
+    return () => window.clearTimeout(timer);
+  }, [data, now]);
 
   useEffect(() => {
     const controller = new AbortController();
     async function refresh() {
       try {
         const response = await fetch('/api/catalogue', { cache: 'no-store', signal: controller.signal });
-        if (response.ok) setData(await response.json());
+        if (!response.ok) throw new Error('Catalogue unavailable');
+        setData(await response.json());
+        setNow(Date.now());
       } catch { if (!controller.signal.aborted) setData({ catalogue: { items: [], categories: [], available: false }, settings: null }); }
     }
     async function hydrate() {
@@ -49,17 +61,22 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     catch { setStorageError(true); }
   }
   function add(line: BagLine, replacing?: string) {
+    if (!data.catalogue.available || !canOrder(data.events ?? [], data.settings)) return;
     save(mergeLine(replacing ? lines.filter((candidate) => lineKey(candidate) !== replacing) : lines, line));
   }
   function setQuantity(key: string, quantity: number) {
     if (quantity < 1 || quantity > 99 || !Number.isInteger(quantity)) return;
     save(lines.map((line) => lineKey(line) === key ? { ...line, quantity } : line));
   }
-  return <BagContext.Provider value={{ lines, ready, storageError, ...data, add, setQuantity, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, add, setQuantity, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
 }
 
 export function useBag() {
   const context = useContext(BagContext);
   if (!context) throw new Error('BagProvider is required.');
   return context;
+}
+
+export function useOrderingOpen() {
+  return useContext(BagContext)?.orderingOpen ?? false;
 }

@@ -76,6 +76,27 @@ In **Admin > Menu Items**, edit each dish and select **Papa's Choice**, **Crowd 
 The homepage shows up to three published items per row, Papa's Choice first, using the existing category/item ordering.
 Select at least three published dishes in each group to fill both rows. Testimonial Featured settings are unchanged.
 
+## About Content Upgrade
+
+For an existing database, run
+[021_business_settings_about.sql](sql/021_business_settings_about.sql) after 020. It adds the editable
+About eyebrow, heading, body, featured image path and image description to the existing singleton
+`business_settings` row. The migration is repeatable and does not overwrite later admin edits.
+
+Edit these values in **Admin > Site Settings**. About images are stored under `about/` in the existing
+public media bucket; no additional bucket or access policy is required. Include 021 after 020 for a new
+installation too.
+
+Then run [022_business_settings_about_full_story.sql](sql/022_business_settings_about_full_story.sql).
+It adds the separate rich-text story used only by `/about`; the shorter `about_content` remains on the
+homepage. Edit **About Full Story** with TinyMCE in **Admin > Site Settings**. Upgrade 022 is repeatable
+and preserves later edits. Include it after 021 for a new installation.
+
+Run [024_business_settings_about_page_images.sql](sql/024_business_settings_about_page_images.sql)
+after 023 to add up to three optional story images used only on `/about`. Each image has its own accessible
+description and is managed independently from the homepage featured image in **Admin > Site Settings**.
+Migration 024 is repeatable and preserves uploaded image selections.
+
 ## First admin account
 
 New users always get the `customer` role, even if signup metadata contains a role.

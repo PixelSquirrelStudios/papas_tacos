@@ -3,7 +3,8 @@ import test from 'node:test';
 import { resources, getResource, resourceSchema } from '../src/lib/admin/resources.ts';
 import { formDefaults, formPayload } from '../src/lib/admin/form-values.ts';
 import { orderFilterParams, orderOperations, parseOrderFilters } from '../src/lib/admin/orders.ts';
-import { testimonialSchema, eventSchema } from '../src/lib/catalogue/types.ts';
+import { testimonialSchema, eventSchema, settingsSchema } from '../src/lib/catalogue/types.ts';
+import { aboutDefaults } from '../src/lib/catalogue/about.ts';
 import { build } from 'esbuild';
 import path from 'node:path';
 
@@ -50,6 +51,22 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
     assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
   } finally { delete globalThis.__adminActionTest; }
+});
+
+test('About settings validate editable content and supply defaults for legacy settings', () => {
+  const values = formPayload(resources.settings, { ...formDefaults(resources.settings), business_name: "Papa's Tacos" });
+  assert.equal(resourceSchema(resources.settings).parse(values).about_content, aboutDefaults.about_content);
+  assert.equal(resourceSchema(resources.settings).parse(values).about_full_story, aboutDefaults.about_full_story);
+  for (const [key, value] of Object.entries(aboutDefaults)) assert.equal(settingsSchema.shape[key].parse(undefined), value);
+  for (const override of [{ about_heading: '' }, { about_eyebrow: 'x'.repeat(101) }, { about_content: 'x'.repeat(10001) }, { about_full_story: 'x'.repeat(20001) }, { about_image_path: 'javascript:alert(1)' }]) {
+    assert.equal(resourceSchema(resources.settings).safeParse({ ...values, ...override }).success, false);
+  }
+  assert.equal(resourceSchema(resources.settings).parse({ ...values, about_full_story: '<p onclick="alert(1)"><strong>Our story</strong></p><script>alert(1)</script>' }).about_full_story, '<p><strong>Our story</strong></p>');
+  assert.equal(resourceSchema(resources.settings).parse({ ...values, about_image_path: 'images/about/featured.jpg' }).about_image_path, 'images/about/featured.jpg');
+  const storyImages = resourceSchema(resources.settings).parse({ ...values, about_page_image_1_path: 'images/about/story-one.webp', about_page_image_2_path: 'images/about/story-two.jpg', about_page_image_3_path: 'images/about/story-three.avif' });
+  assert.equal(storyImages.about_page_image_1_path, 'images/about/story-one.webp');
+  assert.equal(storyImages.about_page_image_2_path, 'images/about/story-two.jpg');
+  assert.equal(storyImages.about_page_image_3_path, 'images/about/story-three.avif');
 });
 
 test('public content accepts admin images and event ordering while retaining legacy defaults', () => {

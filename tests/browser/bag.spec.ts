@@ -9,6 +9,7 @@ const guacamoleId = '00000000-0000-4000-8000-000000000031';
 
 function fixture() {
   return {
+    events: [{ pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
     catalogue: { available: true, categories: [{ id: categoryId, name: 'Tacos', slug: 'tacos', sort_order: 0 }], items: [{
       id: itemId, category_id: categoryId, name: 'Test Taco', slug: 'test-taco', description: 'A local test fixture, never published to Supabase.', price_pence: 850,
       image_path: null, imageUrl: '/images/tacos.jpg', image_alt: 'Test tacos', dietary_tags: ['vegetarian'], allergens: ['milk'], allergen_note: '', is_available: true, is_featured: true, is_crowd_favourite: false, sort_order: 0,
@@ -20,6 +21,40 @@ function fixture() {
     settings: { business_name: "Papa's Tacos", ordering_status: 'open', ordering_message: null, service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null },
   };
 }
+
+test('ordering controls fail closed and react to global and event changes', async ({ page }) => {
+  const data = fixture();
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  data.settings.ordering_status = 'closed';
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Add to Bag', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Orders Closed' })).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(page.getByRole('link', { name: /Your bag,/ })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await expect(page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Your Bag' })).toHaveCount(0);
+  await page.keyboard.press('Escape');
+  for (const change of [() => { data.settings.ordering_status = 'paused'; }, () => { data.settings.ordering_status = 'open'; data.events = []; }, () => { data.events = [{ ...fixture().events[0], ordering_status: 'closed' }]; }]) {
+    change();
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(page.getByRole('button', { name: /Add .* to Bag/ })).toHaveCount(0);
+    await expect(page.getByRole('article').getByRole('button', { name: 'Orders Closed' })).toBeDisabled();
+    const eventsLink = page.getByRole('article').getByRole('link', { name: 'Find Out Where Our Food Truck Will Be Next' });
+    await expect(eventsLink).toHaveAttribute('href', '/events');
+    await expect(eventsLink).toHaveCSS('border-top-width', '1px');
+    await expect(eventsLink).toHaveCSS('justify-content', 'center');
+    await expect(eventsLink).toHaveCSS('text-align', 'center');
+  }
+  data.events = fixture().events;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Add Test Taco to Bag' })).toBeVisible();
+  await expect(page.getByRole('link', { name: /Your bag,/ })).toBeVisible();
+  await page.route('**/api/catalogue', (route) => route.fulfill({ status: 503 }));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: /Add .* to Bag/ })).toHaveCount(0);
+});
 
 test('anonymous customisation, extras, fees, edit and reload persistence', async ({ page }, testInfo) => {
   const data = fixture();

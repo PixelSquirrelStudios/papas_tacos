@@ -1,0 +1,15 @@
+export const aboutDefaults = {
+  about_eyebrow: 'Our story',
+  about_heading: 'A little about Papa\u2019s',
+  about_page_heading: 'About Papa\u2019s Tacos',
+  about_content: 'Papa\u2019s Tacos is all about bold flavours, fresh ingredients and seriously good street food.\n\nInspired by the flavours of Mexico and Latin America, we serve our own take on tacos, loaded nachos, Chilean completos and more \u2014 all homemade, packed with flavour and served with a little Papa\u2019s personality.\n\nYou\u2019ll find us popping up at markets, festivals and venues across South Wales, and we\u2019re also available for weddings, parties, corporate events and private bookings.\n\nWant Papa\u2019s at your next event? We\u2019d love to hear from you.',
+  about_full_story: '<p><strong>Papa\u2019s Tacos is all about bold flavours, fresh ingredients and seriously good street food.</strong></p><p>Inspired by the flavours of Mexico and Latin America, we serve our own take on tacos, loaded nachos, Chilean completos and more \u2014 all homemade, packed with flavour and served with a little Papa\u2019s personality.</p><p>For us, great street food is about more than what is on the plate. It is the markets, festivals, venues and celebrations where people come together, share good food and leave happy.</p><blockquote>Mexican soul. Street food spirit. Made fresh.</blockquote><p>You\u2019ll find us popping up across South Wales, and we\u2019re also available for weddings, parties, corporate events and private bookings.</p><p>Want Papa\u2019s at your next event? <a href="/contact">We\u2019d love to hear from you.</a></p>',
+  about_image_path: null,
+  about_image_alt: 'Freshly prepared tacos with salsa and lime',
+  about_page_image_1_path: null,
+  about_page_image_1_alt: 'Papa\u2019s Tacos street food',
+  about_page_image_2_path: null,
+  about_page_image_2_alt: 'Papa\u2019s Tacos at an event',
+  about_page_image_3_path: null,
+  about_page_image_3_alt: 'Papa\u2019s Tacos food truck',
+};

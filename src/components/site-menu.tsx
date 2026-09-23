@@ -6,15 +6,18 @@ import { signOut } from '@/app/auth/actions';
 import { SignOutButton } from '@/components/auth/submit-button';
 import { Button } from '@/components/ui/button';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
+import { useOrderingOpen } from '@/components/bag/bag-provider';
 
 export function SiteMenu({ signedIn, admin }: { signedIn: boolean; admin: boolean }) {
+  const orderingOpen = useOrderingOpen();
   const links = [
     { href: '/', label: 'Home' },
     { href: '/menu', label: 'The Menu' },
     { href: '/events', label: 'Find the Truck' },
     { href: '/testimonials', label: 'Testimonials' },
-    { href: '/bag', label: 'Your Bag' },
-    { href: '/#our-spirit', label: 'Our Spirit' },
+    ...(orderingOpen ? [{ href: '/bag', label: 'Your Bag' }] : []),
+    { href: '/about', label: "About Papa's" },
+    { href: '/contact', label: 'Contact' },
     { href: signedIn ? '/account' : '/login', label: signedIn ? 'Your Account' : 'Sign In' },
     ...(!signedIn ? [{ href: '/login?mode=signup', label: 'Create an Account' }] : []),
     ...(admin ? [{ href: '/admin', label: 'Admin Dashboard' }] : []),
@@ -24,7 +27,7 @@ export function SiteMenu({ signedIn, admin }: { signedIn: boolean; admin: boolea
     <SheetContent className="w-[min(90vw,400px)] overflow-y-auto bg-background">
       <SheetHeader className="px-7 pt-12">
         <SheetTitle className="font-display text-4xl text-primary">HOLA, AMIGO.</SheetTitle>
-        <SheetDescription>Papa&apos;s Tacos</SheetDescription>
+        <SheetDescription>Welcome to Papa&apos;s Tacos</SheetDescription>
       </SheetHeader>
       <nav aria-label="Main navigation" className="px-7">
         {links.map((link) => <SheetClose key={link.href} asChild><Link href={link.href} className="flex min-h-16 items-center justify-between gap-4 border-b border-border py-4 text-lg hover:text-primary">{link.label}<ArrowUpRight className="size-5 shrink-0" aria-hidden="true" /></Link></SheetClose>)}

@@ -13,7 +13,7 @@ import { Button } from '@/components/ui/button';
 import '@uppy/core/css/style.min.css';
 import '@uppy/dashboard/css/style.min.css';
 
-export function ImageUpload({ folder, value, onChange, onBusy }: { folder: 'menu' | 'events' | 'testimonials'; value: string; onChange: (value: string) => void; onBusy: (busy: boolean) => void }) {
+export function ImageUpload({ folder, value, onChange, onBusy }: { folder: 'menu' | 'events' | 'testimonials' | 'about'; value: string; onChange: (value: string) => void; onBusy: (busy: boolean) => void }) {
   const [uppy] = useState(() => new Uppy({ autoProceed: false, restrictions: { maxNumberOfFiles: 1, maxFileSize: 5 * 1024 * 1024, allowedFileTypes: ['image/jpeg', 'image/png', 'image/webp', 'image/avif'] } }));
   const [error, setError] = useState('');
   const [replacing, setReplacing] = useState(false);

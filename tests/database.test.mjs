@@ -4,6 +4,7 @@ import test from 'node:test';
 import { PGlite } from '@electric-sql/pglite';
 import { categorySchema, itemSchema, groupSchema, optionSchema, associationSchema } from '../src/lib/catalogue/types.ts';
 import { parseBag, quoteLine } from '../src/lib/bag.ts';
+import { aboutDefaults } from '../src/lib/catalogue/about.ts';
 
 const adminId = '00000000-0000-4000-8000-000000000001';
 const customerId = '00000000-0000-4000-8000-000000000002';
@@ -11,6 +12,29 @@ const otherCustomerId = '00000000-0000-4000-8000-000000000003';
 const eventId = '00000000-0000-4000-8000-000000000010';
 const slotId = '00000000-0000-4000-8000-000000000020';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
+
+test('About migration supplies defaults, preserves edits and allows only admin updates', async () => {
+  const database = await createDatabase();
+  try {
+    const settings = (await database.query('select * from public.business_settings')).rows[0];
+    for (const [key, value] of Object.entries(aboutDefaults)) assert.equal(settings[key], value);
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query("update public.business_settings set about_heading = 'Not allowed' returning singleton")).rows.length, 0);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await database.query("update public.business_settings set about_heading = 'Our edited story', about_full_story = '<p>Our edited full story.</p>', about_image_path = 'images/menu/about.jpg', about_page_image_1_path = 'images/about/story-one.jpg', about_page_image_2_path = 'images/about/story-two.jpg', about_page_image_3_path = 'images/about/story-three.jpg'");
+    });
+    await database.exec(await readFile(new URL('021_business_settings_about.sql', sqlDirectory), 'utf8'));
+    await database.exec(await readFile(new URL('022_business_settings_about_full_story.sql', sqlDirectory), 'utf8'));
+    await database.exec(await readFile(new URL('024_business_settings_about_page_images.sql', sqlDirectory), 'utf8'));
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select about_heading from public.business_settings')).rows[0].about_heading, 'Our edited story');
+      assert.equal((await database.query('select about_full_story from public.business_settings')).rows[0].about_full_story, '<p>Our edited full story.</p>');
+      assert.deepEqual((await database.query('select about_page_image_1_path, about_page_image_2_path, about_page_image_3_path from public.business_settings')).rows[0], { about_page_image_1_path: 'images/about/story-one.jpg', about_page_image_2_path: 'images/about/story-two.jpg', about_page_image_3_path: 'images/about/story-three.jpg' });
+      await assert.rejects(database.query("update public.business_settings set about_heading = 'Not allowed'"), /permission denied/);
+    });
+  } finally { await database.close(); }
+});
 
 test('admin reorder and modifier assignment are atomic, scoped and role protected', async () => {
   const database = await createDatabase();

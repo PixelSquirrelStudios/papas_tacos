@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { aboutDefaults } from './about.ts';
 
 const id = z.guid();
 export const categorySchema = z.object({ id, name: z.string(), slug: z.string(), sort_order: z.number() });
@@ -13,6 +14,19 @@ export const groupSchema = z.object({ id, name: z.string(), min_selections: z.nu
 export const optionSchema = z.object({ id, modifier_group_id: id, name: z.string(), price_pence: z.number().int().nonnegative(), allergens: z.array(z.string()), is_available: z.boolean(), sort_order: z.number() });
 export const associationSchema = z.object({ menu_item_id: id, modifier_group_id: id, sort_order: z.number() });
 export const settingsSchema = z.object({
+  about_eyebrow: z.string().default(aboutDefaults.about_eyebrow),
+  about_heading: z.string().default(aboutDefaults.about_heading),
+  about_page_heading: z.string().default(aboutDefaults.about_page_heading),
+  about_content: z.string().default(aboutDefaults.about_content),
+  about_full_story: z.string().default(aboutDefaults.about_full_story),
+  about_image_path: z.string().nullable().default(null),
+  about_image_alt: z.string().default(aboutDefaults.about_image_alt),
+  about_page_image_1_path: z.string().nullable().default(null),
+  about_page_image_1_alt: z.string().default(aboutDefaults.about_page_image_1_alt),
+  about_page_image_2_path: z.string().nullable().default(null),
+  about_page_image_2_alt: z.string().default(aboutDefaults.about_page_image_2_alt),
+  about_page_image_3_path: z.string().nullable().default(null),
+  about_page_image_3_alt: z.string().default(aboutDefaults.about_page_image_3_alt),
   business_name: z.string(), ordering_status: z.enum(['open', 'paused', 'closed']), ordering_message: z.string().nullable(),
   service_fee_pence: z.number().int().nonnegative(), packaging_fee_pence: z.number().int().nonnegative(), minimum_order_pence: z.number().int().nonnegative(),
   contact_email: z.string().nullable(), contact_phone: z.string().nullable(), instagram_url: z.string().nullable(), facebook_url: z.string().nullable(),

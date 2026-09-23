@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { lineKey, mergeLine, parseBag, quoteLine } from '../src/lib/bag.ts';
-import { choiceLabel, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
+import { canOrder, choiceLabel, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
 
@@ -17,6 +17,8 @@ test('menu descriptions preserve paragraphs and formatting while stripping unsaf
   }
   assert.equal(descriptionHtml('<p onclick="alert(1)" style="color:red">Safe</p><a href="javascript:alert(1)">Link</a>'), '<p>Safe</p><a>Link</a>');
   assert.equal(descriptionHtml('<a href="https://example.com" title="Menu">Link</a>'), '<a href="https://example.com" title="Menu">Link</a>');
+  assert.equal(descriptionHtml('<h2>Our Story</h2><h3>Street Food</h3><blockquote>Made fresh.</blockquote>'), '<h2>Our Story</h2><h3>Street Food</h3><blockquote>Made fresh.</blockquote>');
+  assert.equal(descriptionText('<h2>Our Story</h2><p>Made fresh.</p>'), 'Our Story Made fresh.');
   assert.equal(descriptionHtml(descriptionHtml('Original\n\nParagraph')), descriptionHtml('Original\n\nParagraph'));
 });
 
@@ -41,6 +43,18 @@ const optionId = '00000000-0000-4000-8000-000000000002';
 const groupId = '00000000-0000-4000-8000-000000000003';
 const item = { id: itemId, price_pence: 850, is_available: true, groups: [{ id: groupId, name: 'Salsa', min_selections: 1, max_selections: 1, options: [{ id: optionId, modifier_group_id: groupId, price_pence: 150, is_available: true }] }] };
 const line = { itemId, optionIds: [optionId], quantity: 2 };
+
+test('ordering requires an open business and an active published event ordering window', () => {
+  const now = Date.parse('2026-09-23T12:00:00Z');
+  const event = { pickup_enabled: true, ordering_status: 'open', starts_at: '2026-09-23T11:00:00Z', ends_at: '2026-09-23T18:00:00Z', orders_open_at: null, orders_close_at: null };
+  assert.equal(canOrder([event], { ordering_status: 'open' }, now), true);
+  for (const settings of [null, { ordering_status: 'closed' }, { ordering_status: 'paused' }]) assert.equal(canOrder([event], settings, now), false);
+  assert.equal(canOrder([], { ordering_status: 'open' }, now), false);
+  for (const override of [{ pickup_enabled: false }, { ordering_status: 'closed' }, { ordering_status: 'paused' }, { starts_at: '2026-09-24T11:00:00Z' }, { ends_at: '2026-09-23T12:00:00Z' }, { orders_open_at: '2026-09-23T13:00:00Z' }, { orders_close_at: '2026-09-23T12:00:00Z' }, { starts_at: 'invalid' }]) {
+    assert.equal(canOrder([{ ...event, ...override }], { ordering_status: 'open' }, now), false);
+  }
+  assert.equal(canOrder([{ ...event, starts_at: '2026-09-24T11:00:00Z', ends_at: '2026-09-24T18:00:00Z', orders_open_at: '2026-09-23T10:00:00Z' }], { ordering_status: 'open' }, now), true);
+});
 
 test('dietary and allergen display labels are capitalized without changing stored values', () => {
   const values = ['gluten-free', 'dairy-free', 'cereals-containing-gluten', 'tree-nuts', 'milk', 'sulphur-dioxide-sulphites'];

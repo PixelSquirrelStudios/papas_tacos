@@ -41,6 +41,7 @@ test.beforeAll(async () => {
           rows[1].sort_order = 0;
         }
         const order = { id: ids[0], order_number: 1042, status: 'ready_for_pickup', payment_status: 'paid', payment_method: 'card', total_pence: 1850, created_at: '2026-09-21T12:00:00Z', pickup_starts_at: '2026-09-21T13:00:00Z', pickup_ends_at: '2026-09-21T13:15:00Z', pickup_location: { venue_name: 'Town Market' } };
+        const settingsRow = { business_name: "Papa's Tacos", ordering_status: 'closed', ordering_message: null, cash_enabled: true, card_enabled: false, service_fee_pence: 0, packaging_fee_pence: 0, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null, about_eyebrow: 'Our story', about_heading: 'A little about Papa’s', about_page_heading: 'About Papa’s Tacos', about_content: 'Original About copy.', about_full_story: '<p><strong>Original full story.</strong></p>', about_image_path: null, about_image_alt: 'Fresh tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Papa’s Tacos street food', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos at an event', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck', updated_at: '2026-09-22T12:00:00Z' };
         function DashboardFixture() {
           const [status, setStatus] = React.useState(kind === 'dashboard-paused' ? 'paused' : 'open');
           window.__updateOrdering = setStatus;
@@ -55,7 +56,7 @@ test.beforeAll(async () => {
         if (kind === 'account-page') AccountPage({searchParams: Promise.resolve({})}).then(element => root.render(element));
         else root.render(
           <><AdminRefresh />{kind.startsWith('dashboard') ? <DashboardFixture /> :
-          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={[{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={{}} /> :
+          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={{}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
           kind === 'order-filters' ? <OrdersFixture /> :
           ['menu', 'menu-rich', 'archived', 'grouped'].includes(kind) ? <MenuFixture /> :
@@ -558,10 +559,67 @@ test('menu editor preserves descriptions when its CDN is unavailable', async ({ 
   await page.route('https://cdn.jsdelivr.net/npm/tinymce@8.9.1/**', (route) => route.abort());
   await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('alert')).toContainText('Your description is preserved');
+  await expect(dialog.getByRole('alert')).toContainText('Your content is preserved');
   await expect(dialog.getByRole('textbox', { name: 'Description', exact: true })).toHaveValue('Fresh salsa, coriander and lime with your choice of filling.');
   await dialog.getByRole('button', { name: 'Save Changes' }).click();
   await expect(dialog).not.toBeVisible();
   const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
   expect(saved[3].description).toBe('Fresh salsa, coriander and lime with your choice of filling.');
+});
+
+test('site settings card summarizes operations and form saves all About content', async ({ page }, testInfo) => {
+  await fixture(page, 'edit-settings');
+  const settingsCard = page.getByRole('article');
+  for (const name of ['Ordering Overview', 'Payments and Charges', 'Contact and Social', 'About Content']) await expect(settingsCard.getByRole('region', { name })).toBeVisible();
+  const orderingOverview = settingsCard.getByRole('region', { name: 'Ordering Overview' });
+  await expect(orderingOverview).toContainText('Closed');
+  await expect(orderingOverview).toHaveCSS('border-left-color', 'rgb(241, 91, 80)');
+  const payments = settingsCard.getByRole('region', { name: 'Payments and Charges' });
+  await expect(payments).toContainText(/Cash\s*Enabled/);
+  await expect(payments).toContainText(/Card\s*Disabled/);
+  await expect(payments.getByRole('heading').locator('svg')).toHaveCSS('color', 'rgb(118, 202, 159)');
+  await expect(payments.getByText('£0.00').first()).toHaveCSS('color', 'rgb(118, 202, 159)');
+  await expect(settingsCard.getByRole('region', { name: 'Contact and Social' })).toContainText('0/2 contact methods and 0/2 social profiles configured');
+  const aboutContent = settingsCard.getByRole('region', { name: 'About Content' });
+  await expect(aboutContent).toContainText('0/3 Page Images');
+  await expect(aboutContent.getByRole('heading').locator('svg')).toHaveCSS('color', 'rgb(118, 202, 159)');
+  const cardEdit = settingsCard.getByRole('button', { name: 'Edit Site Settings', exact: true });
+  await expect(cardEdit).toHaveCSS('height', '48px');
+  await expect(cardEdit).toHaveCSS('background-color', 'rgb(240, 187, 125)');
+  expect((await cardEdit.boundingBox())!.width).toBeCloseTo((await settingsCard.boundingBox())!.width - 34, 0);
+  await settingsCard.screenshot({ path: testInfo.outputPath('site-settings-card.png') });
+  await cardEdit.click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByLabel('About Eyebrow').fill('Meet Papa');
+  await dialog.getByLabel('About Heading').fill('Our flavour, our story');
+  await dialog.getByLabel('About Page Heading').fill('The Full Papa’s Story');
+  await dialog.getByLabel('About Content').fill('Fresh ingredients and bold flavours.\n\nMade for South Wales events.');
+  for (const control of [/Blocks|Paragraph/i, /Strikethrough/i, /Blockquote/i, /Insert\/edit link/i, /Clear formatting|Remove format/i]) await expect(dialog.getByRole('button', { name: control })).toBeVisible();
+  const story = page.frameLocator('iframe.tox-edit-area__iframe').locator('body');
+  await expect(story).toHaveText('Original full story.');
+  await story.fill('A longer story for the About page.');
+  await dialog.getByRole('button', { name: /Blocks|Paragraph/i }).click();
+  await page.getByText('Heading 2', { exact: true }).click();
+  await expect(story.locator('h2')).toHaveText('A longer story for the About page.');
+  await dialog.getByLabel('About Image Description').fill('Papa serving freshly made tacos');
+  await expect(dialog.getByText('About Featured Image', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('About Page Story Image 1', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('About Page Story Image 2', { exact: true })).toBeVisible();
+  await expect(dialog.getByText('About Page Story Image 3', { exact: true })).toBeVisible();
+  await dialog.getByLabel('About Page Story Image 1 Description').fill('Tacos being prepared for an event');
+  await dialog.getByLabel('About Page Story Image 2 Description').fill('Papa’s Tacos serving at a festival');
+  await dialog.getByLabel('About Page Story Image 3 Description').fill('Papa’s Tacos food truck at a market');
+  const scrollRegion = dialog.locator('[data-admin-form-scroll]');
+  await scrollRegion.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  const lastFieldBounds = (await dialog.getByLabel('About Page Story Image 3 Description').boundingBox())!;
+  const actionBounds = (await dialog.locator('[data-admin-form-actions]').boundingBox())!;
+  const dialogBounds = (await dialog.boundingBox())!;
+  expect(lastFieldBounds.y + lastFieldBounds.height).toBeLessThanOrEqual(actionBounds.y);
+  expect(Math.abs(actionBounds.y + actionBounds.height - (dialogBounds.y + dialogBounds.height))).toBeLessThanOrEqual(2);
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, null, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[0]).toBe('settings');
+  expect(saved[1]).toBeNull();
+  expect(saved[3]).toMatchObject({ about_eyebrow: 'Meet Papa', about_heading: 'Our flavour, our story', about_page_heading: 'The Full Papa’s Story', about_content: 'Fresh ingredients and bold flavours.\n\nMade for South Wales events.', about_full_story: '<h2><strong>A longer story for the About page.</strong></h2>', about_image_path: null, about_image_alt: 'Papa serving freshly made tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Tacos being prepared for an event', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos serving at a festival', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck at a market' });
 });

@@ -36,6 +36,14 @@ export function pickupState(event: TruckEvent, settings: Settings | null, now = 
   return 'Pickup enabled for this event';
 }
 
+export function canOrder(events: TruckEvent[], settings: Settings | null, now = Date.now()) {
+  return settings?.ordering_status === 'open' && events.some((event) => {
+    const opens = Date.parse(event.orders_open_at || event.starts_at);
+    const closes = Math.min(Date.parse(event.ends_at), Date.parse(event.orders_close_at || event.ends_at));
+    return event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
+  });
+}
+
 export function httpsLink(value: string | null | undefined) {
   if (!value) return null;
   try { const url = new URL(value); return url.protocol === 'https:' && !url.username && !url.password ? url.href : null; }

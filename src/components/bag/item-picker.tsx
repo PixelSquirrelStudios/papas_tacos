@@ -11,13 +11,14 @@ import type { CatalogueItem } from '@/lib/catalogue/types';
 import { FoodBadges } from '@/components/catalogue/food-badges';
 import { Badge } from '@/components/ui/badge';
 import { ExpandableDescription } from '@/components/catalogue/rich-description';
+import { OrderingNotice } from '@/components/catalogue/ordering-notice';
 
 export function QuantityControl({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
   return <div className="inline-flex h-11 shrink-0 items-center rounded-md border border-border bg-muted/50"><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value <= 1} onClick={() => onChange(value - 1)} aria-label={`Decrease ${label}`}><Minus /></Button><output className="w-8 text-center text-sm font-semibold tabular-nums" aria-label={`${label} quantity`}>{value}</output><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value >= 99} onClick={() => onChange(value + 1)} aria-label={`Increase ${label}`}><Plus /></Button></div>;
 }
 
 function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: BagLine; onDone: () => void }) {
-  const { add, ready, lines } = useBag();
+  const { add, ready, lines, orderingOpen } = useBag();
   const [quantity, setQuantity] = useState(initial?.quantity || 1);
   const [optionIds, setOptionIds] = useState<string[]>(() => (initial?.optionIds || []).filter((id) => item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available))));
   const line = { itemId: item.id, quantity, optionIds };
@@ -51,7 +52,7 @@ function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: 
       {quote.issue && <p role="status" className="text-sm text-pink">{quote.issue}</p>}
       {bagFull && <p role="status" className="text-sm text-pink">Your bag has reached its item limit. Remove an item before adding another.</p>}
       <div className="flex flex-wrap items-center justify-between gap-3"><QuantityControl value={quantity} onChange={setQuantity} label={item.name} /><strong className="text-xl tabular-nums">{money(quote.total)}</strong></div>
-      <Button className="h-12 w-full" disabled={Boolean(quote.issue) || !ready || bagFull} onClick={() => { add(line, initial ? lineKey(initial) : undefined); onDone(); }}><ShoppingBag className="size-4" />{initial ? 'Update Bag' : 'Add to Bag'}</Button>
+      {orderingOpen ? <Button className="h-12 w-full" disabled={Boolean(quote.issue) || !ready || bagFull} onClick={() => { add(line, initial ? lineKey(initial) : undefined); onDone(); }}><ShoppingBag className="size-4" />{initial ? 'Update Bag' : 'Add to Bag'}</Button> : <OrderingNotice fullWidth />}
     </div>
   </div>;
 }

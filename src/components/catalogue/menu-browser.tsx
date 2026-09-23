@@ -17,9 +17,10 @@ import { Badge } from '@/components/ui/badge';
 import { FoodBadges } from './food-badges';
 import { ExpandableDescription, RichDescription } from './rich-description';
 import { descriptionText } from '@/lib/catalogue/rich-text';
+import { OrderingNotice } from './ordering-notice';
 
 export function MenuBrowser({ initial, featured = false }: { initial: Catalogue; featured?: boolean | 'papas-choice' | 'crowd-favourites' }) {
-  const { catalogue, ready, lines } = useBag();
+  const { catalogue, ready, lines, orderingOpen } = useBag();
   const source = catalogue.available ? catalogue : initial;
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
@@ -38,7 +39,7 @@ export function MenuBrowser({ initial, featured = false }: { initial: Catalogue;
     {!featured && <div className="relative z-30 mb-8 grid grid-cols-[minmax(0,85fr)_minmax(0,15fr)] gap-3 border-y border-border py-5">
       <div className="relative min-w-0 basis-56 flex-1"><Search className="absolute left-3 top-3 size-5 text-muted-foreground" aria-hidden="true" /><Input type="search" aria-label="Search Menu" placeholder="Search the Menu" value={search} onChange={(event) => setSearch(event.target.value)} className="h-11 pl-10" /></div>
       <Button className="h-11 min-w-0 px-0" aria-label="Reset Filters" title="Reset Filters" disabled={!hasFilters} onClick={resetFilters}><RotateCcw /><span className="hidden xl:inline">Reset Filters</span></Button>
-      <div className="col-span-2 grid min-w-0 grid-cols-1 gap-3 sm:grid-cols-2">
+      <div className="col-span-2 grid min-w-0 grid-cols-2 gap-3">
         <FilterSelect label="Menu Category" placeholder="All Categories" options={categories.map((entry) => ({ value: entry.id, label: entry.name }))} value={category} onChange={setCategory} />
         <FilterSelect label="Dietary Preference" placeholder="All Dietary Options" options={['vegetarian', 'vegan', 'gluten-free', 'dairy-free'].map((value) => ({ value, label: choiceLabel(value) }))} value={diet} onChange={setDiet} />
       </div>
@@ -63,7 +64,7 @@ export function MenuBrowser({ initial, featured = false }: { initial: Catalogue;
             {featured ? <ExpandableDescription description={item.description} name={item.name} className="mb-4 mt-2" previewLines={4} equalHeight /> : <RichDescription content={item.description} className="mb-4 mt-2 text-sm leading-relaxed text-muted-foreground" />}
             <div className="border-t border-border pt-4"><FoodBadges dietary={item.dietary_tags} allergens={item.allergens} /></div>
             {item.groups.length > 0 && <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><SlidersHorizontal className="size-3.5" aria-hidden="true" />Customisable</p>}
-            <div className="mt-auto pt-5"><div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><div><p className="text-xs text-muted-foreground">{item.groups.length ? 'From' : 'Price'}</p><p className="text-xl font-semibold tabular-nums">{money(item.price_pence)}</p></div><Button className="h-11 gap-2" aria-label={`Add ${item.name} to Bag`} disabled={!item.is_available || !ready} onClick={() => setSelected(item)}><Plus className="size-4" />Add to Bag</Button></div></div>
+            <div className="mt-auto pt-5"><div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><div><p className="text-xs text-muted-foreground">{item.groups.length ? 'From' : 'Price'}</p><p className="text-xl font-semibold tabular-nums">{money(item.price_pence)}</p></div>{orderingOpen && <Button className="h-11 gap-2" aria-label={`Add ${item.name} to Bag`} disabled={!item.is_available || !ready} onClick={() => setSelected(item)}><Plus className="size-4" />Add to Bag</Button>}{!orderingOpen && <OrderingNotice />}</div></div>
           </div>
       </article></Fragment>)}
     </div>}

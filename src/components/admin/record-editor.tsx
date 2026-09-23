@@ -45,24 +45,26 @@ export function RecordEditor({ resourceKey, row, references, onClose, onSaved }:
       onSaved();
     } catch { setError('Unable to save. Check your connection and try again.'); }
   }
-  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><DialogContent className="max-h-[90svh] overflow-y-auto sm:max-w-3xl" showCloseButton={!busy} onOpenAutoFocus={(event) => { event.preventDefault(); titleRef.current?.focus(); }} onPointerDownOutside={(event) => event.preventDefault()}>
-    <DialogHeader><DialogTitle ref={titleRef} tabIndex={-1}>{row ? 'Edit' : 'Add'} {resource.singular}</DialogTitle><DialogDescription>{row ? String(row[resource.label] ?? resource.title) : resource.title}</DialogDescription></DialogHeader>
-    <Form {...form}><form onSubmit={form.handleSubmit(submit)} className="space-y-6">
-      <fieldset disabled={busy} className="grid min-w-0 gap-5 sm:grid-cols-2">
+  return <Dialog open onOpenChange={(open) => { if (!open && !busy) onClose(); }}><DialogContent className="grid max-h-[90svh] grid-rows-[auto_minmax(0,1fr)] gap-0 overflow-hidden p-0 sm:max-w-3xl" showCloseButton={!busy} onOpenAutoFocus={(event) => { event.preventDefault(); titleRef.current?.focus(); }} onPointerDownOutside={(event) => event.preventDefault()}>
+    <DialogHeader className="px-6 pb-4 pt-6"><DialogTitle ref={titleRef} tabIndex={-1}>{row ? 'Edit' : 'Add'} {resource.singular}</DialogTitle><DialogDescription>{row ? String(row[resource.label] ?? resource.title) : resource.title}</DialogDescription></DialogHeader>
+    <Form {...form}><form onSubmit={form.handleSubmit(submit)} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
+      <div data-admin-form-scroll className="min-h-0 overflow-y-auto px-6 pb-6">
+        <fieldset disabled={busy} className="grid min-w-0 gap-5 sm:grid-cols-2">
         {resource.fields.map((definition) => <FormField key={definition.key} control={form.control} name={definition.key} render={({ field }) => <FormItem className={['textarea', 'richtext', 'image', 'tags'].includes(definition.type ?? '') ? 'min-w-0 sm:col-span-2' : 'min-w-0'}>
           <FormLabel>{definition.label}{definition.required ? ' *' : ''}</FormLabel>
           {definition.type === 'boolean' ? <FormControl><Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={busy} /></FormControl>
             : definition.type === 'tags' ? <div className="flex flex-wrap gap-x-5 gap-y-3">{definition.options?.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><Checkbox checked={(field.value as string[]).includes(option)} disabled={busy} onCheckedChange={(checked) => field.onChange(checked ? [...field.value as string[], option] : (field.value as string[]).filter((value) => value !== option))} />{choiceLabel(option)}</label>)}</div>
             : definition.type === 'image' ? <ImageUpload folder={definition.folder!} value={String(field.value ?? '')} onChange={field.onChange} onBusy={setUploading} />
             : definition.type === 'select' ? <Select value={String(field.value ?? '')} onValueChange={field.onChange} disabled={busy}><FormControl><SelectTrigger className="w-full"><SelectValue placeholder="Select..." /></SelectTrigger></FormControl><SelectContent>{definition.reference ? (references[definition.reference] ?? []).map((reference) => <SelectItem key={reference.id} value={reference.id!}>{String(reference.name ?? reference.title ?? reference.id)}</SelectItem>) : definition.options?.map((option) => <SelectItem key={option} value={option}>{choiceLabel(option)}</SelectItem>)}</SelectContent></Select>
-            : definition.type === 'richtext' ? <FormControl><RichTextEditor value={String(field.value ?? '')} onChange={field.onChange} onBlur={field.onBlur} disabled={busy} /></FormControl>
+            : definition.type === 'richtext' ? <FormControl><RichTextEditor value={String(field.value ?? '')} onChange={field.onChange} onBlur={field.onBlur} disabled={busy} label={definition.label} maxLength={definition.max} preset={definition.editor} /></FormControl>
             : definition.type === 'textarea' ? <FormControl><Textarea {...field} value={String(field.value ?? '')} rows={4} maxLength={definition.max} /></FormControl>
             : <FormControl><Input {...field} value={String(field.value ?? '')} type={definition.type === 'datetime' ? 'datetime-local' : definition.type === 'date' ? 'date' : ['number', 'money'].includes(definition.type ?? '') ? 'number' : 'text'} step={definition.type === 'money' ? '0.01' : definition.type === 'number' ? '1' : undefined} min={definition.min} max={definition.max} maxLength={definition.max} /></FormControl>}
           <FormMessage />
         </FormItem>} />)}
-      </fieldset>
-      {error && <p role="alert" className="text-sm text-destructive">{error}</p>}
-      <div className="sticky bottom-0 flex justify-end gap-3 border-t bg-background py-4"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <Save />}Save Changes</Button></div>
+        </fieldset>
+        {error && <p role="alert" className="mt-6 text-sm text-destructive">{error}</p>}
+      </div>
+      <div data-admin-form-actions className="flex shrink-0 justify-end gap-3 border-t bg-background px-6 py-4"><Button type="button" variant="outline" disabled={busy} onClick={onClose}>Cancel</Button><Button type="submit" disabled={busy}>{busy ? <LoaderCircle className="animate-spin" /> : <Save />}Save Changes</Button></div>
     </form></Form>
   </DialogContent></Dialog>;
 }
