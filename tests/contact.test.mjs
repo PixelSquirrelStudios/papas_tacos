@@ -50,6 +50,9 @@ test('booking rate limits expire and cap attempts', () => {
 
 test('contact endpoint validates requests and handles Resend success, retries and failures without sending live mail', async () => {
   const state = { calls: [], response: { data: { id: 'email-id' }, error: null }, throws: false };
+  const logs = [];
+  const originalError = console.error;
+  console.error = (...args) => logs.push(args);
   globalThis.__contactTest = state;
   const keys = ['SITE_URL', 'RESEND_API_KEY', 'RESEND_FROM_EMAIL', 'BOOKING_ENQUIRY_TO'];
   const previous = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
@@ -80,17 +83,26 @@ test('contact endpoint validates requests and handles Resend success, retries an
     delete process.env.BOOKING_ENQUIRY_TO;
     await POST(request());
     assert.deepEqual(state.calls.at(-1)[0].to, ['fallback@papas.example']);
-    state.response = { data: null, error: { message: 'Private provider detail' } };
+    state.response = { data: null, error: { name: 'validation_error', statusCode: 403, message: 'The private.example domain is not verified. Private provider detail' } };
     const failed = await POST(request());
     assert.equal(failed.status, 502);
     assert.ok(!(await failed.text()).includes('Private provider detail'));
+    assert.deepEqual(logs.at(-1), ['[contact] Resend send failed', { providerError: 'validation_error', providerStatus: 403, reason: 'sender_domain_not_verified' }]);
+    state.response = { data: null, error: { name: 'Private provider detail', statusCode: 'Private provider detail', message: 'Private provider detail' } };
+    assert.equal((await POST(request())).status, 502);
+    assert.deepEqual(logs.at(-1), ['[contact] Resend send failed', { providerError: 'unknown', providerStatus: null, reason: 'provider_rejected' }]);
     state.throws = true;
     assert.equal((await POST(request())).status, 502);
+    assert.deepEqual(logs.at(-1), ['[contact] Email operation threw', { stage: 'send' }]);
+    for (const privateValue of ['Private provider detail', 'private.example', enquiry.email, enquiry.message, process.env.RESEND_API_KEY]) {
+      assert.ok(!JSON.stringify(logs).includes(privateValue));
+    }
     delete process.env.RESEND_FROM_EMAIL;
     assert.equal((await POST(request())).status, 503);
     for (let attempt = 0; attempt < 5; attempt++) await POST(request(enquiry, { 'x-forwarded-for': '198.51.100.1' }));
     assert.equal((await POST(request(enquiry, { 'x-forwarded-for': '198.51.100.1' }))).status, 429);
   } finally {
+    console.error = originalError;
     for (const key of keys) { if (previous[key] === undefined) delete process.env[key]; else process.env[key] = previous[key]; }
     delete globalThis.__contactTest;
   }

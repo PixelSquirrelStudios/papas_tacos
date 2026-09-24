@@ -13,6 +13,14 @@ function reply(body: object, status = 200) {
   return Response.json(body, { status, headers: { 'Cache-Control': 'no-store' } });
 }
 
+const providerErrorSchema = z.enum([
+  'validation_error', 'missing_api_key', 'invalid_api_key', 'restricted_api_key',
+  'rate_limit_exceeded', 'application_error', 'internal_server_error',
+  'invalid_idempotent_request', 'concurrent_idempotent_requests',
+  'invalid_from_address', 'missing_required_field', 'not_found',
+  'monthly_quota_exceeded', 'daily_quota_exceeded',
+]);
+
 async function readBody(request: Request) {
   const reader = request.body?.getReader();
   if (!reader) throw new Error('Missing body');
@@ -46,10 +54,11 @@ export async function POST(request: Request) {
   const settings = await getSettings();
   const recipient = z.email().safeParse(process.env.BOOKING_ENQUIRY_TO || settings?.contact_email);
   if (!apiKey || !from.success || !recipient.success) return reply({ error: 'Enquiries are temporarily unavailable. Please contact us by email or phone.' }, 503);
+  let stage = 'prepare';
   try {
     const resend = new Resend(apiKey);
     const idempotencyKey = createHash('sha256').update(JSON.stringify(parsed.data)).digest('hex');
-    const { data, error } = await resend.emails.send({
+    const message = {
       from: `Papa's Tacos <${from.data}>`,
       to: [recipient.data],
       replyTo: parsed.data.email,
@@ -59,10 +68,24 @@ export async function POST(request: Request) {
         instagramUrl: httpsLink(settings?.instagram_url),
         facebookUrl: httpsLink(settings?.facebook_url),
       }),
-    }, { idempotencyKey: `booking-enquiry/${idempotencyKey}` });
-    if (error || !data?.id) return reply({ error: 'Your enquiry could not be sent. Please try again shortly.' }, 502);
+    };
+    stage = 'send';
+    const { data, error } = await resend.emails.send(message, { idempotencyKey: `booking-enquiry/${idempotencyKey}` });
+    if (error || !data?.id) {
+      const providerError = providerErrorSchema.safeParse(error?.name);
+      const providerStatus = z.number().int().min(100).max(599).safeParse(error?.statusCode);
+      console.error('[contact] Resend send failed', {
+        providerError: providerError.success ? providerError.data : 'unknown',
+        providerStatus: providerStatus.success ? providerStatus.data : null,
+        reason: /domain.*not verified/i.test(error?.message ?? '') ? 'sender_domain_not_verified' :
+          /only send testing emails/i.test(error?.message ?? '') ? 'testing_recipient_restriction' :
+            error ? 'provider_rejected' : 'missing_email_id',
+      });
+      return reply({ error: 'Your enquiry could not be sent. Please try again shortly.' }, 502);
+    }
     return reply({ ok: true });
   } catch {
+    console.error('[contact] Email operation threw', { stage });
     return reply({ error: 'Your enquiry could not be sent. Please try again shortly.' }, 502);
   }
 }
