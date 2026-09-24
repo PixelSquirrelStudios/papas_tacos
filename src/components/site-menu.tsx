@@ -18,8 +18,8 @@ export function SiteMenu({ signedIn, admin }: { signedIn: boolean; admin: boolea
     ...(orderingOpen ? [{ href: '/bag', label: 'Your Bag' }] : []),
     { href: '/about', label: "About Papa's" },
     { href: '/contact', label: 'Contact' },
-    { href: signedIn ? '/account' : '/login', label: signedIn ? 'Your Account' : 'Sign In' },
-    ...(!signedIn ? [{ href: '/login?mode=signup', label: 'Create an Account' }] : []),
+    { href: signedIn ? '/account' : '/sign-in', label: signedIn ? 'Your Account' : 'Sign In' },
+    ...(!signedIn ? [{ href: '/sign-in?mode=signup', label: 'Create an Account' }] : []),
     ...(admin ? [{ href: '/admin', label: 'Admin Dashboard' }] : []),
   ];
   return <Sheet>

@@ -10,9 +10,36 @@
 - `/admin`: protected administrator shell with the shadcn sidebar. Operational dashboard features are Stage 5.
 - Safe local return paths so later checkout can resume after login without requiring an account when adding items to the bag.
 
-No SQL changes are required for Stage 2. Apply Stage 1's scripts first if not already installed.
-The existing `.env.local` has not been edited. `SUPABASE_SECRET_KEY` and `RESEND_API_KEY`
-are not used by this stage and are never included in browser bundles.
+No SQL changes were required for the original Stage 2. Apply Stage 1's scripts first if not already installed.
+## Maintenance Access
+
+Apply numbered SQL upgrades through
+[028_remove_maintenance_allowlist.sql](../supabase/sql/028_remove_maintenance_allowlist.sql).
+Upgrade 028 removes the old email allowlist and rebuilds `admin_business_settings` under the
+same name used by the settings editor. The view checks the caller's admin role and respects
+the underlying table's row-level security. It is repeatable and preserves all other settings.
+Do not rerun upgrade 026 afterward, as it would recreate the obsolete allowlist.
+
+`/sign-in` is the single sign-in URL and remains available during maintenance. Only users with
+`profiles.role = 'admin'` can complete sign-in and browse the full site and dashboard while
+maintenance is enabled. Email and Google callbacks sign out non-admins locally and return to
+`/sign-in` with an administrator-only maintenance message. During maintenance, email-link requests
+first check the submitted address against the Auth-synced `profiles.email` and admin role using
+the server-only `SUPABASE_SECRET_KEY`. Non-admin and unknown addresses receive the restriction
+message without an email being sent, including signup requests. Missing configuration or failed
+lookups also prevent sending. This requires migration 027 and reveals maintenance eligibility
+for the submitted address; normal sign-in responses remain generic when maintenance is off.
+Never expose `SUPABASE_SECRET_KEY` in browser code or prefix it with `NEXT_PUBLIC_`.
+The callback still rechecks the role after the link verifies the account. Existing customer sessions are
+cleared when visiting `/sign-in`, allowing a different account to be used without a redirect loop.
+If session clearing fails, sign-in returns a retryable error instead of redirecting repeatedly.
+Other customer and signed-out page requests redirect to `/maintenance`, including `/admin`.
+Normal customer sign-in resumes when maintenance is disabled. No email allowlist is needed.
+Auth callbacks, API endpoints and static assets remain reachable; API authorization and database
+RLS still apply. A missing or failed profile lookup never grants admin access.
+
+Admin privileges must be provisioned explicitly in Supabase; Google sign-in and a matching email
+do not grant them. See [First admin account](../supabase/README.md#first-admin-account).
 
 ## Environment
 
@@ -135,7 +162,7 @@ Manually complete these live integration checks after configuring Supabase:
 2. Verify a used/expired link recovers to login, and test a cross-device link if using the token template.
 3. Sign in with Google, refresh `/account`, save profile details, and sign out.
 4. Confirm a customer cannot access `/admin`; promote only the owner and verify the admin sidebar.
-5. Test login started from `/login?next=/account` and a refreshed/expired session.
+5. Test login started from `/sign-in?next=/account` and a refreshed/expired session.
 6. Verify production HTTPS redirects, session cookies, SMTP delivery and rate limits in a staging environment.
 
 Live OAuth completion, real email delivery, and authenticated browser sessions have not been

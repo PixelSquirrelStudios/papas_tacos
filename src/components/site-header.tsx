@@ -16,8 +16,8 @@ export async function SiteHeader() {
         <nav className="flex items-center gap-1 min-[380px]:gap-2 lg:gap-3" aria-label="Account navigation">
           <Button asChild className="size-9 p-0 sm:size-11 lg:w-auto lg:px-4"><Link href="/menu" aria-label="The Menu" title="The Menu"><UtensilsCrossed aria-hidden="true" /><span className="hidden lg:inline">The Menu</span></Link></Button>
           {viewer ? <Button asChild className="size-9 p-0 sm:size-11 lg:w-auto lg:px-4"><Link href={viewer.profile?.role === 'admin' ? '/admin' : '/account'} aria-label={viewer.profile?.role === 'admin' ? 'Admin Dashboard' : 'Your Account'} title={viewer.profile?.role === 'admin' ? 'Admin Dashboard' : 'Your Account'}><UserRound className="size-4" aria-hidden="true" /><span className="hidden lg:inline">{viewer.profile?.role === 'admin' ? 'Dashboard' : 'Your Account'}</span></Link></Button> : <>
-            <Button asChild className="size-9 p-0 sm:size-11 lg:w-auto lg:px-4"><Link href="/login" aria-label="Sign In" title="Sign In"><LogIn aria-hidden="true" /><span className="hidden lg:inline">Sign In</span></Link></Button>
-            <Button asChild className="hidden h-11 md:inline-flex"><Link href="/login?mode=signup">Create an Account</Link></Button>
+            <Button asChild className="size-9 p-0 sm:size-11 lg:w-auto lg:px-4"><Link href="/sign-in" aria-label="Sign In" title="Sign In"><LogIn aria-hidden="true" /><span className="hidden lg:inline">Sign In</span></Link></Button>
+            <Button asChild className="hidden h-11 md:inline-flex"><Link href="/sign-in?mode=signup">Create an Account</Link></Button>
           </>}
           <BagButton /><SiteMenu signedIn={Boolean(viewer)} admin={viewer?.profile?.role === 'admin'} />
         </nav>

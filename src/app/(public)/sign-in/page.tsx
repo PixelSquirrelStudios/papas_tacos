@@ -9,6 +9,7 @@ import { LoginForm } from '@/components/auth/login-form';
 export const metadata: Metadata = { title: 'Sign In', robots: { index: false, follow: false } };
 
 const errors: Record<string, string> = {
+  maintenance: 'Sign-in is restricted to administrators while the site is undergoing maintenance.',
   invalid_link: 'That sign-in link has expired, was already used, or could not be verified. Please request a new one.',
   google_unavailable: 'Google sign-in is unavailable right now. Please try email or come back shortly.',
 };

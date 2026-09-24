@@ -17,12 +17,13 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath() {}' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMenuAvailability, saveRecord } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setMenuAvailability, saveRecord } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     state.allowed = false;
     await assert.rejects(unarchiveMenuItem(id, version), /Admin access required/);
     await assert.rejects(setOrderingStatus('open', version), /Admin access required/);
+    await assert.rejects(setMaintenanceMode(true, version), /Admin access required/);
     await assert.rejects(setMenuAvailability(id, version, true), /Admin access required/);
     assert.equal(state.calls.length, 0);
     state.allowed = true;
@@ -30,6 +31,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await unarchiveMenuItem(id, 'invalid')).ok, false);
     assert.equal((await setOrderingStatus('invalid', version)).ok, false);
     assert.equal((await setOrderingStatus('open', 'invalid')).ok, false);
+    assert.equal((await setMaintenanceMode('true', version)).ok, false);
+    assert.equal((await setMaintenanceMode(true, 'invalid')).ok, false);
     assert.equal((await setMenuAvailability('invalid', version, true)).ok, false);
     assert.equal((await setMenuAvailability(id, 'invalid', true)).ok, false);
     assert.equal((await setMenuAvailability(id, version, 'true')).ok, false);
@@ -39,6 +42,10 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await setOrderingStatus('closed', version)).ok, true);
     assert.deepEqual(state.calls[1], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { ordering_status: 'closed' }]);
     assert.equal((await setOrderingStatus('open', version)).ok, true);
+    for (const enabled of [true, false]) {
+      assert.equal((await setMaintenanceMode(enabled, version)).ok, true);
+      assert.deepEqual(state.calls.at(-1), ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { maintenance_enabled: enabled }]);
+    }
     const menuValues = { ...formDefaults(resources.menu), category_id: id, name: 'Taco', slug: 'taco', description: '<p onclick="alert(1)"><strong>Fresh</strong></p><script>alert(1)</script>' };
     assert.equal((await saveRecord('menu', id, version, formPayload(resources.menu, menuValues))).ok, true);
     assert.equal(state.calls.at(-1)[3].description, '<p><strong>Fresh</strong></p>');
@@ -50,11 +57,19 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.match((await setMenuAvailability(id, version, true)).error, /changed or was archived/);
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
     assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
+    assert.match((await setMaintenanceMode(true, version)).error, /Site settings changed/);
   } finally { delete globalThis.__adminActionTest; }
 });
 
 test('About settings validate editable content and supply defaults for legacy settings', () => {
   const values = formPayload(resources.settings, { ...formDefaults(resources.settings), business_name: "Papa's Tacos" });
+  assert.equal(values.maintenance_enabled, false);
+  assert.equal(Object.hasOwn(values, 'maintenance_allowed_emails'), false);
+  assert.equal(resourceSchema(resources.settings).safeParse({ ...values, maintenance_allowed_emails: 'invalid-email' }).success, false);
+  assert.equal(Object.hasOwn(settingsSchema.shape, 'maintenance_allowed_emails'), false);
+  assert.equal(resourceSchema(resources.settings).parse({ ...values, maintenance_enabled: true }).maintenance_enabled, true);
+  assert.equal(resourceSchema(resources.settings).safeParse({ ...values, maintenance_enabled: 'true' }).success, false);
+  assert.equal(settingsSchema.shape.maintenance_enabled.parse(undefined), false);
   assert.equal(resourceSchema(resources.settings).parse(values).about_content, aboutDefaults.about_content);
   assert.equal(resourceSchema(resources.settings).parse(values).about_full_story, aboutDefaults.about_full_story);
   for (const [key, value] of Object.entries(aboutDefaults)) assert.equal(settingsSchema.shape[key].parse(undefined), value);

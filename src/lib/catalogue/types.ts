@@ -14,6 +14,8 @@ export const groupSchema = z.object({ id, name: z.string(), min_selections: z.nu
 export const optionSchema = z.object({ id, modifier_group_id: id, name: z.string(), price_pence: z.number().int().nonnegative(), allergens: z.array(z.string()), is_available: z.boolean(), sort_order: z.number() });
 export const associationSchema = z.object({ menu_item_id: id, modifier_group_id: id, sort_order: z.number() });
 export const settingsSchema = z.object({
+  card_enabled: z.boolean().default(false),
+  maintenance_enabled: z.boolean().default(false),
   about_eyebrow: z.string().default(aboutDefaults.about_eyebrow),
   about_heading: z.string().default(aboutDefaults.about_heading),
   about_page_heading: z.string().default(aboutDefaults.about_page_heading),

@@ -101,6 +101,17 @@ export async function setOrderingStatus(status: string, updatedAt: string): Prom
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
 
+export async function setMaintenanceMode(enabled: boolean, updatedAt: string): Promise<AdminResult> {
+  await requireAdmin();
+  if (!z.boolean().safeParse(enabled).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid maintenance settings.' };
+  try {
+    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { maintenance_enabled: enabled });
+    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Site settings changed. The latest status will be loaded; try again.');
+    refresh();
+    return { ok: true };
+  } catch (error) { return { ok: false, error: adminError(error) }; }
+}
+
 export async function updateOrder(id: string, operation: string, reason = ''): Promise<AdminResult> {
   await requireAdmin();
   if (!identity.safeParse(id).success || !['preparing', 'ready_for_pickup', 'collected', 'cancelled', 'cash_paid'].includes(operation)) return { ok: false, error: 'Invalid order operation.' };

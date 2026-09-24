@@ -9,6 +9,7 @@ const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
   lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null; orderingOpen: boolean;
   add: (line: BagLine, replacing?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
+  clearIfMatches: (purchased: BagLine[]) => void;
 };
 const BagContext = createContext<BagContextValue | null>(null);
 
@@ -68,7 +69,26 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     if (quantity < 1 || quantity > 99 || !Number.isInteger(quantity)) return;
     save(lines.map((line) => lineKey(line) === key ? { ...line, quantity } : line));
   }
-  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, add, setQuantity, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  function clearIfMatches(purchased: BagLine[]) {
+    if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) save([]);
+  }
+  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+}
+
+export function PaidOrderBagCleanup({ orderId }: { orderId: string }) {
+  const bag = useContext(BagContext);
+  useEffect(() => {
+    if (!bag?.ready) return;
+    try {
+      const attempt = JSON.parse(sessionStorage.getItem('papas-tacos:checkout') || 'null');
+      if (attempt?.orderId !== orderId || typeof attempt.serialized !== 'string') return;
+      const input = JSON.parse(attempt.serialized);
+      const purchased = parseBag(JSON.stringify({ version: 1, lines: input.lines }));
+      sessionStorage.removeItem('papas-tacos:checkout');
+      if (purchased.length) bag.clearIfMatches(purchased);
+    } catch {}
+  }, [bag, orderId]);
+  return null;
 }
 
 export function useBag() {

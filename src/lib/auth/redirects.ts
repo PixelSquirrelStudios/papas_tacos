@@ -13,7 +13,7 @@ export function safeReturnPath(value?: unknown): string {
     if (destination.origin !== origin || /[\\\u0000-\u0020\u007f]/.test(decodedPath) || decodedPath.startsWith('//')) {
       return fallbackPath;
     }
-    if (/^\/(auth|login)(\/|$)/.test(decodedPath)) return fallbackPath;
+    if (/^\/(auth|login|sign-in)(\/|$)/.test(decodedPath)) return fallbackPath;
     return destination.pathname + destination.search + destination.hash;
   } catch {
     return fallbackPath;

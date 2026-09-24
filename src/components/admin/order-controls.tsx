@@ -2,9 +2,9 @@
 
 import { useEffect, useEffectEvent, useOptimistic, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
-import { Check, LoaderCircle, Power } from 'lucide-react';
+import { Check, LoaderCircle, Power, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
-import { setOrderingStatus, updateOrder } from '@/app/admin/actions';
+import { setMaintenanceMode, setOrderingStatus, updateOrder } from '@/app/admin/actions';
 import { orderOperations } from '@/lib/admin/orders';
 import type { AdminRow } from '@/lib/admin/resources';
 import { Button } from '@/components/ui/button';
@@ -36,7 +36,7 @@ export function OnlineOrderingControl({ status, updatedAt }: { status: string; u
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
   const open = current === 'open';
-  return <section aria-labelledby="online-ordering-title" className={`my-8 border-y border-l-4 px-5 py-5 sm:px-6 ${open ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
+  return <section aria-labelledby="online-ordering-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${open ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
     <div className="flex flex-wrap items-center justify-between gap-5">
       <div className="flex min-w-0 items-center gap-4"><Power className={`size-7 shrink-0 ${open ? 'text-turquoise' : 'text-brand-yellow'}`} aria-hidden="true" /><div><h2 id="online-ordering-title" className="text-sm font-medium text-muted-foreground">Online Ordering</h2><p role="status" className={`mt-1 text-2xl font-semibold ${open ? 'text-turquoise' : 'text-brand-yellow'}`}>{pending ? 'Updating...' : current === 'open' ? 'Open for Orders' : current === 'paused' ? 'Orders Paused' : 'Orders Closed'}</p></div></div>
       <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{open ? 'Open' : current === 'paused' ? 'Paused' : 'Closed'}</span><Switch aria-label="Online Ordering" aria-describedby={error ? 'ordering-error' : undefined} checked={open} disabled={pending || !updatedAt} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
@@ -55,6 +55,34 @@ export function OnlineOrderingControl({ status, updatedAt }: { status: string; u
     </div>
     {!updatedAt && <p role="alert" className="mt-3 text-sm text-muted-foreground">Ordering settings are unavailable.</p>}
     {error && <p id="ordering-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+  </section>;
+}
+
+export function MaintenanceControl({ enabled, updatedAt }: { enabled?: boolean; updatedAt?: string }) {
+  const router = useRouter();
+  const [current, setCurrent] = useOptimistic(enabled ?? false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState('');
+  const available = typeof enabled === 'boolean' && Boolean(updatedAt);
+  return <section aria-labelledby="maintenance-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${current ? 'border-pink/40 bg-pink/5' : 'border-border'}`}>
+    <div className="flex flex-wrap items-center justify-between gap-5">
+      <div className="flex min-w-0 items-center gap-4"><Wrench className="size-7 shrink-0 text-pink" aria-hidden="true" /><div><h2 id="maintenance-title" className="text-sm font-medium text-muted-foreground">Maintenance Mode</h2><p role="status" className="mt-1 text-2xl font-semibold">{pending ? 'Updating...' : current ? 'Maintenance Page Active' : 'Website Live'}</p></div></div>
+      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{current ? 'On' : 'Off'}</span><Switch aria-label="Maintenance Mode" aria-describedby={error ? 'maintenance-error' : undefined} checked={current} disabled={pending || !available} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-pink [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
+        if (!updatedAt) return;
+        setError('');
+        startTransition(async () => {
+          setCurrent(checked);
+          try {
+            const result = await setMaintenanceMode(checked, updatedAt);
+            if (!result.ok) setError(result.error ?? 'Unable to update maintenance mode.');
+            else toast.success(checked ? 'Maintenance mode enabled' : 'Website is live');
+          } catch { setError('Unable to update maintenance mode. Please try again.'); }
+          router.refresh();
+        });
+      }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
+    </div>
+    {!available && <p role="alert" className="mt-3 text-sm text-muted-foreground">Maintenance settings are unavailable. Apply the maintenance database migration and reload.</p>}
+    {error && <p id="maintenance-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
   </section>;
 }
 

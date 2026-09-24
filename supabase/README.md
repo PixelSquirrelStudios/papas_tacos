@@ -53,6 +53,15 @@ See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu it
 
 ## Admin Listing Upgrades
 
+For maintenance controls, also apply
+[025_business_settings_maintenance.sql](sql/025_business_settings_maintenance.sql) and
+[026_business_settings_maintenance_emails.sql](sql/026_business_settings_maintenance_emails.sql)
+after the preceding numbered upgrades, then 027 and
+[028_remove_maintenance_allowlist.sql](sql/028_remove_maintenance_allowlist.sql).
+Upgrade 028 removes the obsolete allowlist and rebuilds the admin-only settings view with
+caller permissions and RLS. Existing installations through 027 need only run 028.
+Do not rerun 026 after 028. See [maintenance access](../docs/AUTH_SETUP.md#maintenance-access).
+
 For an existing database, apply [018_admin_management.sql](sql/018_admin_management.sql),
 then [019_modifier_group_ordering.sql](sql/019_modifier_group_ordering.sql). Do not rerun
 the initial table scripts. Upgrade 019 adds modifier-group display ordering and extends
@@ -97,6 +106,45 @@ after 023 to add up to three optional story images used only on `/about`. Each i
 description and is managed independently from the homepage featured image in **Admin > Site Settings**.
 Migration 024 is repeatable and preserves uploaded image selections.
 
+## Maintenance Mode Upgrade
+
+Run [025_business_settings_maintenance.sql](sql/025_business_settings_maintenance.sql) after 024.
+It adds `business_settings.maintenance_enabled`, defaulting to false. It is repeatable and preserves
+the current setting. Existing admin-only update policies also protect this column.
+
+Use **Maintenance Mode** on the main dashboard for an immediate save, or edit the same toggle in
+**Admin > Site Settings** and select **Save Changes**. Both use version checks to prevent stale writes.
+Public pages temporarily redirect to `/maintenance`; disabling the toggle restores normal access and
+redirects visitors away from the holding page on their next request. `/sign-in`, auth callbacks,
+API endpoints (including contact enquiries), and static assets remain available. Signed-in admins
+can browse all pages. Customer sign-ins are rejected after verification, their local session is
+cleared, and `/sign-in` displays the maintenance restriction. Existing customer sessions are also
+cleared at `/sign-in` so users can switch accounts; other customer pages redirect to maintenance.
+The site is also held in maintenance if its maintenance-setting lookup fails; verified admins
+retain access to recover.
+
+The holding page uses the existing logo and your **Contact Email**, **Contact Phone**, **Instagram URL**,
+and **Facebook URL** settings. Empty contact channels are omitted. **Get in Touch** opens the existing
+booking enquiry form; its Resend configuration is still required (see [AUTH_SETUP.md](../docs/AUTH_SETUP.md)
+and [CATALOGUE_SETUP.md](../docs/CATALOGUE_SETUP.md)). No separate email integration is needed.
+Maintenance does not cancel orders or change the saved online-ordering status; refreshed menus stop
+offering new orders while it is enabled. Turn it off to restore the previous ordering configuration.
+
+## Profile Email Upgrade
+
+Run [027_profiles_email.sql](sql/027_profiles_email.sql) after 026, for both existing databases
+and new installations. Do not rerun the original profiles table script.
+
+This repeatable upgrade adds `profiles.email`, backfills it from the matching `auth.users.id`,
+and copies the Auth email automatically on signup and whenever `auth.users.email` changes.
+Names, phone numbers, and roles are preserved. The email comes from Auth, never signup metadata;
+pending email-change requests are not copied until Auth updates the actual email field.
+The column allows null for Auth users without an email address.
+
+Existing profile read policies remain in place: customers can read their own profile and admins
+can read all profiles. Neither can edit email directly through the browser API. Change emails
+through Supabase Auth; Auth remains the source of truth for login and maintenance access checks.
+
 ## First admin account
 
 New users always get the `customer` role, even if signup metadata contains a role.
@@ -131,8 +179,8 @@ Each event has `pickup_enabled` plus its own `ordering_status`.
 
 Pause and close both reject new checkout attempts. They express different customer-facing messages;
 neither automatically resumes, changes other events' settings, cancels orders, nor hides orders already placed.
-Existing card payment reservations are existing orders, not new checkout attempts. Their eventual
-completion/cancellation policy will be implemented with Stripe in the checkout stage.
+Existing card payment reservations are existing orders, not new checkout attempts. Their completion,
+expiration and cancellation are handled by the Stripe integration in migration 029.
 
 `orders_open_at` allows advance ordering to start at a specific time. `orders_close_at`
 is an optional cutoff; otherwise ordering ends at the event's `ends_at`.
@@ -165,8 +213,9 @@ Never put a service-role key, Stripe secret, or other private credential in a `N
 
 ## Orders and payments
 
-Cash orders begin `ordered` / `unpaid`. Card orders begin `pending_payment` / `unpaid`
-with a reservation expiry no more than 30 minutes away. Card payments are disabled by default.
+Cash orders begin `ordered` / `unpaid`. Card orders begin `pending_payment` / `unpaid`.
+Migration 029 reserves them for at most one hour, bounded by pickup preparation time, and aligns
+the Stripe session expiry with that deadline. Card payments are disabled by default.
 The normal admin flow is `ordered` -> `preparing` -> `ready_for_pickup` -> `collected`.
 An order must have recorded payment before it can be marked collected.
 Cancellation requires a reason and does not itself refund a payment.
@@ -178,21 +227,25 @@ details are snapshots, not live joins that change when the menu or event is edit
 Referenced menu items must be archived instead of deleted.
 Order numbers are display references and can have gaps; UUIDs and RLS control access.
 
-## Required in later implementation stages
+## Stripe Checkout Upgrade
 
-This is a database foundation, not a working checkout or a live payment integration.
-The following requirements remain explicit application/integration work:
+Apply [029_stripe_checkout.sql](sql/029_stripe_checkout.sql) after 028. It adds server-priced atomic
+reservations, immutable item/choice snapshots, stable checkout retries, session attachment,
+idempotent webhook transitions, refund recording and pending-checkout cancellation. All payment
+RPCs are service-role only. Customer receipts use owned-order authorization, not public payment access.
+See [Stripe setup](../docs/STRIPE_SETUP.md) for local test keys, webhook forwarding and verification.
 
-- Atomic checkout RPC: resolve current item/extra prices, validate option membership and selection limits, availability and quantities, calculate subtotal, then create order/items/modifiers in one transaction. The current schema trusts server-supplied line prices/subtotals; do not accept client totals.
-- Use the same `checkout_key` when retrying the same checkout. A unique constraint is protection, not the entire retry/recovery workflow.
-- Verify Stripe webhook signatures before database access; process the payment transition and unique webhook event record in the same transaction.
-- Lock/recheck order state when confirming payment. Never revive cancelled orders or expired reservations without capacity checks; reconcile/refund late payments safely.
-- Align Stripe session expiry with reservations. Run a scheduled expiry job and expire/reconcile Stripe sessions, rather than only hiding expired reservations.
-- Implement refunds, customer cancellation rules, receipts, notification delivery/retries, and any VAT breakdown after the business rules are agreed.
-- Stage 3 supplies the image bucket/policies in [storage/001_public_media.sql](storage/001_public_media.sql); apply it separately after the table scripts. The admin upload UI remains Stage 5.
-- Stage 2 implements server session validation and auth flows. Complete Google, redirect, template, and SMTP configuration using [the auth setup guide](../docs/AUTH_SETUP.md).
-- Add private order subscriptions or safe polling when building order tracking. Do not expose private customer records to public realtime channels.
-- Define retention/anonymisation before launch. Deleting an auth user removes their profile but intentionally does not erase order contact snapshots or financial records.
+Then apply [030_order_confirmation_emails.sql](sql/030_order_confirmation_emails.sql). It adds a
+service-only table holding immutable confirmation-email payloads and Resend delivery results.
+Verified paid card orders trigger branded pickup confirmations, with replay protection and
+Stripe-driven retries. See the email section in the Stripe guide for the 23-hour retry cutoff
+and reconciliation procedure. This migration does not send historical emails by itself.
+
+Reservations are conservatively retained until a signed expiration or explicit cancellation;
+timestamp expiry alone does not release checkout capacity. Webhook monitoring, background
+reconciliation, production rollout, order notification retries and VAT rules remain pre-launch work.
+Cash checkout is not yet exposed to customers. Define retention/anonymisation before launch;
+deleting an auth user intentionally does not erase financial snapshots.
 
 ## Verification boundaries
 

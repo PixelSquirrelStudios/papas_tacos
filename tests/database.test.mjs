@@ -13,6 +13,139 @@ const eventId = '00000000-0000-4000-8000-000000000010';
 const slotId = '00000000-0000-4000-8000-000000000020';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
 
+test('order confirmation delivery records are private, unique and preserve email snapshots', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const order = await insertOrder(database);
+    await asRole(database, 'service_role', null, async () => {
+      await database.query('insert into public.order_confirmation_emails(order_id, payload) values ($1, $2)', [order.id, { to: 'customer@example.test', subject: 'Order confirmed' }]);
+      await assert.rejects(database.query('insert into public.order_confirmation_emails(order_id, payload) values ($1, $2)', [order.id, {}]), /duplicate key/);
+      await assert.rejects(database.query("update public.order_confirmation_emails set payload = '{}' where order_id = $1", [order.id]), /permission denied/);
+      await database.query("update public.order_confirmation_emails set sent_at = now(), resend_email_id = 'email_123' where order_id = $1", [order.id]);
+    });
+    for (const [role, user] of [['anon', null], ['authenticated', customerId], ['authenticated', adminId]]) {
+      await asRole(database, role, user, async () => {
+        await assert.rejects(database.query('select * from public.order_confirmation_emails'), /permission denied/);
+        await assert.rejects(database.query('insert into public.order_confirmation_emails(order_id, payload) values ($1, $2)', [order.id, {}]), /permission denied/);
+      });
+    }
+    await database.exec(await readFile(new URL('030_order_confirmation_emails.sql', sqlDirectory), 'utf8'));
+    const delivery = (await database.query('select * from public.order_confirmation_emails')).rows[0];
+    assert.equal(delivery.resend_email_id, 'email_123');
+    assert.equal(delivery.payload.subject, 'Order confirmed');
+  } finally { await database.close(); }
+});
+
+test('Stripe checkout prices snapshots atomically and processes payment events once', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const category = (await database.query("insert into public.menu_categories(name, slug, is_published) values ('Tacos', 'tacos', true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id, name, slug, price_pence, is_published, is_available) values ($1, 'Test Taco', 'test-taco', 500, true, true) returning id", [category])).rows[0].id;
+    const group = (await database.query("insert into public.modifier_groups(name, min_selections, max_selections, is_published) values ('Filling', 1, 1, true) returning id")).rows[0].id;
+    const option = (await database.query("insert into public.modifier_options(modifier_group_id, name, price_pence, allergens) values ($1, 'Cheese', 100, array['milk']) returning id", [group])).rows[0].id;
+    await database.query('insert into public.menu_item_modifier_groups(menu_item_id, modifier_group_id) values ($1, $2)', [item, group]);
+    const payload = { slotId, name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '', expectedTotal: 1200, lines: [{ itemId: item, optionIds: [option], quantity: 2 }] };
+    const reserve = (body = payload, key = crypto.randomUUID()) => database.query('select * from public.reserve_card_order($1, $2, $3)', [customerId, key, body]);
+    for (const role of ['anon', 'authenticated']) await asRole(database, role, customerId, async () => {
+      await assert.rejects(reserve(), /permission denied/);
+      await assert.rejects(database.query("select public.process_stripe_checkout('fake', 'checkout.session.completed', $1, 'fake', 'fake', 1200, 'gbp')", [slotId]), /permission denied/);
+    });
+    await asRole(database, 'service_role', null, async () => {
+      await assert.rejects(reserve({ ...payload, expectedTotal: 1 }), /Prices have changed/);
+      await assert.rejects(reserve({ ...payload, lines: [{ itemId: item, optionIds: [], quantity: 2 }] }), /required choices/);
+      await assert.rejects(reserve({ ...payload, lines: [{ itemId: item, optionIds: [option, option], quantity: 2 }] }), /choice/);
+      assert.equal((await database.query('select * from public.orders')).rows.length, 0);
+      const key = crypto.randomUUID();
+      const order = (await reserve(payload, key)).rows[0];
+      assert.equal(order.total_pence, 1200);
+      assert.equal((await reserve(payload, key)).rows[0].id, order.id);
+      await assert.rejects(reserve({ ...payload, note: 'Changed' }, key), /request changed/);
+      assert.equal((await database.query('select * from public.order_items')).rows[0].line_total_pence, 1200);
+      assert.deepEqual((await database.query('select * from public.order_items')).rows[0].allergen_snapshot, ['milk']);
+      assert.equal((await database.query('select * from public.order_item_modifiers')).rows[0].option_name, 'Cheese');
+      await database.query('select public.attach_stripe_checkout($1, $2, $3)', [order.id, 'cs_test_order', new Date(Date.now() + 31 * 60000).toISOString()]);
+      await assert.rejects(database.query('select public.attach_stripe_checkout($1, $2, now())', [order.id, 'cs_test_other']), /does not match/);
+      const paid = ['evt_paid', 'checkout.session.completed', order.id, 'cs_test_order', 'pi_test_order', 1200, 'gbp'];
+      await assert.rejects(database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7)', [...paid.slice(0, 5), 10, 'gbp']), /does not match/);
+      for (let attempt = 0; attempt < 2; attempt++) await database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7)', paid);
+      assert.equal((await database.query('select * from public.stripe_webhook_events')).rows.length, 1);
+      assert.equal((await database.query('select * from public.orders where id = $1', [order.id])).rows[0].status, 'ordered');
+      await database.query("select public.process_stripe_checkout('evt_late_expiry','checkout.session.expired',$1,'cs_test_order',null,1200,'gbp')", [order.id]);
+      assert.equal((await database.query('select payment_status from public.orders where id = $1', [order.id])).rows[0].payment_status, 'paid');
+      const second = (await reserve()).rows[0];
+      await database.query("update public.orders set reservation_expires_at = now() - interval '1 minute' where id = $1", [second.id]);
+      await assert.rejects(reserve(), /slot is full/);
+      await database.query("select public.process_stripe_checkout('evt_expired','checkout.session.expired',$1,'cs_test_second',null,1200,'gbp')", [second.id]);
+      const third = (await reserve()).rows[0];
+      await assert.rejects(database.query('select public.cancel_card_checkout($1,$2)', [third.id, otherCustomerId]), /cannot be cancelled/);
+      await database.query('select public.cancel_card_checkout($1,$2)', [third.id, customerId]);
+      const latePayment = ['evt_cancelled_paid', 'checkout.session.completed', third.id, 'cs_test_third', 'pi_test_third', 1200, 'gbp'];
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const result = await database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7) as refund', latePayment);
+        assert.equal(result.rows[0].refund, true);
+      }
+      assert.equal((await database.query('select status from public.orders where id = $1', [third.id])).rows[0].status, 'cancelled');
+      await database.query("select public.process_stripe_refund('evt_refund','pi_test_order',1200)");
+      await database.query("select public.process_stripe_refund('evt_refund_old','pi_test_order',500)");
+      assert.equal((await database.query('select payment_status from public.orders where id = $1', [order.id])).rows[0].payment_status, 'refunded');
+    });
+    await database.exec(await readFile(new URL('029_stripe_checkout.sql', sqlDirectory), 'utf8'));
+  } finally { await database.close(); }
+});
+
+test('maintenance allowlist removal preserves settings and restricts the rebuilt view to admins', async () => {
+  const database = await createDatabase();
+  try {
+    assert.equal((await database.query("select column_name from information_schema.columns where table_schema = 'public' and table_name in ('business_settings', 'admin_business_settings') and column_name = 'maintenance_allowed_emails'")).rows.length, 0);
+    for (const [role, userId] of [['anon', null], ['authenticated', customerId]]) {
+      await asRole(database, role, userId, async () => {
+        assert.equal((await database.query('select maintenance_enabled from public.business_settings')).rows[0].maintenance_enabled, false);
+        assert.equal((await database.query('select * from public.business_settings')).rows.length, 1);
+      });
+    }
+    await asRole(database, 'anon', null, async () => {
+      await assert.rejects(database.query('select * from public.admin_business_settings'), /permission denied/);
+    });
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query('select * from public.admin_business_settings')).rows.length, 0);
+      assert.equal((await database.query('update public.admin_business_settings set maintenance_enabled = true returning *')).rows.length, 0);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      const row = (await database.query('update public.admin_business_settings set maintenance_enabled = true returning *')).rows[0];
+      assert.equal(row.maintenance_enabled, true);
+      assert.equal((await database.query('select * from public.admin_business_settings')).rows.length, 1);
+    });
+    const settings = (await database.query('select * from public.business_settings')).rows;
+    await database.exec(await readFile(new URL('028_remove_maintenance_allowlist.sql', sqlDirectory), 'utf8'));
+    assert.deepEqual((await database.query('select * from public.business_settings')).rows, settings);
+  } finally { await database.close(); }
+});
+
+test('maintenance migration defaults off, preserves state, and restricts writes to admins', async () => {
+  const database = await createDatabase();
+  try {
+    assert.equal((await database.query('select maintenance_enabled from public.business_settings')).rows[0].maintenance_enabled, false);
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query('update public.business_settings set maintenance_enabled = true returning singleton')).rows.length, 0);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await database.query('update public.business_settings set maintenance_enabled = true');
+    });
+    await database.exec(await readFile(new URL('025_business_settings_maintenance.sql', sqlDirectory), 'utf8'));
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select maintenance_enabled from public.business_settings')).rows[0].maintenance_enabled, true);
+      await assert.rejects(database.query('update public.business_settings set maintenance_enabled = false'), /permission denied/);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await database.query('update public.business_settings set maintenance_enabled = false');
+    });
+    assert.equal((await database.query('select maintenance_enabled from public.business_settings')).rows[0].maintenance_enabled, false);
+    await assert.rejects(database.query('update public.business_settings set maintenance_enabled = null'), /not-null/);
+  } finally { await database.close(); }
+});
+
 test('About migration supplies defaults, preserves edits and allows only admin updates', async () => {
   const database = await createDatabase();
   try {
@@ -191,7 +324,7 @@ test('public media permits reading but only admins can upload, update or delete'
   } finally { await database.close(); }
 });
 
-async function createDatabase() {
+async function createDatabase({ profileEmailUpgrade = true } = {}) {
   const database = new PGlite();
   await database.exec(`
     create role anon nologin;
@@ -200,6 +333,7 @@ async function createDatabase() {
     create schema auth;
     create table auth.users (
       id uuid primary key,
+      email text,
       raw_user_meta_data jsonb not null default '{}'::jsonb
     );
     create function auth.uid() returns uuid language sql stable as $$
@@ -212,13 +346,14 @@ async function createDatabase() {
   `);
   const files = (await readdir(sqlDirectory)).filter((file) => file.endsWith('.sql')).sort();
   for (const file of files) {
+    if (!profileEmailUpgrade && file === '027_profiles_email.sql') continue;
     await database.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }
   await database.query(`
-    insert into auth.users (id, raw_user_meta_data) values
-      ($1, '{"full_name":"Owner"}'),
-      ($2, '{"full_name":"Customer","role":"admin"}'),
-      ($3, '{}')
+    insert into auth.users (id, email, raw_user_meta_data) values
+      ($1, 'admin@example.test', '{"full_name":"Owner"}'),
+      ($2, 'customer@example.test', '{"full_name":"Customer","role":"admin","email":"forged@example.test"}'),
+      ($3, null, '{}')
   `, [adminId, customerId, otherCustomerId]);
   await database.query("update public.profiles set role = 'admin' where id = $1", [adminId]);
   return database;
@@ -273,7 +408,9 @@ test('SQL installs; profiles are automatic, private, and cannot self-promote', a
       assert.equal(rows.length, 1);
       assert.equal(rows[0].role, 'customer');
       assert.equal(rows[0].full_name, 'Customer');
+      assert.equal(rows[0].email, 'customer@example.test');
       await database.query("update public.profiles set full_name = 'Updated' where id = $1", [customerId]);
+      await assert.rejects(database.query("update public.profiles set email = 'forged@example.test' where id = $1", [customerId]), /permission denied/);
       await assert.rejects(database.query("update public.profiles set role = 'admin' where id = $1", [customerId]), /permission denied/);
       await assert.rejects(database.query('insert into public.profiles (id) values ($1)', [customerId]), /permission denied/);
     });
@@ -287,6 +424,46 @@ test('SQL installs; profiles are automatic, private, and cannot self-promote', a
   } finally {
     await database.close();
   }
+});
+
+test('profile emails follow Auth email changes without changing profile details or permissions', async () => {
+  const database = await createDatabase();
+  try {
+    assert.equal((await database.query('select email from public.profiles where id = $1', [otherCustomerId])).rows[0].email, null);
+    await database.query("update public.profiles set full_name = 'Edited Owner', phone = '07000000000' where id = $1", [adminId]);
+    await database.query("update auth.users set email = 'updated@example.test' where id = $1", [adminId]);
+    assert.deepEqual((await database.query('select email, full_name, phone, role from public.profiles where id = $1', [adminId])).rows[0], {
+      email: 'updated@example.test', full_name: 'Edited Owner', phone: '07000000000', role: 'admin',
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await assert.rejects(database.query("update public.profiles set email = 'forged@example.test' where id = $1", [adminId]), /permission denied/);
+    });
+    await database.query('update auth.users set email = null where id = $1', [adminId]);
+    assert.equal((await database.query('select email from public.profiles where id = $1', [adminId])).rows[0].email, null);
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query('select email from public.profiles where id = $1', [adminId])).rows.length, 0);
+    });
+  } finally { await database.close(); }
+});
+
+test('profile email upgrade backfills existing users and is repeatable', async () => {
+  const database = await createDatabase({ profileEmailUpgrade: false });
+  try {
+    await database.query("update public.profiles set full_name = 'Edited Owner', phone = '07000000000' where id = $1", [adminId]);
+    const migration = await readFile(new URL('027_profiles_email.sql', sqlDirectory), 'utf8');
+    await database.exec(migration);
+    assert.deepEqual((await database.query('select email, full_name, phone, role from public.profiles where id = $1', [adminId])).rows[0], {
+      email: 'admin@example.test', full_name: 'Edited Owner', phone: '07000000000', role: 'admin',
+    });
+    assert.equal((await database.query('select email from public.profiles where id = $1', [customerId])).rows[0].email, 'customer@example.test');
+    assert.equal((await database.query('select email from public.profiles where id = $1', [otherCustomerId])).rows[0].email, null);
+    await database.query("update auth.users set email = 'changed@example.test' where id = $1", [customerId]);
+    const profiles = (await database.query('select * from public.profiles order by id')).rows;
+    await database.exec(migration);
+    assert.deepEqual((await database.query('select * from public.profiles order by id')).rows, profiles);
+    await database.query("update auth.users set email = 'again@example.test' where id = $1", [customerId]);
+    assert.equal((await database.query('select email from public.profiles where id = $1', [customerId])).rows[0].email, 'again@example.test');
+  } finally { await database.close(); }
 });
 
 test('catalogue and event controls allow admin writes and hide unpublished content', async () => {

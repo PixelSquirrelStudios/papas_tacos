@@ -14,10 +14,13 @@ logout, and an admin-only sidebar shell.
 
 Stage 3 adds database-backed homepage sections, menu filtering/customisations, an anonymous
 persistent bag with fee estimates, testimonials, event listings/details and public image Storage policies.
-Checkout and operational admin CRUD are not built yet.
+Admin content management and Stripe test-mode pickup checkout are implemented. Customers can
+view/download paid-order receipts and receive branded pickup-confirmation emails through Resend.
+See [Stripe setup](docs/STRIPE_SETUP.md) and apply migrations 029-030 before enabling card checkout.
+Cash checkout, ready-for-pickup notifications and live payments remain future work.
 
 Read [the Supabase setup guide](supabase/README.md) before running SQL.
-Your existing `.env.local` is unchanged and excluded from version control.
+Your local environment file is excluded from version control. The Stripe listener updates only its webhook signing secret.
 Read [the Stage 2 auth setup guide](docs/AUTH_SETUP.md) for Supabase redirects, Google login,
 SMTP, email templates, and first-admin setup. No additional Stage 2 SQL is required.
 The app uses your Supabase publishable key; no hosted schema or provider settings were changed.

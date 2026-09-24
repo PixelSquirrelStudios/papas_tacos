@@ -1,5 +1,7 @@
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Check, Clock3, MapPin, ReceiptText, UtensilsCrossed } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Check, Clock3, Download, MapPin, ReceiptText, UtensilsCrossed, X } from 'lucide-react';
+import { cancelCheckout } from '@/app/(public)/checkout/actions';
+import { PaidOrderBagCleanup } from '@/components/bag/bag-provider';
 import { money } from '@/lib/bag';
 import { choiceLabel } from '@/lib/catalogue/format';
 import { orderDate, pickupWindow, pickupAddress, statusLabels, paymentLabels, type OrderSummary, type CustomerOrder } from '@/lib/account/orders';
@@ -32,6 +34,7 @@ const progressSteps = ['ordered', 'preparing', 'ready_for_pickup', 'collected'] 
 export function OrderDetails({ order }: { order: CustomerOrder }) {
   const currentStep = progressSteps.findIndex((status) => status === order.status);
   return <div>
+    {['paid', 'partially_refunded', 'refunded'].includes(order.payment_status) && <PaidOrderBagCleanup orderId={order.id} />}
     <Button asChild variant="ghost" className="mb-5"><Link href="/account?view=orders"><ArrowLeft aria-hidden="true" />All Orders</Link></Button>
     <div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="text-2xl font-semibold">Order #{order.order_number}</h2><p className="mt-2 text-sm text-muted-foreground">Placed {orderDate(order.created_at)}</p></div><OrderStatus order={order} /></div>
     {order.status === 'cancelled' ? <p role="status" className="mt-6 border-l-2 border-primary bg-primary/5 p-4 text-sm">{order.cancellation_reason || 'This order has been cancelled.'}</p>
@@ -45,6 +48,8 @@ export function OrderDetails({ order }: { order: CustomerOrder }) {
         </li>)}</ul>
         <dl className="mt-4 space-y-3 border-t pt-4 text-sm">{([['Subtotal', order.subtotal_pence], ['Service Fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence], ['Total', order.total_pence]] as const).map(([label, value]) => <div key={label} className={`flex justify-between gap-4 ${label === 'Total' ? 'border-t pt-3 text-base font-semibold' : ''}`}><dt>{label}</dt><dd className="tabular-nums">{money(value)}</dd></div>)}</dl>
         <p className="mt-4 text-sm text-muted-foreground">{order.payment_method === 'cash' ? 'Cash' : 'Card'} / {paymentLabels[order.payment_status]}{order.payment_method === 'cash' && order.payment_status === 'unpaid' && order.status !== 'cancelled' ? ' - pay at pickup' : ''}</p>
+        {['paid', 'partially_refunded', 'refunded'].includes(order.payment_status) && <div className="mt-5 flex flex-wrap gap-3"><Button asChild variant="outline"><a href={`/api/account/orders/${order.id}/receipt`} target="_blank" rel="noopener noreferrer"><ReceiptText />View Receipt</a></Button><Button asChild variant="outline"><a href={`/api/account/orders/${order.id}/receipt?download=1`}><Download />Download Receipt</a></Button></div>}
+        {order.status === 'pending_payment' && <form action={cancelCheckout} className="mt-5"><input type="hidden" name="orderId" value={order.id} /><Button type="submit" variant="outline"><X />Cancel Checkout</Button></form>}
         {order.customer_note && <div className="mt-8"><h3 className="mb-2 font-semibold">Your Note</h3><p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{order.customer_note}</p></div>}
       </section>
       <aside className="min-w-0 space-y-8">

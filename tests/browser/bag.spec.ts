@@ -103,7 +103,7 @@ test('anonymous customisation, extras, fees, edit and reload persistence', async
   await page.getByRole('checkbox', { name: /Guacamole/ }).uncheck();
   await page.getByRole('button', { name: 'Update Bag' }).click();
   await expect(page.getByRole('complementary')).toContainText('£17.75');
-  await page.goto('/login?next=/bag');
+  await page.goto('/sign-in?next=/bag');
   await expect(page.getByRole('link', { name: 'Your bag, 2 items' })).toBeVisible();
   await page.goto('/bag');
   await expect(page.getByRole('heading', { name: 'Test Taco' })).toBeVisible();

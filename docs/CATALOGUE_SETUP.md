@@ -118,15 +118,15 @@ and the configured destination inbox. Automated tests mock Resend and send no li
 - Only item IDs, option IDs and quantities persist in browser local storage. No email, phone, tokens, customer profile data or trusted prices are stored in the bag.
 - Matching customisations merge; different choices remain separate lines. Quantities are capped at 99 and the bag at 100 distinct lines.
 - Saved prices are recalculated from the current catalogue. Removed/sold-out items and extras are flagged; editing removes unavailable extras for the customer to review.
-- The catalogue refreshes on mount, window focus and every minute. If it cannot be fetched, the bag retains its saved IDs rather than discarding purchases. Prices remain estimates until Stage 4's server-authoritative checkout.
+- The catalogue refreshes on mount, window focus and every minute. If it cannot be fetched, the bag retains its saved IDs rather than discarding purchases. Prices remain estimates until the server-authoritative checkout transaction.
 - The bag survives refreshes and navigation to login. It belongs to this browser, not a synced account, and is retained on sign-out. Shared-device users can remove their bag items explicitly.
 - Local-storage-disabled browsers show a warning with a populated bag; items remain in memory for the current page session.
-- Checkout is visibly unavailable and no orders/payments are created in Stage 3, even when the database's ordering switches are open. Keep live ordering closed until Stage 4 is complete.
+- Stripe test-mode card checkout and Resend pickup confirmations are available after [payment setup](STRIPE_SETUP.md), migrations 029-030 and enabling Card Payments. Closed ordering, maintenance and invalid bags prevent checkout. Live payments are not enabled.
 
 Event availability labels account for the global open/paused/closed status, event pickup toggle,
 event status and ordering window. They do not reserve a slot or imply capacity remains. Times
 display in Europe/London, including daylight saving. The database remains the final authority
-when checkout is implemented.
+at checkout.
 
 ## Verification
 
@@ -154,6 +154,6 @@ email delivery and payment integration still need their respective integration c
 
 ## Next stage
 
-Stage 4 is pickup checkout and customer orders: authenticated onboarding at checkout,
-server-authoritative pricing and atomic order creation, slot capacity, Stripe/cash payment,
-webhook/expiry handling and notifications. Stage 5 adds admin content and operational management.
+Stripe test-mode pickup checkout, server-priced reservations, webhook processing, order tracking,
+PDF receipts and branded pickup-confirmation emails are implemented. See [payment setup](STRIPE_SETUP.md).
+Cash checkout, ready-for-pickup notifications and production payment rollout remain separate work.

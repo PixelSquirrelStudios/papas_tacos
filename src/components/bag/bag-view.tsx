@@ -12,7 +12,7 @@ import { ItemPicker, QuantityControl } from './item-picker';
 import { lineKey, money, quoteLine, type BagLine } from '@/lib/bag';
 
 export function BagView() {
-  const { lines, ready, storageError, catalogue, settings, remove, setQuantity } = useBag();
+  const { lines, ready, storageError, catalogue, settings, orderingOpen, remove, setQuantity } = useBag();
   const [editing, setEditing] = useState<BagLine | null>(null);
   const quotes = lines.map((line) => ({ line, quote: quoteLine(line, catalogue.items) }));
   const subtotal = quotes.reduce((total, { quote }) => total + quote.total, 0);
@@ -49,7 +49,7 @@ export function BagView() {
         <dl className="space-y-4 text-sm"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Items and Extras</dt><dd className="font-medium tabular-nums">{pricesAvailable ? money(subtotal) : '--'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Service Fee</dt><dd className="tabular-nums">{settings ? money(settings.service_fee_pence) : '--'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Packaging</dt><dd className="tabular-nums">{settings ? money(settings.packaging_fee_pence) : '--'}</dd></div><div className="flex flex-wrap justify-between gap-3 border-t border-border pt-5 text-lg font-semibold"><dt>Estimated Total</dt><dd className="text-2xl text-brand-yellow tabular-nums">{pricesAvailable && settings ? money(subtotal + fees) : '--'}</dd></div></dl>
         {minimumRemaining > 0 && <p className="mt-4 flex items-start gap-2 rounded-md border border-brand-yellow/25 bg-brand-yellow/5 p-3 text-sm text-brand-yellow"><Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Add {money(minimumRemaining)} more to reach the {money(settings!.minimum_order_pence)} minimum food order.</span></p>}
         {needsReview && <p role="status" className="mt-4 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm text-primary"><CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Review the highlighted items before ordering.</span></p>}
-        <Button disabled className="mt-6 h-12 w-full"><ShoppingBag />Checkout Unavailable</Button><p role="status" className="mt-3 flex items-start gap-2 rounded-md border border-turquoise/25 bg-turquoise/5 p-3 text-xs leading-relaxed text-muted-foreground"><Info className="mt-0.5 size-4 shrink-0 text-turquoise" aria-hidden="true" /><span>Online checkout is not open yet. No order has been placed.</span></p>
+        {orderingOpen && settings?.card_enabled && pricesAvailable && !needsReview && minimumRemaining === 0 ? <Button asChild className="mt-6 h-12 w-full"><Link href="/checkout"><ShoppingBag />Checkout<ArrowRight /></Link></Button> : <Button disabled className="mt-6 h-12 w-full"><ShoppingBag />Checkout Unavailable</Button>}
         <p className="mt-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-xs leading-relaxed text-muted-foreground"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" /><span>Food allergy? Speak to our team before ordering. Cross-contamination may occur.</span></p>
       </aside>
     </div>

@@ -14,7 +14,7 @@ export async function adminRequest(path: string, query: Record<string, string> =
   const client = await createServerSupabase();
   const { data: { session } } = await client.auth.getSession();
   if (!config || !session) throw new AdminDataError('AUTH', 'Sign in again to continue.');
-  const url = new URL(`/rest/v1/${path}`, config.url);
+  const url = new URL(`/rest/v1/${path === 'business_settings' ? 'admin_business_settings' : path}`, config.url);
   url.search = new URLSearchParams(query).toString();
   const response = await fetch(url, {
     method, cache: 'no-store', signal: AbortSignal.timeout(15000),

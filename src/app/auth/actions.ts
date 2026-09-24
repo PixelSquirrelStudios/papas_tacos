@@ -6,6 +6,7 @@ import { revalidatePath } from 'next/cache';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { appOrigin, safeReturnPath } from '@/lib/auth/redirects';
 import { loginSchema, type AuthFormState } from '@/lib/auth/validation';
+import { canRequestMagicLink } from '@/lib/auth/maintenance-sign-in';
 
 async function authOrigin() {
   const requestHeaders = await headers();
@@ -21,6 +22,9 @@ export async function requestMagicLink(_previous: AuthFormState, formData: FormD
   });
   if (!values.success) return { status: 'error', message: values.error.issues[0].message };
   try {
+    if (!await canRequestMagicLink(values.data.email)) {
+      return { status: 'error', message: 'Sign-in is restricted to administrators while the site is undergoing maintenance.' };
+    }
     const origin = await authOrigin();
     const returnTo = safeReturnPath(String(formData.get('next') || ''));
     const supabase = await createServerSupabase();
@@ -55,7 +59,7 @@ export async function signInWithGoogle(formData: FormData) {
   } catch {
     destination = undefined;
   }
-  redirect(destination || `/login?error=google_unavailable&next=${encodeURIComponent(returnTo)}`);
+  redirect(destination || `/sign-in?error=google_unavailable&next=${encodeURIComponent(returnTo)}`);
 }
 
 export async function signOut() {

@@ -49,9 +49,14 @@ export const getCatalogue = cache(async (): Promise<Catalogue> => {
 });
 
 export const getSettings = cache(async (): Promise<Settings | null> => {
-  const settings = await publicRows('business_settings', settingsSchema);
+  const settings = await publicRows('business_settings', settingsSchema, { select: Object.keys(settingsSchema.shape).join(',') });
   return settings?.[0] || null;
 });
+
+export async function getMaintenanceMode(): Promise<boolean | null> {
+  const settings = await publicRows('business_settings', settingsSchema.pick({ maintenance_enabled: true }), { select: 'maintenance_enabled' });
+  return settings?.[0]?.maintenance_enabled ?? null;
+}
 
 export const getEvents = cache(async (): Promise<{ events: TruckEvent[]; available: boolean }> => {
   const events = await publicRows('events', eventSchema, { is_published: 'eq.true', ends_at: `gt.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' });

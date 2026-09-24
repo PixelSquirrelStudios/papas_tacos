@@ -23,7 +23,7 @@ test('navigation drawer closes on a link and returns focus on Escape', async ({ 
   await expect(trigger).toBeFocused();
   await trigger.click();
   await page.getByRole('dialog').getByRole('link', { name: 'Create an Account' }).click();
-  await expect(page).toHaveURL(/\/login\?mode=signup$/);
+  await expect(page).toHaveURL(/\/sign-in\?mode=signup$/);
   await expect(page.getByRole('dialog')).not.toBeVisible();
   await expect(page.getByLabel('Your Name')).toBeVisible();
 });
@@ -53,8 +53,17 @@ test('hero and banner fill the viewport below the header and grow safely on shor
   }
 });
 
+test('maintenance rejection leaves the sign-in form available for another account', async ({ page }) => {
+  await page.goto('/sign-in?error=maintenance&next=%2Fadmin');
+  await expect(page.getByRole('alert')).toHaveText('Sign-in is restricted to administrators while the site is undergoing maintenance.');
+  await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
+  await expect(page.getByLabel('Email Address')).toBeEditable();
+  await expect(page.locator('input[name="next"]').first()).toHaveValue('/admin');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
 test('auth tabs preserve checkout return path and validate before sending', async ({ page }, testInfo) => {
-  await page.goto('/login?next=%2Fcheckout%3Fevent%3D123');
+  await page.goto('/sign-in?next=%2Fcheckout%3Fevent%3D123');
   await expect(page.getByRole('button', { name: 'Continue with Google' })).toBeVisible();
   await page.getByRole('tab', { name: 'Create an Account' }).click();
   await expect(page.getByRole('tabpanel', { name: 'Create an Account' })).toBeVisible();
@@ -71,7 +80,7 @@ test('auth tabs preserve checkout return path and validate before sending', asyn
 test('header actions fit and both auth tabs stay inside their holder', async ({ page }, testInfo) => {
   for (const width of [1440, 768, 640, 390, 320]) {
     await page.setViewportSize({ width, height: 900 });
-    await page.goto('/login');
+    await page.goto('/sign-in');
     for (const name of ['Create an Account', 'Sign In']) {
       await page.getByRole('tab', { name, exact: true }).click();
       await expect(page.getByRole('tabpanel', { name, exact: true })).toBeVisible();
@@ -104,7 +113,7 @@ test('header actions fit and both auth tabs stay inside their holder', async ({ 
 test('anonymous account and admin visits redirect to sign-in', async ({ page }) => {
   for (const path of ['/account', '/admin']) {
     await page.goto(path);
-    await expect(page).toHaveURL(new RegExp(`/login\\?next=${encodeURIComponent(path)}$`));
+    await expect(page).toHaveURL(new RegExp(`/sign-in\\?next=${encodeURIComponent(path)}$`));
     await expect(page.getByRole('heading', { name: 'HOLA, HUNGRY?' })).toBeVisible();
   }
 });
@@ -112,13 +121,13 @@ test('anonymous account and admin visits redirect to sign-in', async ({ page }) 
 test('failed callbacks recover locally, with no token or external return URL', async ({ page, request }) => {
   const response = await request.get('/auth/callback?error=access_denied&next=https%3A%2F%2Fexample.com', { maxRedirects: 0 });
   expect(response.status()).toBe(303);
-  expect(response.headers()['location']).toMatch(/\/login\?error=invalid_link&next=%2Faccount$/);
+  expect(response.headers()['location']).toMatch(/\/sign-in\?error=invalid_link&next=%2Faccount$/);
   expect(response.headers()['cache-control']).toContain('no-store');
   expect(response.headers()['referrer-policy']).toBe('no-referrer');
   await page.goto('/auth/confirm');
   await expect(page.getByRole('alert')).toContainText('expired');
-  await expect(page).toHaveURL(/\/login\?error=invalid_link&next=%2Faccount$/);
-  await page.goto('/login?next=/admin&next=/account');
+  await expect(page).toHaveURL(/\/sign-in\?error=invalid_link&next=%2Faccount$/);
+  await page.goto('/sign-in?next=/admin&next=/account');
   await expect(page.locator('input[name="next"]').first()).toHaveValue('/account');
 });
 
@@ -127,7 +136,7 @@ test('small mobile viewport keeps the hero and form usable', async ({ page }) =>
   await page.goto('/');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.getByRole('link', { name: 'Explore the Menu', exact: true })).toBeVisible();
-  await page.goto('/login?mode=signup');
+  await page.goto('/sign-in?mode=signup');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await expect(page.getByRole('button', { name: 'Email Me a Sign-In Link' })).toBeVisible();
 });

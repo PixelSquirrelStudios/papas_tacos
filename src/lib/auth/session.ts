@@ -19,7 +19,7 @@ export const getViewer = cache(async () => {
 
 export async function requireAccount(returnTo = '/account') {
   const viewer = await getViewer();
-  if (!viewer) redirect(`/login?next=${encodeURIComponent(safeReturnPath(returnTo))}`);
+  if (!viewer) redirect(`/sign-in?next=${encodeURIComponent(safeReturnPath(returnTo))}`);
   return viewer;
 }
 

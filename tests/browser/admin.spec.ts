@@ -85,6 +85,7 @@ test.beforeAll(async () => {
             sessionStorage.setItem('saved-order', JSON.stringify(ids)); return {ok:true};
           }
           export async function signOut() { window.__signedOut = true; }
+          export async function cancelCheckout() {}
           export async function removeRecord(...args) { window.__removed = args; return {ok:true}; }
           export async function unarchiveMenuItem(...args) { window.__unarchived = args; return {ok:true}; }
           export async function setMenuAvailability(id, version, available) {
@@ -95,6 +96,7 @@ test.beforeAll(async () => {
           }
           export async function saveRecord(...args) { window.__savedRecord = args; return {ok:true}; }
           export async function updateOrder() { return {ok:true}; }
+          export async function setMaintenanceMode() { return {ok:true}; }
           export async function setOrderingStatus(status, version) {
             window.__orderingRequest = {status, version};
             if (window.__holdOrdering) await new Promise(resolve => { window.__releaseOrdering = resolve; });
@@ -119,7 +121,7 @@ async function fixture(page: Page, kind: string) {
     const asset = new URL(route.request().url()).pathname.split('/tinymce@8.9.1/')[1];
     await route.fulfill({ contentType: asset.endsWith('.css') ? 'text/css' : 'application/javascript', body: await readFile(path.resolve('node_modules/tinymce', asset)) });
   });
-  await page.goto('/login');
+  await page.goto('/sign-in');
   const styles = await page.locator('link[rel="stylesheet"]').evaluateAll((links) => links.map((link) => (link as HTMLLinkElement).href));
   await page.route('**/storage/v1/object/public/images/menu/fixture.jpg', async (route) => {
     await route.fulfill({ contentType: 'image/jpeg', body: await readFile(path.resolve('public/images/tacos_hero.jpg')) });
@@ -590,6 +592,7 @@ test('site settings card summarizes operations and form saves all About content'
   await settingsCard.screenshot({ path: testInfo.outputPath('site-settings-card.png') });
   await cardEdit.click();
   const dialog = page.getByRole('dialog');
+  await expect(dialog.getByLabel('Allowed Maintenance Emails')).toHaveCount(0);
   await dialog.getByLabel('About Eyebrow').fill('Meet Papa');
   await dialog.getByLabel('About Heading').fill('Our flavour, our story');
   await dialog.getByLabel('About Page Heading').fill('The Full Papa’s Story');
@@ -621,5 +624,6 @@ test('site settings card summarizes operations and form saves all About content'
   const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, null, string, Record<string, unknown>] }).__savedRecord);
   expect(saved[0]).toBe('settings');
   expect(saved[1]).toBeNull();
+  expect(saved[3]).not.toHaveProperty('maintenance_allowed_emails');
   expect(saved[3]).toMatchObject({ about_eyebrow: 'Meet Papa', about_heading: 'Our flavour, our story', about_page_heading: 'The Full Papa’s Story', about_content: 'Fresh ingredients and bold flavours.\n\nMade for South Wales events.', about_full_story: '<h2><strong>A longer story for the About page.</strong></h2>', about_image_path: null, about_image_alt: 'Papa serving freshly made tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Tacos being prepared for an event', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos serving at a festival', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck at a market' });
 });

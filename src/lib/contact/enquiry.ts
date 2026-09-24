@@ -61,7 +61,7 @@ export type EnquiryEmailBrand = {
   facebookUrl: string | null;
 };
 
-function escapeHtml(value: string) {
+export function escapeHtml(value: string) {
   return value.replace(
     /[&<>"']/g,
     (character) =>

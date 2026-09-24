@@ -26,7 +26,7 @@ export function eventTime(value: string) {
 }
 
 export function pickupState(event: TruckEvent, settings: Settings | null, now = Date.now()) {
-  if (!settings || settings.ordering_status === 'closed') return 'Pickup orders closed';
+  if (!settings || settings.maintenance_enabled || settings.ordering_status === 'closed') return 'Pickup orders closed';
   if (settings.ordering_status === 'paused') return 'Pickup orders paused';
   if (!event.pickup_enabled) return 'No pickup orders at this event';
   if (event.ordering_status === 'closed') return 'Pickup orders closed';
@@ -37,7 +37,7 @@ export function pickupState(event: TruckEvent, settings: Settings | null, now = 
 }
 
 export function canOrder(events: TruckEvent[], settings: Settings | null, now = Date.now()) {
-  return settings?.ordering_status === 'open' && events.some((event) => {
+  return settings?.maintenance_enabled !== true && settings?.ordering_status === 'open' && events.some((event) => {
     const opens = Date.parse(event.orders_open_at || event.starts_at);
     const closes = Math.min(Date.parse(event.ends_at), Date.parse(event.orders_close_at || event.ends_at));
     return event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
