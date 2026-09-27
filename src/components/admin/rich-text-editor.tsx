@@ -8,7 +8,7 @@ import { Textarea } from '@/components/ui/textarea';
 export function RichTextEditor({ id, value, onChange, onBlur, disabled, label = 'Rich text', maxLength = 10000, preset = 'basic', ...props }: { id?: string; value: string; onChange: (value: string) => void; onBlur: () => void; disabled: boolean; label?: string; maxLength?: number; preset?: 'basic' | 'full'; 'aria-describedby'?: string; 'aria-invalid'?: boolean }) {
   const [failed, setFailed] = useState(false);
   const full = preset === 'full';
-  if (failed) return <div><p role="alert" className="mb-2 text-sm text-primary">The rich text editor could not load. Your content is preserved below as HTML.</p><Textarea {...props} id={id} value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} disabled={disabled} rows={8} maxLength={maxLength} /></div>;
+  if (failed) return <div><p role="alert" className="mb-2 text-sm text-primary">The rich text editor could not load. Your content is preserved below as HTML.</p><Textarea {...props} id={id} value={value} onChange={(event) => onChange(event.target.value)} onBlur={onBlur} disabled={disabled} rows={8} maxLength={maxLength} spellCheck /></div>;
   return <div className="min-w-0" aria-describedby={props['aria-describedby']} aria-invalid={props['aria-invalid']}><Editor
     id={id}
     licenseKey="gpl"
@@ -24,6 +24,7 @@ export function RichTextEditor({ id, value, onChange, onBlur, disabled, label = 
       promotion: false,
       resize: false,
       contextmenu: false,
+      browser_spellcheck: true,
       toolbar_mode: 'wrap',
       plugins: full ? 'lists link' : 'lists',
       toolbar: full ? 'undo redo | blocks | bold italic underline strikethrough | blockquote | bullist numlist | link | removeformat' : 'undo redo | bold italic underline | bullist numlist',

@@ -1,26 +1,58 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { resources, getResource, resourceSchema } from '../src/lib/admin/resources.ts';
-import { formDefaults, formPayload } from '../src/lib/admin/form-values.ts';
+import { formDefaults, formPayload, slugFromTitle } from '../src/lib/admin/form-values.ts';
 import { orderFilterParams, orderOperations, parseOrderFilters } from '../src/lib/admin/orders.ts';
-import { testimonialSchema, eventSchema, settingsSchema } from '../src/lib/catalogue/types.ts';
+import { testimonialSchema, eventSchema, settingsSchema, optionSchema } from '../src/lib/catalogue/types.ts';
 import { aboutDefaults } from '../src/lib/catalogue/about.ts';
 import { build } from 'esbuild';
 import path from 'node:path';
 
+test('admin schema errors identify option content separately from the menu save function', async () => {
+  const bundle = await build({ entryPoints: ['src/lib/admin/data.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'schema-error-boundaries', setup(builder) {
+    builder.onResolve({ filter: /^(server-only|@\/lib\/auth\/session|@\/lib\/supabase\/(server|config))$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+    builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export function requireAdmin() {} export function createServerSupabase() {} export function supabaseConfig() {}' }));
+  } }] });
+  const { adminError, AdminDataError } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+  for (const column of ['description', 'image_path', 'image_alt']) {
+    for (const [code, message] of [['42703', `column modifier_options.${column} does not exist`], ['PGRST204', `Could not find the '${column}' column of 'modifier_options' in the schema cache`]]) {
+      const result = adminError(new AdminDataError(code, message));
+      assert.match(result, /031_modifier_option_content.sql/);
+      assert.doesNotMatch(result, /Apply.*032_menu_item_modifier_save.sql/);
+    }
+  }
+  const missingFunction = adminError(new AdminDataError('PGRST202', 'Could not find the function public.admin_save_menu_item in the schema cache'));
+  assert.match(missingFunction, /032_menu_item_modifier_save.sql/);
+  assert.match(missingFunction, /schema cache/);
+  assert.match(adminError(new AdminDataError('PGRST204', "Could not find the 'child_group_ids' column of 'modifier_groups' in the schema cache")), /034_modifier_group_nesting.sql/);
+  const otherColumn = adminError(new AdminDataError('42703', 'column unrelated does not exist'));
+  assert.match(otherColumn, /42703/);
+  assert.doesNotMatch(otherColumn, /031_|032_/);
+});
+
 test('admin mutations protect unarchive and ordering settings with authorization and version checks', async () => {
-  const state = { allowed: true, rows: [{ id: '00000000-0000-4000-8000-000000000001' }], calls: [] };
+  const state = { allowed: true, rows: [{ id: '00000000-0000-4000-8000-000000000001' }], calls: [], revalidated: [] };
   globalThis.__adminActionTest = state;
   try {
     const bundle = await build({ entryPoints: ['src/app/admin/actions.ts'], bundle: true, write: false, platform: 'node', format: 'esm', banner: { js: `import { createRequire } from 'node:module'; const require = createRequire(${JSON.stringify(import.meta.url)});` }, plugins: [{ name: 'action-boundaries', setup(builder) {
+      builder.onResolve({ filter: /^@\/lib\/payments\/send-status-emails$/ }, (args) => ({ path: args.path, namespace: 'emails' }));
+      builder.onLoad({ filter: /.*/, namespace: 'emails' }, () => ({ contents: 'export async function sendOrderStatusEmails(id) { const state = globalThis.__adminActionTest; state.emailOrder = id; return {sent:1,failed:state.emailFail ? 1 : 0}; }' }));
       builder.onResolve({ filter: /^(next\/cache|@\/lib\/auth\/session|@\/lib\/admin\/data)$/ }, (args) => ({ path: args.path, namespace: 'test' }));
-      builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath() {}' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
+      builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setMenuAvailability, saveRecord } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setMenuAvailability, saveRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
+    assert.equal((await updateOrder(id, 'preparing')).ok, true);
+    assert.equal(state.emailOrder, id);
+    state.emailFail = true;
+    const notificationFailure = await updateOrder(id, 'ready_for_pickup');
+    assert.equal(notificationFailure.ok, true);
+    assert.match(notificationFailure.warning, /email is still queued/);
+    state.calls.length = 0;
     state.allowed = false;
+    await assert.rejects(updateOrder(id, 'collected'), /Admin access required/);
     await assert.rejects(unarchiveMenuItem(id, version), /Admin access required/);
     await assert.rejects(setOrderingStatus('open', version), /Admin access required/);
     await assert.rejects(setMaintenanceMode(true, version), /Admin access required/);
@@ -49,16 +81,59 @@ test('admin mutations protect unarchive and ordering settings with authorization
     const menuValues = { ...formDefaults(resources.menu), category_id: id, name: 'Taco', slug: 'taco', description: '<p onclick="alert(1)"><strong>Fresh</strong></p><script>alert(1)</script>' };
     assert.equal((await saveRecord('menu', id, version, formPayload(resources.menu, menuValues))).ok, true);
     assert.equal(state.calls.at(-1)[3].description, '<p><strong>Fresh</strong></p>');
+    const menuPayload = formPayload(resources.menu, menuValues);
+    assert.equal((await saveRecord('menu', null, null, menuPayload, [id])).ok, true);
+    assert.equal(state.calls.at(-1)[0], 'rpc/admin_save_menu_item');
+    assert.deepEqual(state.calls.at(-1)[3].group_ids, [id]);
+    assert.equal(state.calls.at(-1)[3].item_id, null);
+    assert.equal(state.calls.at(-1)[3].item_values.description, '<p><strong>Fresh</strong></p>');
+    assert.equal((await saveRecord('menu', id, version, menuPayload, [])).ok, true);
+    assert.deepEqual(state.calls.at(-1)[3].group_ids, []);
+    assert.equal(state.calls.at(-1)[3].expected_updated_at, version);
+    const beforeInvalidGroups = state.calls.length;
+    for (const groups of [[id, id], ['invalid'], Array(31).fill(id)]) assert.equal((await saveRecord('menu', id, version, menuPayload, groups)).ok, false);
+    state.allowed = false;
+    await assert.rejects(saveRecord('menu', null, null, menuPayload, [id]), /Admin access required/);
+    state.allowed = true;
+    assert.equal(state.calls.length, beforeInvalidGroups);
     for (const available of [false, true]) {
       assert.equal((await setMenuAvailability(id, version, available)).ok, true);
       assert.deepEqual(state.calls.at(-1), ['menu_items', { id: `eq.${id}`, updated_at: `eq.${version}`, archived_at: 'is.null' }, 'PATCH', { is_available: available }]);
+    }
+    const eventPayload = formPayload(resources.events, { ...formDefaults(resources.events), title: 'Market', venue_name: 'Square', address_line_1: 'High Street', town: 'Town', postcode: 'AB1 2CD', pickup_enabled: true, starts_at: '2026-09-28T12:00', ends_at: '2026-09-28T18:00' });
+    for (const pickupEnabled of [true, false]) {
+      const values = { ...eventPayload, pickup_enabled: pickupEnabled, description: '<p onclick="alert(1)"><strong>Market night</strong></p><script>alert(1)</script>' };
+      assert.equal((await saveRecord('events', null, null, values)).ok, true);
+      assert.equal(state.calls.at(-1)[3].description, '<p><strong>Market night</strong></p>');
+      assert.equal(state.calls.at(-1)[3].starts_at, eventPayload.starts_at);
+      assert.equal(state.calls.at(-1)[3].ends_at, eventPayload.ends_at);
+      assert.equal((await saveRecord('events', id, version, values)).ok, true);
+      assert.equal(state.calls.at(-1)[3].starts_at, eventPayload.starts_at);
+      assert.equal(state.calls.at(-1)[3].ends_at, eventPayload.ends_at);
+      assert.equal(resourceSchema(resources.events).safeParse({ ...values, starts_at: null }).success, false);
+      assert.equal(resourceSchema(resources.events).safeParse({ ...values, ends_at: null }).success, false);
+      assert.equal(resourceSchema(resources.events).safeParse({ ...values, ends_at: values.starts_at }).success, false);
     }
     state.rows = [];
     assert.match((await setMenuAvailability(id, version, true)).error, /changed or was archived/);
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
     assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
     assert.match((await setMaintenanceMode(true, version)).error, /Site settings changed/);
+    assert.ok(state.revalidated.some(([route]) => route === '/admin/menu'));
+    assert.ok(state.revalidated.some(([route]) => route === '/admin/settings'));
+    assert.ok(state.revalidated.every(([route, type]) => route.startsWith('/admin') && type !== 'layout'));
   } finally { delete globalThis.__adminActionTest; }
+});
+
+test('slugs default from names and titles without replacing custom URLs', () => {
+  assert.equal(slugFromTitle("Papa's Tacos & Café!"), 'papas-tacos-cafe');
+  assert.equal(slugFromTitle('  Two   Tacos -- Special  '), 'two-tacos-special');
+  for (const resource of [resources.menu, resources.categories, resources.events]) {
+    const values = { ...formDefaults(resource), [resource.label]: 'Summer Food Market' };
+    assert.equal(formPayload(resource, values).slug, 'summer-food-market');
+    assert.equal(formPayload(resource, { ...values, slug: 'custom-url' }).slug, 'custom-url');
+  }
+  assert.ok(slugFromTitle('long '.repeat(100)).length <= 160);
 });
 
 test('About settings validate editable content and supply defaults for legacy settings', () => {
@@ -99,8 +174,14 @@ test('admin resources whitelist fields and validate prices and choices', () => {
   assert.equal(getResource('__proto__'), undefined);
   assert.equal(getResource('orders'), undefined);
   const schema = resourceSchema(resources.options);
-  const input = { modifier_group_id: '00000000-0000-4000-8000-000000000001', name: 'Extra sauce', price_pence: 1.50, allergens: ['milk'], is_available: true };
+  const input = { ...formPayload(resources.options, formDefaults(resources.options)), modifier_group_id: '00000000-0000-4000-8000-000000000001', name: 'Extra sauce', price_pence: 1.50, allergens: ['milk'], is_available: true };
   assert.equal(schema.parse(input).price_pence, 150);
+  assert.equal(schema.parse({ ...input, description: '<p onclick="bad()"><strong>Cola</strong></p><script>bad()</script>', image_path: 'images/menu/cola.webp' }).description, '<p><strong>Cola</strong></p>');
+  for (const change of [{ description: 'x'.repeat(10001) }, { image_alt: 'x'.repeat(301) }, { image_path: 'javascript:bad()' }]) assert.equal(schema.safeParse({ ...input, ...change }).success, false);
+  const legacy = optionSchema.parse({ id: input.modifier_group_id, modifier_group_id: input.modifier_group_id, name: input.name, price_pence: 150, allergens: [], is_available: true, sort_order: 0 });
+  assert.equal(legacy.description, '');
+  assert.equal(legacy.image_path, null);
+  assert.equal(legacy.image_alt, '');
   for (const change of [{ price_pence: -1 }, { price_pence: 1.001 }, { role: 'admin' }, { allergens: ['unknown'] }, { is_available: 'true' }]) assert.equal(schema.safeParse({ ...input, ...change }).success, false);
   assert.equal(resourceSchema(resources.modifiers).safeParse({ name: 'Fillings', min_selections: 3, max_selections: 2, is_published: true }).success, false);
 });

@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { supabaseConfig } from '@/lib/supabase/config';
 import { publicImageUrl } from './format';
 import { sectionOrder } from './ordering';
+import { expandModifierGroups } from './modifiers';
 import { associationSchema, categorySchema, eventSchema, groupSchema, itemSchema, optionSchema, settingsSchema, testimonialSchema, type Catalogue, type Settings, type TruckEvent } from './types';
 
 async function publicRows<Schema extends z.ZodType>(table: string, schema: Schema, filters: Record<string, string> = {}): Promise<z.output<Schema>[] | null> {
@@ -39,13 +40,13 @@ export const getCatalogue = cache(async (): Promise<Catalogue> => {
     publicRows('menu_item_modifier_groups', associationSchema, { order: 'sort_order.asc,menu_item_id.asc,modifier_group_id.asc' }),
   ]);
   if (!categories || !items || !groups || !options || !associations) return { categories: [], items: [], available: false };
+  const modifierGroups = groups.map((group) => ({ ...group, options: options.filter((option) => option.modifier_group_id === group.id).map((option) => ({ ...option, imageUrl: publicImage(option.image_path) })) }));
+  try {
   return { categories, available: true, items: sectionOrder(items, categories, (item) => item.category_id).filter((item) => categories.some((category) => category.id === item.category_id)).map((item) => ({
     ...item, imageUrl: publicImage(item.image_path),
-    groups: associations.filter((association) => association.menu_item_id === item.id).flatMap((association) => {
-      const group = groups.find((candidate) => candidate.id === association.modifier_group_id);
-      return group ? [{ ...group, options: options.filter((option) => option.modifier_group_id === group.id) }] : [];
-    }),
+    groups: expandModifierGroups(associations.filter((association) => association.menu_item_id === item.id).map((association) => association.modifier_group_id), modifierGroups),
   })) };
+  } catch { return { categories: [], items: [], available: false }; }
 });
 
 export const getSettings = cache(async (): Promise<Settings | null> => {
@@ -70,7 +71,7 @@ export const getTestimonials = cache(async () => {
 
 export const getEvent = cache(async (slug: string): Promise<TruckEvent | null> => {
   if (!/^[a-z0-9]+(-[a-z0-9]+)*$/.test(slug)) return null;
-  const events = await publicRows('events', eventSchema, { is_published: 'eq.true', slug: `eq.${slug}` });
+  const events = await publicRows('events', eventSchema, { is_published: 'eq.true', slug: `eq.${slug}`, starts_at: 'not.is.null', ends_at: 'not.is.null' });
   if (events === null) throw new Error('Event information is unavailable.');
   return events[0] ? { ...events[0], imageUrl: publicImage(events[0].featured_image_path) } : null;
 });

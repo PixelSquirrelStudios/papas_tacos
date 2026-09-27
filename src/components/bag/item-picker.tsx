@@ -10,7 +10,7 @@ import { lineKey, money, quoteLine, type BagLine } from '@/lib/bag';
 import type { CatalogueItem } from '@/lib/catalogue/types';
 import { FoodBadges } from '@/components/catalogue/food-badges';
 import { Badge } from '@/components/ui/badge';
-import { ExpandableDescription } from '@/components/catalogue/rich-description';
+import { ExpandableDescription, RichDescription } from '@/components/catalogue/rich-description';
 import { OrderingNotice } from '@/components/catalogue/ordering-notice';
 
 export function QuantityControl({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
@@ -21,28 +21,36 @@ function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: 
   const { add, ready, lines, orderingOpen } = useBag();
   const [quantity, setQuantity] = useState(initial?.quantity || 1);
   const [optionIds, setOptionIds] = useState<string[]>(() => (initial?.optionIds || []).filter((id) => item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available))));
+  const availableOptionIds = optionIds.filter((id) => item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available)));
+  if (availableOptionIds.length !== optionIds.length) setOptionIds(availableOptionIds);
   const line = { itemId: item.id, quantity, optionIds };
   const quote = quoteLine(line, [item]);
+  const previewOptions = item.groups.filter((group) => group.max_selections === 1).flatMap((group) => group.options);
+  const preview = [...optionIds].reverse().map((id) => previewOptions.find((option) => option.id === id)).find((option) => option?.imageUrl || option?.description);
+  const imageUrl = preview?.imageUrl || item.imageUrl;
+  const imageAlt = preview?.imageUrl ? preview.image_alt || preview.name : item.image_alt || item.name;
   const bagFull = !initial && lines.length >= 100 && !lines.some((existing) => lineKey(existing) === lineKey(line));
   const allergens = [...new Set([...item.allergens, ...quote.options.flatMap((option) => option.allergens)])];
   const allergenNotice = item.allergen_note?.trim() || (allergens.length ? 'Cross-contamination may occur. Speak to our team about any food allergy before ordering.' : 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.');
   return <div className="flex min-h-0 flex-1 flex-col">
     <div className="flex-1 space-y-7 overflow-y-auto px-6 pb-6">
-      <ExpandableDescription description={item.description || 'Make it your own.'} name={item.name} />
-      {item.imageUrl && <div className="relative aspect-[16/9] overflow-hidden rounded-lg"><Image src={item.imageUrl} alt={item.image_alt || item.name} fill unoptimized sizes="(max-width: 640px) 100vw, 464px" className="object-cover" /></div>}
+      <div aria-live="polite"><ExpandableDescription key={preview?.id || item.id} description={preview?.description || item.description || 'Make it your own.'} name={preview?.name || item.name} /></div>
+      {imageUrl && <div className="relative aspect-[16/9] overflow-hidden rounded-lg"><Image src={imageUrl} alt={imageAlt} fill unoptimized sizes="(max-width: 640px) 100vw, 464px" className="object-contain" /></div>}
       <FoodBadges dietary={item.dietary_tags} />
-      {item.groups.map((group) => <fieldset key={group.id} className="border-t border-border pt-5"><legend className="pr-3 text-base font-semibold">{group.name}</legend><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{group.min_selections ? `Choose ${group.min_selections === group.max_selections ? group.min_selections : `${group.min_selections}-${group.max_selections}`}` : `Up to ${group.max_selections}`}</p><Badge variant="outline" className={`rounded-md ${group.min_selections ? 'border-turquoise/30 text-turquoise' : 'text-muted-foreground'}`}>{group.min_selections ? 'Required' : 'Optional'}</Badge></div>
+      {item.groups.map((group) => !group.options.length && !group.min_selections && item.groups.some((child) => child.parentId === group.id) ? <h3 key={group.id} className="break-words border-t border-border pt-5 text-base font-semibold">{group.name}</h3> : <fieldset key={group.id} className={`min-w-0 border-t border-border pt-5 ${group.depth ? 'border-l-2 border-l-turquoise/40 pl-3' : ''}`}><legend className="max-w-full break-words pr-3 text-base font-semibold">{group.name}</legend><div className="mb-3 flex flex-wrap items-center justify-between gap-2"><p className="text-xs text-muted-foreground">{group.min_selections ? `Choose ${group.min_selections === group.max_selections ? group.min_selections : `${group.min_selections}-${group.max_selections}`}` : `Up to ${group.max_selections}`}</p><Badge variant="outline" className={`rounded-md ${group.min_selections ? 'border-turquoise/30 text-turquoise' : 'text-muted-foreground'}`}>{group.min_selections ? 'Required' : 'Optional'}</Badge></div>
+        {group.max_selections === 1 && group.min_selections === 0 && group.options.length > 0 && <label className="mb-2 flex min-h-11 cursor-pointer items-center gap-3 px-3 text-sm"><input type="radio" name={group.id} checked={!group.options.some((option) => optionIds.includes(option.id))} className="size-4 shrink-0 accent-primary" onChange={() => setOptionIds((current) => current.filter((id) => !group.options.some((option) => option.id === id)))} />None</label>}
         {group.options.map((option) => {
           const selected = optionIds.includes(option.id);
           const count = group.options.filter((candidate) => optionIds.includes(candidate.id)).length;
-          return <label key={option.id} className="mb-2 flex min-h-14 cursor-pointer items-center gap-3 rounded-md border border-border px-3 py-3 text-sm transition-colors has-checked:border-turquoise/50 has-checked:bg-turquoise/5 has-disabled:cursor-not-allowed has-disabled:text-muted-foreground">
-            <input type={group.max_selections === 1 && group.min_selections === 1 ? 'radio' : 'checkbox'} name={group.id} checked={selected} disabled={(!option.is_available && !selected) || (!selected && count >= group.max_selections && group.max_selections > 1)} className="size-4 shrink-0 accent-primary" onChange={() => setOptionIds((current) => {
-              if (selected) return group.min_selections === 1 && group.max_selections === 1 ? current : current.filter((id) => id !== option.id);
+          return <div key={option.id} data-sold-out={!option.is_available || undefined} className={`mb-2 min-w-0 rounded-md border text-sm transition-colors ${option.is_available ? 'border-border has-checked:border-turquoise/50 has-checked:bg-turquoise/5 has-disabled:text-muted-foreground' : 'cursor-default border-border bg-muted/40 opacity-50'}`}><label className="flex min-h-14 cursor-pointer items-center gap-3 px-3 py-3 has-disabled:cursor-default">
+            <input type={group.max_selections === 1 ? 'radio' : 'checkbox'} name={group.id} checked={selected} disabled={!option.is_available || (!selected && count >= group.max_selections && group.max_selections > 1)} className="size-4 shrink-0 accent-primary disabled:cursor-default" onChange={() => setOptionIds((current) => {
+              if (selected) return group.max_selections === 1 ? current : current.filter((id) => id !== option.id);
               const retained = group.max_selections === 1 ? current.filter((id) => !group.options.some((candidate) => candidate.id === id)) : current;
               return [...retained, option.id];
             })} />
-            <span className="min-w-0 flex-1">{option.name}{!option.is_available && ' (sold out)'}</span><span className="shrink-0 tabular-nums">{option.price_pence ? `+${money(option.price_pence)}` : 'Included'}</span>
-          </label>;
+            {option.imageUrl && <span className="relative size-14 shrink-0 overflow-hidden rounded-md"><Image src={option.imageUrl} alt="" fill unoptimized sizes="56px" className="object-contain" /></span>}
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2"><span className="min-w-0 wrap-anywhere">{option.name}</span>{!option.is_available && <Badge className="rounded-md border-red-700 bg-red-600 font-semibold text-white">Sold Out</Badge>}{option.price_pence > 0 && <span className="ml-auto shrink-0 tabular-nums">+{money(option.price_pence)}</span>}</span>
+          </label>{option.description && <RichDescription content={option.description} className="px-3 pb-3 text-sm leading-relaxed text-muted-foreground" />}</div>;
         })}
       </fieldset>)}
       <section className="border-t border-border pt-5"><h3 className="mb-3 text-sm font-semibold">Allergen Information</h3>{allergens.length > 0 && <FoodBadges allergens={allergens} />}<div role="note" aria-label="Allergy notice" className="mt-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm leading-relaxed"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" /><p>{allergenNotice}</p></div></section>

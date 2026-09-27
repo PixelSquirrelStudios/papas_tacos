@@ -11,6 +11,7 @@ test.beforeAll(async () => {
         import React from 'react';
         import { createRoot } from 'react-dom/client';
         import { ResourceManager } from '@/components/admin/resource-manager';
+        import { PickupManager } from '@/components/admin/pickup-manager';
         import { ResourceReorder } from '@/components/admin/resource-reorder';
         import { OrderFilters } from '@/components/admin/order-filters';
         import { DashboardOverview } from '@/components/admin/dashboard-overview';
@@ -47,19 +48,30 @@ test.beforeAll(async () => {
           window.__updateOrdering = setStatus;
           return <DashboardOverview fullName="Sam" orders={[{...order, customer_name: 'Alex Taylor'}, {...order, id: ids[1], order_number: 1043, status: 'preparing', customer_name: 'Morgan Jones'}]} menu={rows} events={[{id: ids[0], title: 'Friday Street Food Market', venue_name: 'Town Square', starts_at: '2026-09-25T17:00:00Z'}]} settings={kind === 'dashboard-unavailable' ? undefined : {ordering_status: status, updated_at: '2026-09-22T12:00:00Z'}} />;
         }
+        const eventRow = {id:ids[0],title:'Friday Market',slug:'friday-market',venue_name:'Town Square',address_line_1:'Market Street',town:'Bristol',postcode:'BS1 1AA',starts_at:'2099-09-25T17:00:00Z',ends_at:'2099-09-25T21:00:00Z',pickup_enabled:true,ordering_status:'open',description:'<p><strong>Market night</strong> by the river.</p>',updated_at:'2026-09-27T12:00:00Z'};
         const root = createRoot(document.getElementById('fixture'));
+        function PickupFixture() {
+          const events = [{id:ids[0],title:'Friday Market',venue_name:'Friday Market',pickup_enabled:true,ordering_status:'open'}, {id:ids[1],title:'No Pickup',pickup_enabled:false,ordering_status:'open'}, {id:ids[2],title:'Closed Market',pickup_enabled:true,ordering_status:'closed'}, {id:category,title:'Saturday Market',pickup_enabled:true,ordering_status:'open'}];
+          const [schedules,setSchedules] = React.useState([{id:category,event_id:ids[0],starts_at:'2099-09-25T17:00:00Z',ends_at:'2099-09-25T18:00:00Z',preparation_minutes:20,updated_at:'2026-09-27T12:00:00Z'}]);
+          const [slots,setSlots] = React.useState(['available','taken','locked'].map((status,index)=>({id:ids[index],event_id:ids[0],event_title:'Friday Market',venue_name:'Town Square',starts_at:'2099-09-25T17:'+String(index*20).padStart(2,'0')+':00Z',ends_at:index===2?'2099-09-25T18:00:00Z':'2099-09-25T17:'+String((index+1)*20)+':00Z',updated_at:'2026-09-27T12:00:00Z',status})));
+          window.__lockSlot = (id,locked) => setSlots(current=>current.map(slot=>slot.id===id?{...slot,status:locked?'locked':'available'}:slot));
+          window.__saveSchedule = (values) => setSchedules(current=>current.map(schedule=>({...schedule,...values})));
+          return <PickupManager events={events} schedules={schedules} slots={slots} />;
+        }
         function MenuFixture() {
           const [items, setItems] = React.useState(rows);
           window.__updateAvailability = (id, available) => setItems(current => current.map(row => row.id === id ? {...row, is_available: available, updated_at: '2026-09-22T12:00:00Z'} : row));
-          return <ResourceManager resourceKey="menu" rows={items} references={{menu_categories: groups, modifier_groups: []}} />;
+          return <ResourceManager resourceKey="menu" rows={items} references={{menu_categories: groups, modifier_groups: kind === 'menu-modifiers' ? [{id: ids[0], name: 'Flavour', is_published: true}, {id: ids[1], name: 'Extras', is_published: true}, {id: ids[2], name: 'Seasonal', is_published: false}] : []}} associations={kind === 'menu-modifiers' ? [{menu_item_id: ids[0], modifier_group_id: ids[0]}] : []} />;
         }
         if (kind === 'account-page') AccountPage({searchParams: Promise.resolve({})}).then(element => root.render(element));
         else root.render(
           <><AdminRefresh />{kind.startsWith('dashboard') ? <DashboardFixture /> :
-          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={{}} /> :
+          kind === 'pickup' ? <PickupFixture /> :
+          kind === 'option-media' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Mexican Cola', description: '<p>Original cola description.</p>', image_path: 'images/menu/fixture.jpg', image_alt: 'Cola bottle', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Flavour'}]}} /> :
+          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : {}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
           kind === 'order-filters' ? <OrdersFixture /> :
-          ['menu', 'menu-rich', 'archived', 'grouped'].includes(kind) ? <MenuFixture /> :
+          ['menu', 'menu-rich', 'menu-modifiers', 'archived', 'grouped'].includes(kind) ? <MenuFixture /> :
           kind === 'customer' ? <main className="mx-auto max-w-5xl p-5"><h1 className="mb-6 text-3xl font-semibold">Your Orders</h1><OrderList orders={[order, {...order, id: ids[1], order_number: 1039, status: 'collected'}]} /></main> :
           <SiteMenu signedIn admin={false} />}</>
         );
@@ -86,6 +98,7 @@ test.beforeAll(async () => {
           }
           export async function signOut() { window.__signedOut = true; }
           export async function cancelCheckout() {}
+          export async function resumeCheckout() { return {error:'Payment unavailable in admin fixture'}; }
           export async function removeRecord(...args) { window.__removed = args; return {ok:true}; }
           export async function unarchiveMenuItem(...args) { window.__unarchived = args; return {ok:true}; }
           export async function setMenuAvailability(id, version, available) {
@@ -94,7 +107,8 @@ test.beforeAll(async () => {
             if (window.__failAvailability) return {ok:false, error:'This item changed or was archived.'};
             window.__updateAvailability(id, available); return {ok:true};
           }
-          export async function saveRecord(...args) { window.__savedRecord = args; return {ok:true}; }
+          export async function saveRecord(...args) { window.__savedRecord = args; if(args[0]==='slots') window.__saveSchedule?.(args[3]); return {ok:true}; }
+          export async function lockPickupSlot(id,version,locked) { window.__slotLock = {id,version,locked}; window.__lockSlot(id,locked); return {ok:true}; }
           export async function updateOrder() { return {ok:true}; }
           export async function setMaintenanceMode() { return {ok:true}; }
           export async function setOrderingStatus(status, version) {
@@ -250,7 +264,7 @@ test('dashboard distinguishes paused ordering and disables unavailable settings'
   await expect(page.getByText('Open for Orders', { exact: true })).toBeVisible();
   await fixture(page, 'dashboard-unavailable');
   await expect(page.getByRole('switch', { name: 'Online Ordering' })).toBeDisabled();
-  await expect(page.getByRole('alert')).toContainText('Ordering settings are unavailable');
+  await expect(page.getByRole('region', { name: 'Online Ordering' }).getByRole('alert')).toContainText('Ordering settings are unavailable');
 });
 
 test('menu availability action toggles between states and preserves failed saves', async ({ page }, testInfo) => {
@@ -333,6 +347,256 @@ test('admin menu descriptions preview whole lines and expand rich text', async (
   }
 });
 
+test('pickup schedules filter events and show lockable slot badges beside event cards', async ({ page }, testInfo) => {
+  await fixture(page,'pickup');
+  await expect(page.getByText('Friday Market', { exact: true })).toHaveCount(1);
+  await expect(page.getByRole('heading', { name: 'Collection Times', exact: true })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: 'Pickup Events' }).getByText('Open', { exact: true })).toHaveCount(2);
+  const expand = page.getByRole('button', { name: /^Show pickup times for/ });
+  if (testInfo.project.name === 'mobile') {
+    await expect(page.getByRole('button', { name: 'Lock 18:00, Available', exact: true })).not.toBeVisible();
+    await expect(expand).toHaveAttribute('aria-expanded', 'false');
+    await page.screenshot({ path: testInfo.outputPath('pickup-admin-collapsed.png'), fullPage: true });
+    await expand.click();
+    await page.getByRole('button', { name: /^Hide pickup times for/ }).click();
+    await expect(page.getByRole('button', { name: 'Lock 18:00, Available', exact: true })).not.toBeVisible();
+    await expand.click();
+  }
+  await expect(page.getByRole('button', { name: 'Lock 18:00, Available', exact: true }).locator('svg')).toHaveCount(2);
+  await expect(page.getByRole('button',{name:'Lock 18:20, Taken',exact:true})).toBeDisabled();
+  await page.getByRole('button',{name:'Lock 18:00, Available',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Unlock 18:00, Locked',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Unlock 18:00, Locked',exact:true}).click();
+  await expect(page.getByRole('button',{name:'Lock 18:00, Available',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Edit Schedule',exact:true}).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('spinbutton',{name:'Preparation Time (minutes)'})).toHaveValue('20');
+  await expect(dialog.getByText(/Capacity|Lead Time/)).toHaveCount(0);
+  await dialog.getByRole('combobox',{name:'Event'}).click();
+  await expect(page.getByRole('option')).toHaveText(['Friday Market','Saturday Market']);
+  await page.getByRole('option',{name:'Friday Market',exact:true}).click();
+  await dialog.getByRole('button',{name:'Save Changes',exact:true}).click();
+  await expect(dialog).not.toBeVisible();
+  for (const width of [testInfo.project.name === 'mobile' ? 390 : 1440,320]) {
+    await page.setViewportSize({width,height:950});
+    if (await expand.isVisible()) await expand.click();
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+    for (const slot of await page.getByRole('region', { name: 'Pickup Times' }).getByRole('button', { name: /^(Lock|Unlock) / }).all()) {
+      expect(await slot.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    }
+    await page.screenshot({path:testInfo.outputPath('pickup-admin-'+width+'.png'),fullPage:true});
+  }
+  await page.getByRole('navigation',{name:'Pickup Events'}).getByRole('button',{name:/Closed Market/}).click();
+  await expect(page.getByRole('button',{name:'Set Schedule',exact:true})).toBeDisabled();
+});
+
+test('related admin fields share desktop rows and stack together on mobile', async ({ page }, testInfo) => {
+  const cases: { kind: string; button: string; pairs: string[][] }[] = [
+    { kind: 'edit-events', button: 'Add Event', pairs: [['title', 'slug'], ['starts_at', 'ends_at'], ['address_line_1', 'address_line_2'], ['town', 'postcode'], ['pickup_enabled', 'ordering_status']] },
+    { kind: 'pickup', button: 'Edit Schedule', pairs: [['starts_at', 'ends_at']] },
+    { kind: 'edit-modifiers', button: 'Add Modifier Group', pairs: [['min_selections', 'max_selections']] },
+    { kind: 'menu', button: 'Add Menu Item', pairs: [['name', 'slug'], ['category_id', 'price_pence'], ['is_published', 'is_available'], ['is_featured', 'is_crowd_favourite']] },
+    { kind: 'option-media', button: 'Add Modifier Option', pairs: [['modifier_group_id', 'name'], ['price_pence', 'is_available']] },
+    { kind: 'edit-testimonials', button: 'Add Testimonial', pairs: [['rating', 'review_date'], ['source_name', 'source_url'], ['is_published', 'is_featured']] },
+    { kind: 'edit-settings', button: 'Edit Site Settings', pairs: [['ordering_status', 'maintenance_enabled'], ['cash_enabled', 'card_enabled'], ['service_fee_pence', 'packaging_fee_pence'], ['contact_email', 'contact_phone'], ['instagram_url', 'facebook_url'], ['about_heading', 'about_page_heading']] },
+  ];
+  for (const { kind, button, pairs } of cases) {
+    await fixture(page, kind);
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    for (const width of testInfo.project.name === 'mobile' ? [390, 320] : [1440]) {
+      await page.setViewportSize({ width, height: 960 });
+      for (const [first, second] of pairs) {
+        const positions = await dialog.evaluate((element, keys) => keys.map((key) => {
+          const field = element.querySelector(`[data-admin-field="${key}"]`)!;
+          const bounds = field.getBoundingClientRect();
+          return { top: bounds.top, bottom: bounds.bottom, left: bounds.left, right: bounds.right };
+        }), [first, second]);
+        if (width >= 640) {
+          expect(Math.abs(positions[0].top - positions[1].top), `${kind}: ${first}/${second}`).toBeLessThan(1);
+          expect(positions[1].left).toBeGreaterThanOrEqual(positions[0].right);
+        } else {
+          expect(positions[1].top).toBeGreaterThanOrEqual(positions[0].bottom);
+          expect(Math.abs(positions[0].left - positions[1].left)).toBeLessThan(1);
+        }
+      }
+      expect(await dialog.locator('[data-admin-form-scroll]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      if (kind === 'edit-events' || kind === 'pickup') {
+        await dialog.locator('[data-admin-field="starts_at"]').scrollIntoViewIfNeeded();
+        await page.screenshot({ path: testInfo.outputPath(`${kind}-grouped-${width}.png`) });
+      }
+    }
+  }
+});
+
+test('pickup events retain event times without pickup timing or preparation inputs', async ({ page }) => {
+  await fixture(page,'edit-events');
+  await page.getByRole('button',{name:'Add Event',exact:true}).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('switch',{name:'Pickup Enabled',exact:true}).check();
+  await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(2);
+  const starts = dialog.getByLabel('Event Starts (Europe/London) *', { exact: true });
+  const ends = dialog.getByLabel('Event Ends (Europe/London) *', { exact: true });
+  await starts.fill('2026-09-28T12:00');
+  await ends.fill('2026-09-28T18:00');
+  await expect(dialog.getByText(/Orders Open|Orders Close|Lead Time|Preparation Time/)).toHaveCount(0);
+  await expect(dialog.getByRole('combobox',{name:'Ordering',exact:true})).toBeVisible();
+  await dialog.getByRole('switch',{name:'Pickup Enabled',exact:true}).uncheck();
+  await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(2);
+  await expect(starts).toHaveValue('2026-09-28T12:00');
+  await expect(ends).toHaveValue('2026-09-28T18:00');
+  await dialog.getByRole('switch',{name:'Pickup Enabled',exact:true}).check();
+  await expect(starts).toHaveValue('2026-09-28T12:00');
+  await expect(ends).toHaveValue('2026-09-28T18:00');
+});
+
+test('new slugs follow names and titles until customised while existing URLs stay fixed', async ({ page }) => {
+  for (const [kind, singular, label] of [['menu', 'Menu Item', 'Name'], ['edit-categories', 'Category', 'Name'], ['edit-events', 'Event', 'Title']]) {
+    await fixture(page, kind);
+    await page.getByRole('button', { name: `Add ${singular}`, exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    const name = dialog.getByRole('textbox', { name: `${label} *`, exact: true });
+    const slug = dialog.getByRole('textbox', { name: 'URL Slug' });
+    await name.fill("Papa's Summer Café");
+    await expect(slug).toHaveValue('papas-summer-cafe');
+    await name.fill('Two Tacos');
+    await expect(slug).toHaveValue('two-tacos');
+    await slug.fill('custom-url');
+    await name.fill('Three Tacos');
+    await expect(slug).toHaveValue('custom-url');
+    await slug.fill('');
+    await name.fill('Four Tacos');
+    await expect(slug).toHaveValue('four-tacos');
+  }
+  await fixture(page, 'menu');
+  await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
+  await page.getByRole('dialog').getByRole('textbox', { name: 'Name *', exact: true }).fill('New Chicken Name');
+  await expect(page.getByRole('textbox', { name: 'URL Slug' })).toHaveValue('ember-chicken');
+});
+
+test('modifier editor saves ordered nested groups and single or multiple selection limits', async ({ page }, testInfo) => {
+  await fixture(page, 'edit-modifiers');
+  await page.getByRole('button', { name: 'Edit Original Name' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('checkbox', { name: 'Original Name' })).toHaveCount(0);
+  await dialog.getByRole('checkbox', { name: 'Sauces', exact: true }).check();
+  await dialog.getByRole('checkbox', { name: 'Extras', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Move Extras up' }).click();
+  await dialog.getByRole('combobox', { name: 'Selection Mode' }).click();
+  await page.getByRole('option', { name: 'Multiple Choices' }).click();
+  await expect(dialog.getByRole('spinbutton', { name: 'Maximum Choices' })).toHaveValue('2');
+  await dialog.getByRole('spinbutton', { name: 'Minimum Choices' }).fill('2');
+  await dialog.getByRole('combobox', { name: 'Selection Mode' }).click();
+  await page.getByRole('option', { name: 'Single Choice' }).click();
+  await expect(dialog.getByRole('spinbutton', { name: 'Maximum Choices' })).toHaveValue('1');
+  await expect(dialog.getByRole('spinbutton', { name: 'Minimum Choices' })).toHaveValue('1');
+  await dialog.getByRole('combobox', { name: 'Selection Mode' }).click();
+  await page.getByRole('option', { name: 'Multiple Choices' }).click();
+  await page.screenshot({ path: testInfo.outputPath('nested-admin.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[3].child_group_ids).toEqual(['00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002']);
+  expect(saved[3].max_selections).toBe(2);
+  expect(saved[3].min_selections).toBe(1);
+});
+
+test('menu forms assign modifier groups on create and preserve or remove them on edit', async ({ page }, testInfo) => {
+  await fixture(page, 'menu-modifiers');
+  await expect(page.getByRole('button', { name: 'Modifier Groups for Ember Chicken' })).toContainText('Modifiers (1)');
+  await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByRole('checkbox', { name: 'Flavour', exact: true })).toBeChecked();
+  await dialog.getByRole('checkbox', { name: 'Extras', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Move Extras up' }).click();
+  await expect(dialog.getByRole('button', { name: 'Move Extras up' })).toBeDisabled();
+  await expect(dialog.getByRole('checkbox', { name: 'Seasonal Draft' })).not.toBeChecked();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('menu-modifiers.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  const savedGroups = () => page.evaluate(() => (window as unknown as { __savedRecord: unknown[] }).__savedRecord[4]);
+  await expect.poll(savedGroups).toEqual(['00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000001']);
+  await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
+  await dialog.getByRole('checkbox', { name: 'Flavour', exact: true }).uncheck();
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect.poll(savedGroups).toEqual([]);
+  await page.getByRole('button', { name: 'Add Menu Item', exact: true }).click();
+  await dialog.getByRole('textbox', { name: 'Name', exact: false }).first().fill('Jarritos');
+  await dialog.getByRole('textbox', { name: 'URL Slug' }).fill('jarritos');
+  await dialog.getByRole('combobox', { name: 'Category' }).click();
+  await page.getByRole('option', { name: 'Tacos', exact: true }).click();
+  await dialog.getByRole('checkbox', { name: 'Flavour', exact: true }).check();
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect.poll(savedGroups).toEqual(['00000000-0000-0000-0000-000000000001']);
+  expect(await page.evaluate(() => (window as unknown as { __savedRecord: unknown[] }).__savedRecord[1])).toBeNull();
+});
+
+test('modifier option editor saves its own rich description and image fields', async ({ page }, testInfo) => {
+  await fixture(page, 'option-media');
+  await expect(page.getByRole('article')).toContainText('Original cola description.');
+  await expect(page.getByRole('article')).not.toContainText('<p>');
+  await page.getByRole('button', { name: 'Edit Mexican Cola' }).click();
+  const dialog = page.getByRole('dialog');
+  const body = page.frameLocator('iframe.tox-edit-area__iframe').locator('body');
+  await expect(body).toBeVisible();
+  await body.fill('Mexican cola made with cane sugar.');
+  await dialog.getByRole('textbox', { name: 'Image Description' }).fill('Mexican Cola glass bottle');
+  await expect.poll(() => dialog.getByAltText('Current image').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('option-editor.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[0]).toBe('options');
+  expect(saved[3].description).toContain('Mexican cola made with cane sugar.');
+  expect(saved[3].image_path).toBe('images/menu/fixture.jpg');
+  expect(saved[3].image_alt).toBe('Mexican Cola glass bottle');
+});
+
+test('event editor formats and saves descriptions without changing event times', async ({ page }, testInfo) => {
+  await fixture(page, 'edit-events');
+  await expect(page.getByRole('article').locator('strong')).toHaveText('Market night');
+  await expect(page.getByRole('article')).not.toContainText('<p>');
+  await page.getByRole('button', { name: 'Edit Friday Market', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  const body = page.frameLocator('iframe.tox-edit-area__iframe').locator('body');
+  await expect(body).toBeVisible();
+  await expect(body.locator('strong')).toHaveText('Market night');
+  await body.fill('Fresh tacos at the market');
+  await body.press('ControlOrMeta+A');
+  if (await body.locator('strong').count()) {
+    await dialog.getByRole('button', { name: 'Bold', exact: true }).click();
+    await expect(body.locator('strong')).toHaveCount(0);
+  }
+  await dialog.getByRole('button', { name: 'Bold', exact: true }).click();
+  await expect(body.locator('strong')).toHaveText('Fresh tacos at the market');
+  expect(await dialog.locator('[data-admin-form-scroll]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('event-editor.png'), fullPage: true });
+  await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[0]).toBe('events');
+  expect(saved[3].description).toContain('<strong>Fresh tacos at the market</strong>');
+  expect(saved[3].starts_at).toBe('2099-09-25T17:00:00.000Z');
+  expect(saved[3].ends_at).toBe('2099-09-25T21:00:00.000Z');
+});
+
+test('all rich text fields enable native browser spell checking', async ({ page }) => {
+  for (const [kind, button] of [['menu', 'Edit Ember Chicken'], ['option-media', 'Edit Mexican Cola'], ['edit-settings', 'Edit Site Settings'], ['edit-events', 'Edit Friday Market']]) {
+    await fixture(page, kind);
+    await page.getByRole('button', { name: button, exact: true }).click();
+    const frames = page.locator('iframe.tox-edit-area__iframe');
+    await expect(frames.first()).toBeVisible();
+    for (const frame of await frames.all()) {
+      await expect(frame.contentFrame().locator('body')).toHaveJSProperty('spellcheck', true);
+    }
+    await page.getByRole('dialog').getByRole('button', { name: 'Cancel', exact: true }).click();
+  }
+});
+
 test('menu rich text editor formats paragraphs and saves HTML', async ({ page }, testInfo) => {
   await fixture(page, 'menu');
   await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
@@ -403,15 +667,18 @@ test('admin refreshes automatically while leaving open edits undisturbed', async
   const duringEdit = await count();
   await page.clock.fastForward(30000);
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
   expect(await count()).toBe(duringEdit);
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(page.getByRole('dialog')).not.toBeVisible();
-  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect.poll(count).toBeGreaterThan(duringEdit);
   const beforeReconnect = await count();
   await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect.poll(count).toBeGreaterThan(beforeReconnect);
+  const beforeLocalSave = await count();
+  await page.evaluate(() => window.dispatchEvent(new CustomEvent('papas:site-updated', { detail: { localSave: true } })));
+  expect(await count()).toBe(beforeLocalSave);
 });
 
 test('combined menu groups items by category order before their local positions', async ({ page }) => {

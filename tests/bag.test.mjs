@@ -4,6 +4,7 @@ import { lineKey, mergeLine, parseBag, quoteLine } from '../src/lib/bag.ts';
 import { canOrder, choiceLabel, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
+import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
 
 test('menu descriptions preserve paragraphs and formatting while stripping unsafe HTML', () => {
   assert.equal(descriptionHtml('Fresh & spicy\nWith salsa\n\nMade daily.'), '<p>Fresh &amp; spicy<br />With salsa</p><p>Made daily.</p>');
@@ -54,6 +55,51 @@ test('ordering requires an open business and an active published event ordering 
     assert.equal(canOrder([{ ...event, ...override }], { ordering_status: 'open' }, now), false);
   }
   assert.equal(canOrder([{ ...event, starts_at: '2026-09-24T11:00:00Z', ends_at: '2026-09-24T18:00:00Z', orders_open_at: '2026-09-23T10:00:00Z' }], { ordering_status: 'open' }, now), true);
+});
+
+test('ordering status is independent of maintenance access and still respects event gates', () => {
+  const now = Date.parse('2026-09-26T12:00:00Z');
+  const settings = { ordering_status: 'open', maintenance_enabled: true };
+  const event = { pickup_enabled: true, ordering_status: 'open', starts_at: '2026-09-26T09:00:00Z', ends_at: '2026-09-26T18:00:00Z', orders_open_at: null, orders_close_at: null };
+  assert.equal(canOrder([event], settings, now), true);
+  assert.equal(pickupState(event, settings, now), 'Pickup enabled for this event');
+  for (const ordering_status of ['closed', 'paused']) {
+    assert.equal(canOrder([event], { ...settings, ordering_status }, now), false);
+    assert.equal(canOrder([{ ...event, ordering_status }], settings, now), false);
+  }
+  assert.equal(canOrder([{ ...event, orders_close_at: '2026-09-25T16:00:00Z' }], settings, now), false);
+  assert.equal(canOrder([{ ...event, pickup_enabled: false }], settings, now), false);
+  assert.equal(canOrder([], settings, now), false);
+  assert.equal(canOrder([event], null, now), false);
+});
+
+test('nested groups keep reused options independent, priced and required per path', () => {
+  const second = '00000000-0000-4000-8000-000000000004';
+  const sauce = '00000000-0000-4000-8000-000000000005';
+  const groups = expandModifierGroups([groupId, second], [
+    { id: groupId, name: 'Part One', min_selections: 0, max_selections: 1, options: [], child_group_ids: [sauce] },
+    { id: second, name: 'Part Two', min_selections: 0, max_selections: 1, options: [], child_group_ids: [sauce] },
+    { id: sauce, name: 'Sauces', min_selections: 1, max_selections: 2, options: [{ id: optionId, modifier_group_id: sauce, name: 'Hot', price_pence: 100, is_available: true }] },
+  ]);
+  assert.deepEqual(groups.map((group) => group.name), ['Part One', 'Part One / Sauces', 'Part Two', 'Part Two / Sauces']);
+  const selections = [groups[1].options[0].id, groups[3].options[0].id];
+  assert.notEqual(...selections);
+  const nestedLine = { itemId, optionIds: selections, quantity: 2 };
+  assert.equal(quoteLine(nestedLine, [{ ...item, groups }]).total, 2100);
+  assert.equal(quoteLine(nestedLine, [{ ...item, groups }]).issue, '');
+  assert.match(quoteLine({ ...nestedLine, optionIds: selections.slice(0, 1) }, [{ ...item, groups }]).issue, /Part Two/);
+  assert.deepEqual(parseBag(JSON.stringify({ version: 1, lines: [nestedLine] }))[0].optionIds, [...selections].sort());
+  assert.notEqual(lineKey({ ...nestedLine, optionIds: selections.slice(0, 1) }), lineKey({ ...nestedLine, optionIds: selections.slice(1) }));
+  assert.throws(() => expandModifierGroups([groupId], [{ id: groupId, options: [], child_group_ids: [groupId] }]), /nesting/);
+});
+
+test('saved bags accommodate bounded nested identifiers without silently losing valid lines', () => {
+  const optionIds = Array.from({ length: 100 }, () => `${groupId}/${crypto.randomUUID()}/${crypto.randomUUID()}:${crypto.randomUUID()}`);
+  const lines = Array.from({ length: 100 }, () => ({ itemId: crypto.randomUUID(), optionIds, quantity: 1 }));
+  const raw = JSON.stringify({ version: 1, lines });
+  assert.ok(raw.length > 100000);
+  assert.equal(parseBag(raw).length, 100);
+  assert.deepEqual(parseBag(' '.repeat(1600001)), []);
 });
 
 test('dietary and allergen display labels are capitalized without changing stored values', () => {

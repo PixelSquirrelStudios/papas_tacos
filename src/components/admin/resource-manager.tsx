@@ -1,9 +1,8 @@
 'use client';
 
 import { Fragment, useDeferredValue, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { ArrowDown, ArrowUp, ArrowLeft, ArrowRight, Archive, ArchiveRestore, CircleCheck, CircleX, GripVertical, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
+import { ArrowLeft, ArrowRight, Archive, ArchiveRestore, CircleCheck, CircleX, GripVertical, Pencil, Plus, RotateCcw, Search, SlidersHorizontal, Trash2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { assignGroups, removeRecord, setMenuAvailability, unarchiveMenuItem } from '@/app/admin/actions';
 import { resources, type AdminRow } from '@/lib/admin/resources';
@@ -13,13 +12,13 @@ import { Input } from '@/components/ui/input';
 import { FilterSelect } from '@/components/ui/filter-select';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
-import { Checkbox } from '@/components/ui/checkbox';
 import { RecordEditor } from './record-editor';
 import { RecordCard } from './record-card';
+import { ModifierGroupSelection } from './modifier-group-selection';
+import { notifySiteUpdated } from '@/lib/site-updates';
 
 export function ResourceManager({ resourceKey, rows, references, associations = [] }: { resourceKey: string; rows: AdminRow[]; references: Record<string, AdminRow[]>; associations?: AdminRow[] }) {
   const resource = resources[resourceKey];
-  const router = useRouter();
   const [search, setSearch] = useState('');
   const deferred = useDeferredValue(search).toLowerCase();
   const [scope, setScope] = useState<string[]>([]);
@@ -41,7 +40,7 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
   const currentPage = Math.min(page, lastPage);
   const visible = filtered.slice(currentPage * 20, (currentPage + 1) * 20);
   function resetFilters() { setSearch(''); setScope([]); setStatus([]); setPage(0); }
-  function refresh() { startTransition(() => router.refresh()); }
+  function refresh() { notifySiteUpdated(); }
   function toggleAvailability(row: AdminRow) {
     startTransition(async () => {
       try {
@@ -49,7 +48,7 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
         const result = await setMenuAvailability(row.id!, row.updated_at!, available);
         if (!result.ok) { toast.error(result.error); return; }
         toast.success(available ? 'Item Set As Available' : 'Item Set As Sold Out');
-        router.refresh();
+        refresh();
       } catch { toast.error('Unable to update availability.'); }
     });
   }
@@ -60,7 +59,7 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
         const result = removing.restore ? await unarchiveMenuItem(removing.row.id!, removing.row.updated_at!) : await removeRecord(resourceKey, removing.row.id!, removing.row.updated_at!, removing.archive);
         if (!result.ok) { toast.error(result.error); return; }
         toast.success(removing.restore ? 'Item Restored as a Draft' : removing.archive ? 'Item Archived' : 'Record Deleted');
-        setRemoving(null); router.refresh();
+        setRemoving(null); refresh();
       } catch { toast.error('Unable to complete the request.'); }
     });
   }
@@ -72,12 +71,12 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
         {resource.scope && scopeField?.reference && scope.length !== 1 && (index === 0 || visible[index - 1][resource.scope] !== row[resource.scope]) && <h2 className="col-span-full border-b pb-3 text-xl font-semibold">{String(references[scopeField.reference]?.find((entry) => entry.id === row[resource.scope!])?.name ?? 'Unassigned')}</h2>}
         <RecordCard resourceKey={resourceKey} row={row} references={references}>
         <Button size={resource.singleton ? 'lg' : 'sm'} className={resource.singleton ? 'h-12 w-full text-base' : ''} disabled={pending} aria-label={resource.singleton ? 'Edit Site Settings' : `Edit ${String(row[resource.label])}`} onClick={() => setEditing(row)}><Pencil />{resource.singleton ? 'Edit Site Settings' : 'Edit'}</Button>
-        <div className="flex gap-1">{resourceKey === 'menu' && <><Button variant="ghost" size="icon" title="Modifier Groups" aria-label={`Modifier Groups for ${row.name}`} disabled={pending} onClick={() => setAssigning(row)}><SlidersHorizontal /></Button><Button variant="ghost" size="icon" title={row.is_available ? 'Set As Sold Out' : 'Set As Available'} aria-label={`${row.is_available ? 'Set As Sold Out' : 'Set As Available'}: ${row.name}`} disabled={pending || Boolean(row.archived_at)} onClick={() => toggleAvailability(row)}>{row.is_available ? <CircleCheck className="text-turquoise" /> : <CircleX className="text-primary" />}</Button>{row.archived_at ? <Button variant="ghost" size="icon" title="Unarchive" aria-label={`Unarchive ${row.name}`} disabled={pending} onClick={() => setRemoving({ row, archive: false, restore: true })}><ArchiveRestore /></Button> : <Button variant="ghost" size="icon" title="Archive" aria-label={`Archive ${row.name}`} disabled={pending} onClick={() => setRemoving({ row, archive: true })}><Archive /></Button>}</>}{!resource.singleton && <Button variant="ghost" size="icon" title="Delete" aria-label={`Delete ${String(row[resource.label])}`} disabled={pending} onClick={() => setRemoving({ row, archive: false })}><Trash2 className="text-destructive" /></Button>}</div>
+        <div className="flex flex-wrap gap-1">{resourceKey === 'menu' && <><Button variant="ghost" size="sm" title="Modifier Groups" aria-label={`Modifier Groups for ${row.name}`} disabled={pending} onClick={() => setAssigning(row)}><SlidersHorizontal />Modifiers ({associations.filter((link) => link.menu_item_id === row.id).length})</Button><Button variant="ghost" size="icon" title={row.is_available ? 'Set As Sold Out' : 'Set As Available'} aria-label={`${row.is_available ? 'Set As Sold Out' : 'Set As Available'}: ${row.name}`} disabled={pending || Boolean(row.archived_at)} onClick={() => toggleAvailability(row)}>{row.is_available ? <CircleCheck className="text-turquoise" /> : <CircleX className="text-primary" />}</Button>{row.archived_at ? <Button variant="ghost" size="icon" title="Unarchive" aria-label={`Unarchive ${row.name}`} disabled={pending} onClick={() => setRemoving({ row, archive: false, restore: true })}><ArchiveRestore /></Button> : <Button variant="ghost" size="icon" title="Archive" aria-label={`Archive ${row.name}`} disabled={pending} onClick={() => setRemoving({ row, archive: true })}><Archive /></Button>}</>}{!resource.singleton && <Button variant="ghost" size="icon" title="Delete" aria-label={`Delete ${String(row[resource.label])}`} disabled={pending} onClick={() => setRemoving({ row, archive: false })}><Trash2 className="text-destructive" /></Button>}</div>
       </RecordCard></Fragment>)}
     </div>
     {!visible.length && <div className="flex min-h-64 flex-col items-center justify-center gap-4 rounded-lg border border-dashed px-5 text-center"><Search className="size-8 text-muted-foreground" aria-hidden="true" /><h2 className="text-lg font-semibold">{rows.length ? 'No Matching Records' : 'No Records Yet'}</h2></div>}
     {!resource.singleton && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t pt-5 text-sm"><span role="status" className="text-muted-foreground">{filtered.length} results / Page {currentPage + 1} of {lastPage + 1}</span><div className="flex gap-2"><Button variant="ghost" size="icon" title="Previous Page" aria-label="Previous Page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ArrowLeft /></Button><Button variant="ghost" size="icon" title="Next Page" aria-label="Next Page" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}><ArrowRight /></Button></div></div>}
-    {editing !== undefined && <RecordEditor resourceKey={resourceKey} row={editing} references={references} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); refresh(); }} />}
+    {editing !== undefined && <RecordEditor resourceKey={resourceKey} row={editing} references={references} initialGroupIds={associations.filter((link) => link.menu_item_id === editing?.id).map((link) => String(link.modifier_group_id))} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); refresh(); }} />}
     <AlertDialog open={Boolean(removing)} onOpenChange={(open) => { if (!open && !pending) setRemoving(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : 'Delete'} {String(removing?.row[resource.label] ?? 'record')}?</AlertDialogTitle><AlertDialogDescription>{removing?.restore ? 'This item will return as an unpublished, unavailable draft. Review it before publishing and making it available.' : removing?.archive ? 'This item will be hidden and unavailable. Existing order history is retained.' : 'This cannot be undone. Referenced records may be protected from deletion.'}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel><Button variant={removing?.restore ? 'default' : 'destructive'} disabled={pending} onClick={remove}>{pending ? 'Working...' : removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : 'Delete'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     {assigning && <GroupAssignment item={assigning} groups={references.modifier_groups ?? []} initial={associations.filter((link) => link.menu_item_id === assigning.id).map((link) => String(link.modifier_group_id))} onClose={() => setAssigning(null)} onSaved={() => { setAssigning(null); refresh(); }} />}
   </main>;
@@ -86,6 +85,5 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
 function GroupAssignment({ item, groups, initial, onClose, onSaved }: { item: AdminRow; groups: AdminRow[]; initial: string[]; onClose: () => void; onSaved: () => void }) {
   const [selected, setSelected] = useState(initial);
   const [pending, startTransition] = useTransition();
-  function move(index: number, direction: number) { const next = [...selected]; [next[index], next[index + direction]] = [next[index + direction], next[index]]; setSelected(next); }
-  return <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}><DialogContent className="max-h-[85svh] overflow-y-auto" showCloseButton={!pending}><DialogHeader><DialogTitle>Modifier Groups</DialogTitle><DialogDescription>{String(item.name)}</DialogDescription></DialogHeader><div className="space-y-3">{[...selected.map((id) => groups.find((group) => group.id === id)!).filter(Boolean), ...groups.filter((group) => !selected.includes(group.id!))].map((group) => { const index = selected.indexOf(group.id!); return <div key={group.id} className="flex items-center gap-3 border-b pb-3"><label className="flex min-w-0 flex-1 items-center gap-3 text-sm"><Checkbox disabled={pending} checked={index >= 0} onCheckedChange={(checked) => setSelected(checked ? [...selected, group.id!] : selected.filter((id) => id !== group.id))} />{String(group.name)}</label>{index >= 0 && <><Button variant="ghost" size="icon-sm" title="Move Group Up" aria-label={`Move ${group.name} up`} disabled={pending || index === 0} onClick={() => move(index, -1)}><ArrowUp /></Button><Button variant="ghost" size="icon-sm" title="Move Group Down" aria-label={`Move ${group.name} down`} disabled={pending || index === selected.length - 1} onClick={() => move(index, 1)}><ArrowDown /></Button></>}</div>; })}</div><Button disabled={pending} onClick={() => startTransition(async () => { try { const result = await assignGroups(item.id!, selected, item.updated_at!); if (!result.ok) toast.error(result.error); else { toast.success('Modifier groups saved'); onSaved(); } } catch { toast.error('Unable to save modifier groups.'); } })}>{pending ? 'Saving...' : 'Save Groups'}</Button></DialogContent></Dialog>;
+  return <Dialog open onOpenChange={(open) => { if (!open && !pending) onClose(); }}><DialogContent className="max-h-[85svh] overflow-y-auto" showCloseButton={!pending}><DialogHeader><DialogTitle>Modifier Groups</DialogTitle><DialogDescription>{String(item.name)}</DialogDescription></DialogHeader><ModifierGroupSelection groups={groups} selected={selected} onChange={setSelected} disabled={pending} /><Button disabled={pending} onClick={() => startTransition(async () => { try { const result = await assignGroups(item.id!, selected, item.updated_at!); if (!result.ok) toast.error(result.error); else { toast.success('Modifier groups saved'); onSaved(); } } catch { toast.error('Unable to save modifier groups.'); } })}>{pending ? 'Saving...' : 'Save Groups'}</Button></DialogContent></Dialog>;
 }

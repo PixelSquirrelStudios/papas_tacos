@@ -9,13 +9,16 @@ import { appOrigin } from '@/lib/auth/redirects';
 import { getMaintenanceMode } from '@/lib/catalogue/data';
 import { checkoutConfigured, paymentDatabase, stripeClient } from '@/lib/payments/server';
 import { checkoutSchema, type CheckoutResult } from '@/lib/payments/validation';
+import { orderChoicesText } from '@/lib/account/order-breakdown';
 
 export async function startCheckout(input: unknown): Promise<CheckoutResult> {
   const parsed = checkoutSchema.safeParse(input);
   if (!parsed.success) return { error: 'Check your contact details, pickup time and bag before continuing.' };
   const viewer = await getViewer();
   if (!viewer?.user.email) return { error: 'Sign in before checking out.' };
-  if (!checkoutConfigured() || (await getMaintenanceMode()) !== false) return { error: 'Card checkout is temporarily unavailable.' };
+  if (!checkoutConfigured()) return { error: 'Card checkout is temporarily unavailable.' };
+  const maintenance = await getMaintenanceMode();
+  if (maintenance !== false && !(maintenance === true && viewer.profile?.role === 'admin')) return { error: 'Card checkout is temporarily unavailable.' };
   try {
     const requestHeaders = await headers();
     const origin = appOrigin(process.env.SITE_URL, requestHeaders.get('origin') || '', process.env.NODE_ENV === 'production');
@@ -29,6 +32,8 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       return { error: safeMessages.includes(error.message) ? error.message : 'Checkout is unavailable. Refresh your bag and try again.' };
     }
     if (order.customer_id !== viewer.user.id || order.status !== 'pending_payment') return { error: 'This checkout has already finished. Check your account orders.' };
+    const paymentDeadline = new Date(order.reservation_expires_at).getTime();
+    if (!Number.isFinite(paymentDeadline) || paymentDeadline <= Date.now()) return { error: 'The payment deadline for this pickup has passed. Choose a new pickup time.' };
     const stripe = stripeClient();
     const { data: payment, error: paymentError } = await database.from('payments').select('stripe_checkout_session_id').eq('order_id', order.id).eq('provider', 'stripe').single();
     if (paymentError) throw new Error('Payment unavailable');
@@ -36,25 +41,26 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       const existing = await stripe.checkout.sessions.retrieve(payment.stripe_checkout_session_id);
       return existing.status === 'open' && existing.url ? { url: existing.url, orderId: order.id } : { error: 'This payment session has ended. Check your account orders.' };
     }
-    const { data: items, error: itemsError } = await database.from('order_items').select('item_name,quantity,unit_price_pence,unit_extras_pence,order_item_modifiers(group_name,option_name)').eq('order_id', order.id).order('created_at').order('id');
+    const { data: items, error: itemsError } = await database.from('order_items').select('item_name,quantity,unit_price_pence,unit_extras_pence,order_item_modifiers(group_name,option_name,unit_price_pence)').eq('order_id', order.id).order('created_at').order('id');
     if (itemsError || !items?.length) throw new Error('Order items unavailable');
     const lineItems = items.map((item) => ({
       quantity: item.quantity,
       price_data: { currency: 'gbp', unit_amount: item.unit_price_pence + item.unit_extras_pence, product_data: {
         name: item.item_name,
-        ...(item.order_item_modifiers.length ? { description: item.order_item_modifiers.map((choice) => `${choice.group_name}: ${choice.option_name}`).join('; ').slice(0, 500) } : {}),
+        ...(item.order_item_modifiers.length ? { description: orderChoicesText(item.order_item_modifiers) } : {}),
       } },
     }));
     for (const [name, value] of [['Service fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence]] as const) {
       if (value > 0) lineItems.push({ quantity: 1, price_data: { currency: 'gbp', unit_amount: value, product_data: { name } } });
     }
-    const expiresAt = Math.floor(new Date(order.reservation_expires_at).getTime() / 1000);
-    if (expiresAt < Math.floor(Date.now() / 1000) + 31 * 60) return { error: 'This checkout could not start in time. Contact us or wait for the reservation to be released.' };
+    const expiresAt = Math.floor(new Date(order.created_at).getTime() / 1000) + 2 * 60 * 60;
+    const deadlineLabel = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', dateStyle: 'short', timeStyle: 'medium' }).format(paymentDeadline);
     const session = await stripe.checkout.sessions.create({
       mode: 'payment', payment_method_types: ['card'], customer_email: order.customer_email,
       client_reference_id: order.id, metadata: { order_id: order.id, integration: 'papas_tacos' },
       payment_intent_data: { metadata: { order_id: order.id, integration: 'papas_tacos' } },
       line_items: lineItems, expires_at: expiresAt,
+      custom_text: { submit: { message: `Complete payment by ${deadlineLabel} UK time. Payments completed after this deadline will be cancelled and refunded.` } },
       success_url: `${origin}/account?view=orders&order=${order.id}&payment=returned`,
       cancel_url: `${origin}/checkout?order=${order.id}`,
     }, { idempotencyKey: `checkout-${order.id}` });
@@ -65,6 +71,31 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
     return { url: session.url, orderId: order.id };
   } catch {
     return { error: 'We could not open payment. Try again with the same bag; check your orders before starting another checkout.' };
+  }
+}
+
+export async function resumeCheckout(input: unknown): Promise<CheckoutResult> {
+  const orderId = z.guid().safeParse(input);
+  if (!orderId.success) return { error: 'This checkout could not be found.' };
+  const viewer = await getViewer();
+  if (!viewer?.user.email) return { error: 'Sign in before continuing payment.' };
+  if (!checkoutConfigured()) return { error: 'Card checkout is temporarily unavailable.' };
+  const maintenance = await getMaintenanceMode();
+  if (maintenance !== false && !(maintenance === true && viewer.profile?.role === 'admin')) return { error: 'Card checkout is temporarily unavailable.' };
+  try {
+    const database = paymentDatabase();
+    const { data: order, error } = await database.from('orders').select('id,customer_id,status,payment_method,payment_status,reservation_expires_at').eq('id', orderId.data).eq('customer_id', viewer.user.id).single();
+    if (error || !order || order.customer_id !== viewer.user.id) return { error: 'This checkout could not be found.' };
+    if (order.status !== 'pending_payment' || order.payment_method !== 'card' || order.payment_status !== 'unpaid') return { error: 'This checkout has already finished. Refresh your account orders.' };
+    const deadline = new Date(order.reservation_expires_at).getTime();
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return { error: 'The payment deadline has passed. Cancel this checkout and choose a new pickup time.' };
+    const { data: payment, error: paymentError } = await database.from('payments').select('stripe_checkout_session_id').eq('order_id', order.id).eq('provider', 'stripe').single();
+    if (paymentError || !payment?.stripe_checkout_session_id) return { error: 'No payment session is available. Cancel this checkout and start again.' };
+    const session = await stripeClient().checkout.sessions.retrieve(payment.stripe_checkout_session_id);
+    if (session.status !== 'open' || !session.url) return { error: 'This payment session has ended. Refresh your account orders before starting another checkout.' };
+    return { url: session.url, orderId: order.id };
+  } catch {
+    return { error: 'We could not reopen payment. Check your connection and try again.' };
   }
 }
 

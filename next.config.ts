@@ -2,6 +2,9 @@ import type { NextConfig } from 'next';
 
 const nextConfig: NextConfig = {
   poweredByHeader: false,
+  outputFileTracingIncludes: {
+    '/api/account/orders/*/receipt': ['./public/images/Papas Tacos Logo.jpg'],
+  },
   async headers() {
     return [{
       source: '/:path*',

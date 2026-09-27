@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { BagProvider } from '@/components/bag/bag-provider';
 import { Toaster } from '@/components/ui/sonner';
+import { SiteUpdates } from '@/components/site-updates';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -10,5 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en-GB" className="dark"><body><TooltipProvider><BagProvider>{children}</BagProvider></TooltipProvider><Toaster theme="dark" closeButton /></body></html>;
+  return <html lang="en-GB" className="dark"><body><TooltipProvider><BagProvider><SiteUpdates />{children}</BagProvider></TooltipProvider><Toaster theme="dark" closeButton /></body></html>;
 }

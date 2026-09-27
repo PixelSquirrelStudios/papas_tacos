@@ -11,6 +11,13 @@ export async function proxy(request: NextRequest) {
   const bypass = ['/auth', '/api', '/sign-in', '/maintenance', '/_next', '/images'].some((prefix) => pathname === prefix || pathname.startsWith(`${prefix}/`));
   if (config) {
     const supabase = createServerClient(config.url, config.key, {
+      global: {
+        fetch: (input, init) => fetch(input, {
+          ...init,
+          cache: 'no-store',
+          signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+        }),
+      },
       cookies: {
         getAll: () => request.cookies.getAll(),
         setAll(cookiesToSet) {

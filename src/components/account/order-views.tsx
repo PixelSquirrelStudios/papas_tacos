@@ -1,8 +1,9 @@
 import Link from 'next/link';
-import { ArrowLeft, ArrowRight, Check, Clock3, Download, MapPin, ReceiptText, UtensilsCrossed, X } from 'lucide-react';
-import { cancelCheckout } from '@/app/(public)/checkout/actions';
+import { ArrowLeft, ArrowRight, Check, Clock3, Download, MapPin, ReceiptText, UtensilsCrossed } from 'lucide-react';
+import { PendingCheckoutActions } from './pending-checkout-actions';
 import { PaidOrderBagCleanup } from '@/components/bag/bag-provider';
 import { money } from '@/lib/bag';
+import { groupOrderChoices } from '@/lib/account/order-breakdown';
 import { choiceLabel } from '@/lib/catalogue/format';
 import { orderDate, pickupWindow, pickupAddress, statusLabels, paymentLabels, type OrderSummary, type CustomerOrder } from '@/lib/account/orders';
 import { Button } from '@/components/ui/button';
@@ -31,6 +32,24 @@ export function OrderList({ orders, emptyTitle = 'No Orders Yet' }: { orders: Or
 
 const progressSteps = ['ordered', 'preparing', 'ready_for_pickup', 'collected'] as const;
 
+export function OrderChoices({ modifiers }: { modifiers: CustomerOrder['order_items'][number]['order_item_modifiers'] }) {
+  const roots = groupOrderChoices(modifiers);
+  if (!roots.length) return null;
+  return <div role="group" aria-label="Selected Choices" className="mt-4 min-w-0 space-y-4 text-sm">
+    {roots.map(({ root, title, groups }) => {
+      return <section key={root} aria-label={title} className="min-w-0">
+        <h5 className="font-semibold wrap-anywhere">{title}</h5>
+        <dl className="mt-2">
+          {groups.map(({ label, choices }) => <div key={label} className="grid min-w-0 grid-cols-[4rem_minmax(0,1fr)] gap-x-3 sm:grid-cols-[5rem_minmax(0,1fr)]">
+            <dt className="py-1 text-xs leading-5 text-muted-foreground wrap-anywhere">{label}</dt>
+            <dd className="min-w-0 space-y-1 border-l py-1 pl-3">{choices.map((choice) => <div key={choice.id} className="grid grid-cols-[minmax(0,1fr)_auto] items-baseline gap-x-3"><span className="min-w-0 wrap-anywhere">{choice.option_name}</span>{choice.unit_price_pence > 0 && <span className="text-xs whitespace-nowrap tabular-nums text-muted-foreground">+{money(choice.unit_price_pence)} each</span>}</div>)}</dd>
+          </div>)}
+        </dl>
+      </section>;
+    })}
+  </div>;
+}
+
 export function OrderDetails({ order }: { order: CustomerOrder }) {
   const currentStep = progressSteps.findIndex((status) => status === order.status);
   return <div>
@@ -42,14 +61,11 @@ export function OrderDetails({ order }: { order: CustomerOrder }) {
       : <ol aria-label="Order progress" className="my-8 grid grid-cols-2 gap-5 border-y py-6 sm:grid-cols-4">{progressSteps.map((status, index) => <li key={status} aria-current={index === currentStep ? 'step' : undefined} className={index <= currentStep ? 'text-turquoise' : 'text-muted-foreground'}><span className={`mb-2 flex size-7 items-center justify-center rounded-full border ${index <= currentStep ? 'border-turquoise bg-turquoise/10' : 'border-border'}`}>{index < currentStep ? <Check className="size-4" aria-hidden="true" /> : <span className="text-xs">{index + 1}</span>}</span><span className="text-sm font-medium">{statusLabels[status]}</span></li>)}</ol>}
     <div className="mt-8 grid gap-10 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
       <section aria-labelledby="order-items-title"><h3 id="order-items-title" className="mb-4 text-lg font-semibold">Your Order</h3>
-        <ul className="divide-y">{order.order_items.map((item) => <li key={item.id} className="py-4 first:pt-0"><div className="flex justify-between gap-4 font-medium"><span className="min-w-0 break-words">{item.quantity} x {item.item_name}</span><span className="shrink-0 tabular-nums">{money(item.line_total_pence)}</span></div>
-          <ul className="mt-2 space-y-1 text-sm text-muted-foreground">{item.order_item_modifiers.map((modifier) => <li key={modifier.id}>{modifier.group_name}: {modifier.option_name}{modifier.unit_price_pence > 0 ? ` (+${money(modifier.unit_price_pence)} each)` : ''}</li>)}</ul>
-          {item.allergen_snapshot.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Contains: {item.allergen_snapshot.map(choiceLabel).join(', ')}</p>}
-        </li>)}</ul>
-        <dl className="mt-4 space-y-3 border-t pt-4 text-sm">{([['Subtotal', order.subtotal_pence], ['Service Fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence], ['Total', order.total_pence]] as const).map(([label, value]) => <div key={label} className={`flex justify-between gap-4 ${label === 'Total' ? 'border-t pt-3 text-base font-semibold' : ''}`}><dt>{label}</dt><dd className="tabular-nums">{money(value)}</dd></div>)}</dl>
+        <OrderItems items={order.order_items} />
+        <dl className="mt-4 space-y-3 border-t pt-4 text-sm">{([['Subtotal', order.subtotal_pence], ['Service Fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence], ['Total', order.total_pence]] as const).filter(([label, value]) => value > 0 || label === 'Subtotal' || label === 'Total').map(([label, value]) => <div key={label} className={`flex justify-between gap-4 ${label === 'Total' ? 'border-t pt-3 text-base font-semibold' : ''}`}><dt>{label}</dt><dd className="tabular-nums">{money(value)}</dd></div>)}</dl>
         <p className="mt-4 text-sm text-muted-foreground">{order.payment_method === 'cash' ? 'Cash' : 'Card'} / {paymentLabels[order.payment_status]}{order.payment_method === 'cash' && order.payment_status === 'unpaid' && order.status !== 'cancelled' ? ' - pay at pickup' : ''}</p>
         {['paid', 'partially_refunded', 'refunded'].includes(order.payment_status) && <div className="mt-5 flex flex-wrap gap-3"><Button asChild variant="outline"><a href={`/api/account/orders/${order.id}/receipt`} target="_blank" rel="noopener noreferrer"><ReceiptText />View Receipt</a></Button><Button asChild variant="outline"><a href={`/api/account/orders/${order.id}/receipt?download=1`}><Download />Download Receipt</a></Button></div>}
-        {order.status === 'pending_payment' && <form action={cancelCheckout} className="mt-5"><input type="hidden" name="orderId" value={order.id} /><Button type="submit" variant="outline"><X />Cancel Checkout</Button></form>}
+        {order.status === 'pending_payment' && order.payment_method === 'card' && order.payment_status === 'unpaid' && <PendingCheckoutActions orderId={order.id} />}
         {order.customer_note && <div className="mt-8"><h3 className="mb-2 font-semibold">Your Note</h3><p className="whitespace-pre-wrap break-words text-sm text-muted-foreground">{order.customer_note}</p></div>}
       </section>
       <aside className="min-w-0 space-y-8">
@@ -59,4 +75,11 @@ export function OrderDetails({ order }: { order: CustomerOrder }) {
       </aside>
     </div>
   </div>;
+}
+
+export function OrderItems({ items }: { items: CustomerOrder['order_items'] }) {
+  return <ul className="divide-y">{items.map((item) => <li key={item.id} className="min-w-0 py-5 first:pt-0"><div className="flex flex-wrap justify-between gap-3 text-lg font-semibold"><h4 className="min-w-0 wrap-anywhere">{item.item_name}</h4><span className="shrink-0 tabular-nums">{money(item.line_total_pence)}</span></div><p className="mt-1 text-xs text-muted-foreground">Quantity: {item.quantity}</p>
+    <OrderChoices modifiers={item.order_item_modifiers} />
+    {item.allergen_snapshot.length > 0 && <p className="mt-2 text-xs text-muted-foreground">Contains: {item.allergen_snapshot.map(choiceLabel).join(', ')}</p>}
+  </li>)}</ul>;
 }

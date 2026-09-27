@@ -12,7 +12,7 @@ export default async function AdminPage() {
       adminRows('orders', { select: 'id,order_number,customer_name,status,total_pence,pickup_starts_at', status: 'in.(pending_payment,ordered,preparing,ready_for_pickup)', order: 'pickup_starts_at.asc,id.asc' }),
       adminRows('menu_items', { select: 'id,is_published,is_available', archived_at: 'is.null' }),
       adminRows('events', { select: 'id,title,starts_at,venue_name', ends_at: `gte.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' }),
-      adminRows('business_settings', { order: 'singleton.asc' }),
+      adminRows('business_settings', { select: 'ordering_status,ordering_message,maintenance_enabled,updated_at', order: 'singleton.asc' }),
     ]);
   } catch (failure) { error = adminError(failure); }
   return <DashboardOverview fullName={viewer.profile?.full_name} orders={orders} menu={menu} events={events} settings={settings[0]} error={error} />;

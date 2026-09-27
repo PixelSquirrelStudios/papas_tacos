@@ -146,6 +146,7 @@ test.beforeAll(async () => {
       const aboutSettings = {about_page_heading: 'Our Full Story', about_full_story: '<p>Our rich story.</p>', about_image_path: '/images/tacos.jpg', about_image_alt: 'Homepage featured image', about_page_image_1_path: '/images/tacos.jpg', about_page_image_1_alt: 'Story image one', about_page_image_2_path: '/images/tacos_hero.jpg', about_page_image_2_alt: 'Story image two', about_page_image_3_path: '/images/tacos.jpg', about_page_image_3_alt: 'Story image three'};
       const event = {id: 'fixture', slug: 'street-food-weekend', title: 'Friday Street Food and Live Music at the Riverside Market', venue_name: 'Riverside Market', address_line_1: '123 Market Street', address_line_2: 'By the riverside entrance', town: 'Bristol', postcode: 'BS1 1AA', map_url: null, starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-26T21:00:00Z', pickup_enabled: true, ordering_status: 'open', orders_open_at: null, orders_close_at: null, imageUrl: '/images/tacos_hero.jpg', image_alt: 'Tacos ready for the street food market', description: 'Join us by the river for freshly made tacos, live music and an evening with the whole family. '.repeat(8)};
       if (detail) event.imageUrl = '/images/tacos.jpg';
+      if (params.has('rich')) event.description = '<p onclick="alert(1)"><strong>Fresh tacos</strong> by the river.</p><p>Music all evening.</p><ul><li>Family friendly</li></ul><script>window.__unsafeEvent=true</script>';
       createRoot(document.getElementById('fixture')).render(about ? <main><AboutContent settings={aboutSettings} fullPage /></main> : <main className="page-width py-12"><p className="eyebrow text-primary">Out on the road</p><h1 className="page-title mb-8">{detail ? event.title : 'Find the Truck'}</h1><EventPreview event={event} settings={settings} detail={detail} />{!detail && <EventPreview event={{...event, id: 'second', slug: 'next-stop', title: 'Sunday Market', imageUrl: null, pickup_enabled: false}} settings={settings} />}<SocialLinks settings={settings} /></main>);
     ` },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
@@ -197,6 +198,22 @@ test('About page replaces the homepage feature with up to three stacked story im
   await page.setViewportSize({ width: 320, height: 800 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   expect((await media.boundingBox())!.y).toBeLessThan((await copy.boundingBox())!.y);
+});
+
+test('event descriptions render sanitized rich text in listings and details', async ({ page }) => {
+  await fixture(page);
+  for (const view of ['listing', 'detail']) {
+    await page.goto(`/__public_test?${view}=1&rich=1`);
+    const article = page.getByRole('article').first();
+    await expect(article.locator('strong')).toHaveText('Fresh tacos');
+    await expect(article.locator('li')).toHaveText('Family friendly');
+    await expect(article.locator('script, [onclick]')).toHaveCount(0);
+    await expect(article).not.toContainText('<strong>');
+    expect(await page.evaluate(() => (window as unknown as { __unsafeEvent?: boolean }).__unsafeEvent)).toBeUndefined();
+    if (view === 'detail') {
+      await expect(page.getByRole('region', { name: 'About This Stop' }).locator('p').filter({ hasText: 'Music all evening.' })).toHaveCSS('margin-top', '12px');
+    }
+  }
 });
 
 test('event cards group dates venue pickup and actions with real social brand icons', async ({ page }, testInfo) => {

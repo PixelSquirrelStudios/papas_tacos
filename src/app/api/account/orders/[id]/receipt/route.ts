@@ -3,6 +3,7 @@ import { getViewer } from '@/lib/auth/session';
 import { getCustomerOrder } from '@/lib/account/data';
 import { paymentDatabase } from '@/lib/payments/server';
 import { createReceipt } from '@/lib/payments/receipt';
+import { getSettings } from '@/lib/catalogue/data';
 
 export const runtime = 'nodejs';
 
@@ -18,7 +19,10 @@ export async function GET(request: Request, { params }: { params: Promise<{ id: 
     const { data: payment, error } = await paymentDatabase().from('payments').select('paid_at,refunded_pence')
       .eq('order_id', id).in('status', ['succeeded', 'partially_refunded', 'refunded']).single();
     if (error || !payment?.paid_at) return new Response('Receipt is temporarily unavailable.', { status: 503, headers });
-    const pdf = await createReceipt(order, { paidAt: payment.paid_at, refunded: payment.refunded_pence });
+    const settings = await getSettings();
+    const pdf = await createReceipt(order, { paidAt: payment.paid_at, refunded: payment.refunded_pence }, {
+      email: settings?.contact_email, phone: settings?.contact_phone, website: process.env.SITE_URL,
+    });
     const disposition = new URL(request.url).searchParams.get('download') === '1' ? 'attachment' : 'inline';
     return new Response(Buffer.from(pdf), { headers: { ...headers, 'Content-Type': 'application/pdf', 'Content-Disposition': `${disposition}; filename="papas-tacos-receipt-${order.order_number}.pdf"` } });
   } catch {

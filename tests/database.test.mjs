@@ -5,6 +5,8 @@ import { PGlite } from '@electric-sql/pglite';
 import { categorySchema, itemSchema, groupSchema, optionSchema, associationSchema } from '../src/lib/catalogue/types.ts';
 import { parseBag, quoteLine } from '../src/lib/bag.ts';
 import { aboutDefaults } from '../src/lib/catalogue/about.ts';
+import { publicUpdateTables, adminUpdateTables } from '../src/lib/site-updates.ts';
+import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
 
 const adminId = '00000000-0000-4000-8000-000000000001';
 const customerId = '00000000-0000-4000-8000-000000000002';
@@ -12,6 +14,240 @@ const otherCustomerId = '00000000-0000-4000-8000-000000000003';
 const eventId = '00000000-0000-4000-8000-000000000010';
 const slotId = '00000000-0000-4000-8000-000000000020';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
+
+test('nested modifiers enforce valid hierarchies and price repeated choices independently at checkout', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const category = (await database.query("insert into public.menu_categories(name, slug, is_published) values ('Meals', 'meals', true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id, name, slug, price_pence, is_published, is_available) values ($1, 'Two Parts', 'two-parts', 1000, true, true) returning *", [category])).rows[0];
+    const groups = [];
+    for (const name of ['Part One', 'Part Two', 'Sauces', 'Extras', 'Too Deep']) groups.push((await database.query('insert into public.modifier_groups(name, min_selections, max_selections, is_published) values ($1, 0, 2, true) returning *', [name])).rows[0]);
+    const [first, second, sauce, extras, deep] = groups;
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query('update public.modifier_groups set child_group_ids = $1 where id = $2 returning id', [[sauce.id], first.id])).rows.length, 0);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      for (const parent of [first, second]) await database.query('update public.modifier_groups set child_group_ids = $1 where id = $2', [[sauce.id], parent.id]);
+      await database.query('update public.modifier_groups set child_group_ids = $1 where id = $2', [[extras.id], sauce.id]);
+      await assert.rejects(database.query('update public.modifier_groups set child_group_ids = $1 where id = $2', [[deep.id], extras.id]), /three levels/);
+      await assert.rejects(database.query('update public.modifier_groups set child_group_ids = $1 where id = $2', [[first.id], sauce.id]), /acyclic/);
+      for (const children of [[first.id], [sauce.id, sauce.id], [null], [crypto.randomUUID()]]) await assert.rejects(database.query('update public.modifier_groups set child_group_ids = $1 where id = $2', [children, first.id]), /nested modifier/);
+      await assert.rejects(database.query('delete from public.modifier_groups where id = $1', [sauce.id]), /parent groups/);
+    });
+    await database.query('update public.modifier_groups set min_selections = 1 where id = $1', [sauce.id]);
+    for (const parent of [first, second]) await database.query('insert into public.menu_item_modifier_groups(menu_item_id, modifier_group_id) values ($1,$2)', [item.id, parent.id]);
+    const options = [];
+    for (const [name, price] of [['Hot', 100], ['Mild', 50], ['Smoky', 75]]) options.push((await database.query("insert into public.modifier_options(modifier_group_id, name, price_pence, allergens) values ($1,$2,$3,array['milk']) returning *", [sauce.id, name, price])).rows[0]);
+    const freshGroups = (await database.query('select * from public.modifier_groups')).rows.map((group) => ({ ...group, options: options.filter((option) => option.modifier_group_id === group.id) }));
+    const expanded = expandModifierGroups([first.id, second.id], freshGroups);
+    const choices = [`${first.id}/${sauce.id}:${options[0].id}`, `${first.id}/${sauce.id}:${options[1].id}`, `${second.id}/${sauce.id}:${options[0].id}`];
+    const line = { itemId: item.id, optionIds: choices, quantity: 2 };
+    const quote = quoteLine(line, [{ ...item, groups: expanded }]);
+    assert.equal(quote.issue, '');
+    assert.equal(quote.total, 2500);
+    const body = { slotId, name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '', expectedTotal: quote.total, lines: [line] };
+    const reserve = (input = body, key = crypto.randomUUID()) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, key, input]);
+    await asRole(database, 'service_role', null, async () => {
+      for (const optionIds of [[...choices, choices[0]], [options[0].id], [`${extras.id}/${sauce.id}:${options[0].id}`]]) await assert.rejects(reserve({ ...body, lines: [{ ...line, optionIds }] }), /choice/);
+      await assert.rejects(reserve({ ...body, lines: [{ ...line, optionIds: choices.slice(0, 2) }] }), /required choices/);
+      await assert.rejects(reserve({ ...body, lines: [{ ...line, optionIds: [...choices, `${first.id}/${sauce.id}:${options[2].id}`] }] }), /required choices/);
+      await assert.rejects(reserve({ ...body, expectedTotal: 1 }), /Prices have changed/);
+      const key = crypto.randomUUID();
+      const order = (await reserve(body, key)).rows[0];
+      assert.equal((await reserve(body, key)).rows[0].id, order.id);
+      assert.equal(order.total_pence, quote.total);
+    });
+    const snapshots = (await database.query('select * from public.order_item_modifiers order by group_name, option_name')).rows;
+    assert.equal(snapshots.length, 3);
+    assert.equal(snapshots.filter((snapshot) => snapshot.modifier_option_id === options[0].id).length, 2);
+    assert.deepEqual(snapshots.map((snapshot) => snapshot.group_name), ['Part One / Sauces', 'Part One / Sauces', 'Part Two / Sauces']);
+    assert.deepEqual((await database.query('select allergen_snapshot from public.order_items')).rows[0].allergen_snapshot, ['milk']);
+    for (const file of ['034_modifier_group_nesting.sql', '035_order_item_modifier_paths.sql', '036_nested_modifier_checkout.sql']) await database.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
+    assert.deepEqual((await database.query('select * from public.order_item_modifiers order by group_name, option_name')).rows, snapshots);
+    await database.query('update public.modifier_groups set is_published = false where id = $1', [sauce.id]);
+    await assert.rejects(reserve(), /choice/);
+  } finally { await database.close(); }
+});
+
+test('maintenance restricts access to admins without overriding ordering and nested validation', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    await database.exec("update public.events set starts_at = now() - interval '1 hour'; update public.business_settings set maintenance_enabled = true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','tacos',500,true,true) returning id", [category])).rows[0].id;
+    const child = (await database.query("insert into public.modifier_groups(name,min_selections,is_published) values ('Sauces',1,true) returning id")).rows[0].id;
+    const root = (await database.query("insert into public.modifier_groups(name,child_group_ids,is_published) values ('Taco 1',$1,true) returning id", [[child]])).rows[0].id;
+    await database.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values ($1,$2)', [item,root]);
+    const option = (await database.query("insert into public.modifier_options(modifier_group_id,name,price_pence) values ($1,'Hot',100) returning id", [child])).rows[0].id;
+    const body = { slotId, name: 'Test Admin', email: 'admin@example.test', phone: '07000000000', note: '', expectedTotal: 600, lines: [{ itemId: item, optionIds: [`${root}/${child}:${option}`], quantity: 1 }] };
+    const reserve = (customer = adminId, payload = body) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customer,crypto.randomUUID(),payload]);
+    for (const [role, user] of [['anon', null], ['authenticated', customerId], ['authenticated', adminId]]) await asRole(database, role, user, async () => {
+      await assert.rejects(reserve(), /permission denied/);
+    });
+    await asRole(database, 'service_role', null, async () => {
+      for (const customer of [customerId, otherCustomerId, crypto.randomUUID()]) await assert.rejects(reserve(customer, { ...body, role: 'admin' }), /Card checkout is unavailable/);
+      await assert.rejects(reserve(adminId, { ...body, lines: [{ ...body.lines[0], optionIds: [] }] }), /required choices/);
+      await assert.rejects(reserve(adminId, { ...body, expectedTotal: 1 }), /Prices have changed/);
+      for (const status of ['closed', 'paused']) {
+        await database.query('update public.business_settings set ordering_status = $1', [status]);
+        await assert.rejects(reserve(), /Ordering unavailable/);
+      }
+      await database.exec("update public.business_settings set ordering_status = 'open', card_enabled = false");
+      await assert.rejects(reserve(), /Card checkout is unavailable/);
+      await database.exec("update public.business_settings set card_enabled = true; update public.events set pickup_enabled = false");
+      await assert.rejects(reserve(), /Ordering unavailable/);
+      await database.exec("update public.events set pickup_enabled = true; update public.pickup_slots set starts_at = now() + interval '1 minute', ends_at = now() + interval '16 minutes'");
+      await assert.rejects(reserve(), /preparation lead time/);
+      await database.exec("update public.pickup_slots set starts_at = now() + interval '2 hours', ends_at = now() + interval '2 hours 15 minutes'");
+      const order = (await reserve()).rows[0];
+      assert.equal(order.customer_id, adminId);
+      assert.equal(order.total_pence, 600);
+      assert.equal((await database.query('select group_name from public.order_item_modifiers')).rows[0].group_name, 'Taco 1 / Sauces');
+      await database.exec('update public.business_settings set maintenance_enabled = false');
+      await reserve(customerId);
+      await assert.rejects(reserve(), /slot is full/);
+      await database.exec('update public.business_settings set maintenance_enabled = true');
+    });
+    await database.query("update public.profiles set role = 'customer' where id = $1", [adminId]);
+    await assert.rejects(reserve(), /Card checkout is unavailable/);
+    const definition = (await database.query("select pg_get_functiondef('public.reserve_card_order(uuid,uuid,jsonb)'::regprocedure) as body")).rows[0].body;
+    await database.exec(await readFile(new URL('043_maintenance_ordering_access.sql', sqlDirectory), 'utf8'));
+    assert.equal((await database.query("select pg_get_functiondef('public.reserve_card_order(uuid,uuid,jsonb)'::regprocedure) as body")).rows[0].body, definition);
+  } finally { await database.close(); }
+});
+
+test('checkout pickup lookup enforces maintenance access and ordering gates for every role', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    await database.exec("update public.events set starts_at=now()-interval '1 hour'; update public.business_settings set maintenance_enabled=true");
+    const choices = () => database.query('select * from public.get_checkout_pickup_choices()');
+    for (const [role, user] of [['anon', null], ['authenticated', customerId]]) await asRole(database, role, user, async () => assert.equal((await choices()).rows.length, 0));
+    await asRole(database, 'authenticated', adminId, async () => {
+      assert.equal((await choices()).rows[0].status, 'available');
+      for (const ordering_status of ['closed', 'paused']) {
+        await database.query('update public.business_settings set ordering_status=$1', [ordering_status]);
+        assert.equal((await choices()).rows.length, 0);
+      }
+      await database.exec("update public.business_settings set ordering_status='open',card_enabled=false");
+      assert.equal((await choices()).rows.length, 0);
+      await database.exec('update public.business_settings set card_enabled=true');
+      for (const condition of ["ordering_status='closed'", "pickup_enabled=false", "is_published=false", "orders_open_at=now()+interval '30 minutes'"]) {
+        await database.exec(`update public.events set ${condition}`);
+        assert.equal((await choices()).rows.length, 0);
+        await database.exec("update public.events set ordering_status='open',pickup_enabled=true,is_published=true,orders_open_at=null");
+      }
+      await database.exec('update public.business_settings set maintenance_enabled=false');
+    });
+    await asRole(database, 'anon', null, async () => assert.equal((await choices()).rows[0].status, 'available'));
+  } finally { await database.close(); }
+});
+
+test('pickup schedules generate one-order windows and protect bookings, locks and privacy', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const eventTimes = (await database.query('select starts_at, ends_at from public.events where id=$1', [eventId])).rows[0];
+    const start = new Date(Date.now() + 120 * 60000).toISOString();
+    const end = new Date(Date.parse(start) + 65 * 60000).toISOString();
+    const create = () => database.query('insert into public.pickup_schedules(event_id,starts_at,ends_at,preparation_minutes) values ($1,$2,$3,20) returning *', [eventId,start,end]);
+    await asRole(database,'authenticated',customerId,async () => { await assert.rejects(create(), /row-level security/); });
+    const schedule = await asRole(database,'authenticated',adminId,async () => (await create()).rows[0]);
+    assert.deepEqual((await database.query('select starts_at, ends_at from public.events where id=$1', [eventId])).rows[0], eventTimes);
+    await assert.rejects(database.query("update public.pickup_schedules set starts_at=$1::timestamptz-interval '1 minute' where id=$2", [eventTimes.starts_at, schedule.id]), /within the event/);
+    await assert.rejects(database.query("update public.pickup_schedules set ends_at=$1::timestamptz+interval '1 minute' where id=$2", [eventTimes.ends_at, schedule.id]), /within the event/);
+    const rows = (await database.query('select * from public.pickup_slots order by starts_at')).rows;
+    assert.equal(rows.length,3);
+    assert.ok(rows.every((row) => row.capacity === 1));
+    assert.equal(new Date(rows[2].ends_at).getTime(),Date.parse(start)+60*60000);
+    assert.equal((await database.query('select pickup_lead_minutes from public.events')).rows[0].pickup_lead_minutes,20);
+    const lock = () => database.query('select * from public.admin_lock_pickup_slot($1,$2,true)',[rows[1].id,rows[1].updated_at]);
+    await asRole(database,'authenticated',customerId,async () => { await assert.rejects(lock(), /Admin access required/); });
+    await asRole(database,'authenticated',adminId,async () => { await lock(); await assert.rejects(lock(), /changed/); });
+    await database.query('update public.pickup_schedules set ends_at = ends_at where id = $1',[schedule.id]);
+    assert.deepEqual((await database.query('select starts_at, ends_at from public.events where id=$1', [eventId])).rows[0], eventTimes);
+    assert.equal((await database.query('select is_enabled from public.pickup_slots where id=$1',[rows[1].id])).rows[0].is_enabled,false);
+    await database.query(`insert into public.orders(checkout_key,customer_id,event_id,pickup_slot_id,customer_name,customer_email,customer_phone,payment_method,status,subtotal_pence)
+      values(gen_random_uuid(),$1,$2,$3,'Customer','customer@example.test','07000000000','cash','ordered',850)`,[customerId,eventId,rows[0].id]);
+    await assert.rejects(database.query('update public.pickup_schedules set preparation_minutes=15 where id=$1',[schedule.id]),/booked pickup time/);
+    await asRole(database,'authenticated',adminId,async () => { await assert.rejects(database.query('select public.admin_lock_pickup_slot($1,$2,true)',[rows[0].id,rows[0].updated_at]),/taken slot/); });
+    await asRole(database,'anon',null,async () => {
+      const choices = (await database.query('select * from public.get_pickup_choices($1)',[eventId])).rows;
+      assert.deepEqual(choices.map((row) => row.status),['taken','locked','available']);
+      assert.ok(choices.every((row) => !('customer_id' in row)));
+      await assert.rejects(database.query('select * from public.pickup_schedules'),/permission denied/);
+    });
+    await database.exec('update public.business_settings set maintenance_enabled=true');
+    await asRole(database,'anon',null,async () => { assert.equal((await database.query('select * from public.get_pickup_choices()')).rows.length,0); });
+    for (const file of ['039_pickup_schedules.sql','040_pickup_availability.sql','041_preserve_event_times.sql','041_preserve_event_times.sql']) await database.exec(await readFile(new URL(file,sqlDirectory),'utf8'));
+    await database.query('update public.pickup_schedules set ends_at = ends_at where id = $1',[schedule.id]);
+    assert.deepEqual((await database.query('select starts_at, ends_at from public.events where id=$1', [eventId])).rows[0], eventTimes);
+    assert.equal((await database.query('select * from public.pickup_slots')).rows.length,3);
+  } finally { await database.close(); }
+});
+
+test('realtime publication is repeatable and retains table access policies', async () => {
+  const database = await createDatabase();
+  try {
+    const expected = [...publicUpdateTables, ...adminUpdateTables].sort();
+    const published = () => database.query("select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by tablename");
+    assert.deepEqual((await published()).rows.map((row) => row.tablename), expected);
+    const permissions = (await database.query("select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by table_name, grantee, privilege_type")).rows;
+    await database.exec(await readFile(new URL('033_realtime_updates.sql', sqlDirectory), 'utf8'));
+    assert.deepEqual((await published()).rows.map((row) => row.tablename), expected);
+    assert.deepEqual((await database.query("select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by table_name, grantee, privilege_type")).rows, permissions);
+    for (const table of expected) assert.equal((await database.query("select relrowsecurity from pg_class where oid = $1::regclass", [`public.${table}`])).rows[0].relrowsecurity, true);
+  } finally { await database.close(); }
+});
+
+test('menu item and modifier assignments save atomically with admin and version checks', async () => {
+  const database = await createDatabase();
+  try {
+    const category = (await database.query("insert into public.menu_categories(name, slug, is_published) values ('Drinks', 'drinks', true) returning id")).rows[0].id;
+    const group = (await database.query("insert into public.modifier_groups(name, is_published) values ('Flavour', true) returning id")).rows[0].id;
+    const values = { category_id: category, name: 'Jarritos', slug: 'jarritos', description: '', price_pence: 300, image_path: null, image_alt: '', dietary_tags: [], allergens: [], allergen_note: '', is_published: true, is_available: true, is_featured: false, is_crowd_favourite: false };
+    const save = (id = null, version = null, body = values, groups = [group]) => database.query('select * from public.admin_save_menu_item($1, $2, $3, $4)', [id, version, body, groups]);
+    await asRole(database, 'anon', null, async () => { await assert.rejects(save(), /permission denied/); });
+    await asRole(database, 'authenticated', customerId, async () => { await assert.rejects(save(), /Admin access required/); });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await assert.rejects(save(null, null, values, [customerId]), /Unknown group/);
+      assert.equal((await database.query('select * from public.menu_items')).rows.length, 0);
+      const item = (await save()).rows[0];
+      assert.deepEqual((await database.query('select modifier_group_id from public.menu_item_modifier_groups where menu_item_id = $1', [item.id])).rows, [{ modifier_group_id: group }]);
+      await assert.rejects(save(item.id, '2020-01-01T00:00:00Z'), /Item changed/);
+      await assert.rejects(save(item.id, item.updated_at, { ...values, name: 'Changed' }, [group, group]), /Invalid groups/);
+      assert.equal((await database.query('select name from public.menu_items where id = $1', [item.id])).rows[0].name, 'Jarritos');
+      await assert.rejects(save(item.id, item.updated_at, { ...values, archived_at: new Date().toISOString() }), /Unsupported menu item field/);
+      await save(item.id, item.updated_at, { ...values, name: 'Jarritos Drink' }, []);
+      assert.equal((await database.query('select * from public.menu_item_modifier_groups where menu_item_id = $1', [item.id])).rows.length, 0);
+    });
+    await database.exec(await readFile(new URL('032_menu_item_modifier_save.sql', sqlDirectory), 'utf8'));
+  } finally { await database.close(); }
+});
+
+test('modifier option content defaults are compatible and writes remain admin-only', async () => {
+  const database = await createDatabase();
+  try {
+    const group = (await database.query("insert into public.modifier_groups(name, is_published) values ('Flavour', true) returning id")).rows[0].id;
+    const option = (await database.query("insert into public.modifier_options(modifier_group_id, name) values ($1, 'Mexican Cola') returning *", [group])).rows[0];
+    assert.equal(option.description, '');
+    assert.equal(option.image_path, null);
+    await asRole(database, 'authenticated', customerId, async () => {
+      assert.equal((await database.query("update public.modifier_options set description = 'Not allowed' where id = $1 returning id", [option.id])).rows.length, 0);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      await database.query("update public.modifier_options set description = '<p>Mexican cola</p>', image_path = 'images/menu/cola.jpg', image_alt = 'Cola bottle' where id = $1", [option.id]);
+      await assert.rejects(database.query('update public.modifier_options set description = $1 where id = $2', ['x'.repeat(10001), option.id]), /check constraint/);
+    });
+    await database.exec(await readFile(new URL('031_modifier_option_content.sql', sqlDirectory), 'utf8'));
+    await asRole(database, 'anon', null, async () => {
+      const content = (await database.query('select description, image_path, image_alt from public.modifier_options where id = $1', [option.id])).rows[0];
+      assert.deepEqual(content, { description: '<p>Mexican cola</p>', image_path: 'images/menu/cola.jpg', image_alt: 'Cola bottle' });
+    });
+  } finally { await database.close(); }
+});
 
 test('order confirmation delivery records are private, unique and preserve email snapshots', async () => {
   const database = await createDatabase();
@@ -34,6 +270,42 @@ test('order confirmation delivery records are private, unique and preserve email
     const delivery = (await database.query('select * from public.order_confirmation_emails')).rows[0];
     assert.equal(delivery.resend_email_id, 'email_123');
     assert.equal(delivery.payload.subject, 'Order confirmed');
+  } finally { await database.close(); }
+});
+
+test('near pickup checkout uses preparation only and refunds late payments without rejecting delayed webhooks', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    await database.exec("update public.events set starts_at=now()-interval '1 hour', pickup_lead_minutes=10; update public.pickup_slots set starts_at=now()+interval '15 minutes', ends_at=now()+interval '25 minutes', capacity=1");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Quick','quick',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Taco','quick-taco',500,true,true) returning id", [category])).rows[0].id;
+    const payload = { slotId, name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '', expectedTotal: 500, lines: [{ itemId: item, optionIds: [], quantity: 1 }] };
+    const reserve = () => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), payload]);
+    assert.equal((await database.query('select status from public.get_pickup_choices($1)', [eventId])).rows[0].status, 'available');
+    const order = (await reserve()).rows[0];
+    const deadline = new Date(order.reservation_expires_at).getTime();
+    assert.ok(deadline > Date.now());
+    assert.ok(deadline < Date.now() + 6 * 60000);
+    await database.query("select public.attach_stripe_checkout($1,'cs_quick',now()+interval '2 hours')", [order.id]);
+    assert.equal(new Date((await database.query('select reservation_expires_at from public.orders where id=$1', [order.id])).rows[0].reservation_expires_at).getTime(), deadline);
+    await assert.rejects(reserve(), /slot is full/);
+    const late = ['evt_quick_late', 'checkout.session.completed', order.id, 'cs_quick', 'pi_quick', 500, 'gbp', order.reservation_expires_at];
+    for (let attempt = 0; attempt < 2; attempt++) assert.equal((await database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7,$8) as refund', late)).rows[0].refund, true);
+    const cancelled = (await database.query('select * from public.orders where id=$1', [order.id])).rows[0];
+    assert.equal(cancelled.status, 'cancelled');
+    assert.equal(cancelled.payment_status, 'paid');
+    assert.match(cancelled.cancellation_reason, /deadline/);
+    await database.query("select public.process_stripe_refund('evt_quick_refund','pi_quick',500)");
+    assert.equal((await database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7,$8) as refund', late)).rows[0].refund, false);
+
+    const timely = (await reserve()).rows[0];
+    await database.query("update public.orders set reservation_expires_at=now()-interval '1 minute' where id=$1", [timely.id]);
+    await assert.rejects(reserve(), /slot is full/);
+    const delayed = ['evt_quick_delayed', 'checkout.session.completed', timely.id, 'cs_timely', 'pi_timely', 500, 'gbp', new Date(Date.now() - 2 * 60000).toISOString()];
+    assert.equal((await database.query('select public.process_stripe_checkout($1,$2,$3,$4,$5,$6,$7,$8) as refund', delayed)).rows[0].refund, false);
+    assert.equal((await database.query('select status from public.orders where id=$1', [timely.id])).rows[0].status, 'ordered');
+    await database.exec(await readFile(new URL('042_pickup_payment_deadlines.sql', sqlDirectory), 'utf8'));
   } finally { await database.close(); }
 });
 
@@ -400,6 +672,43 @@ async function insertOrder(database, paymentMethod = 'cash', orderCustomerId = c
   });
 }
 
+test('status email queue snapshots each stage atomically and is service-only', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const order = await insertOrder(database);
+    assert.equal((await database.query('select * from public.order_status_emails')).rows.length, 0);
+    await asRole(database, 'authenticated', adminId, async () => {
+      await database.query("select public.admin_set_order_status($1, 'preparing')", [order.id]);
+      await database.query("select public.admin_set_order_status($1, 'ready_for_pickup')", [order.id]);
+      await database.query('select public.admin_mark_cash_paid($1)', [order.id]);
+      await database.query("select public.admin_set_order_status($1, 'collected')", [order.id]);
+    });
+    const rows = (await database.query('select * from public.order_status_emails order by sequence')).rows;
+    assert.deepEqual(rows.map((row) => row.status), ['preparing', 'ready_for_pickup', 'collected']);
+    assert.deepEqual(rows.map((row) => row.order_snapshot.status), ['preparing', 'ready_for_pickup', 'collected']);
+    assert.ok(rows.every((row) => row.order_snapshot.customer_email === 'customer@example.test' && row.payload === null));
+    for (const role of ['anon', 'authenticated']) await asRole(database, role, customerId, async () => {
+      await assert.rejects(database.query('select * from public.order_status_emails'), /permission denied/);
+    });
+    await asRole(database, 'service_role', null, async () => {
+      assert.equal((await database.query('select * from public.order_status_emails')).rows.length, 3);
+      await assert.rejects(database.query("update public.order_status_emails set order_snapshot = '{}'::jsonb"), /permission denied/);
+    });
+    await database.exec(await readFile(new URL('044_order_status_emails.sql', sqlDirectory), 'utf8'));
+    assert.equal((await database.query('select * from public.order_status_emails')).rows.length, 3);
+    const cancelled = await insertOrder(database);
+    await database.exec('begin');
+    await asRole(database, 'authenticated', adminId, () => database.query("select public.admin_set_order_status($1, 'cancelled', 'No longer needed')", [cancelled.id]));
+    await database.exec('rollback');
+    assert.equal((await database.query('select * from public.order_status_emails where order_id = $1', [cancelled.id])).rows.length, 0);
+    await asRole(database, 'authenticated', adminId, () => database.query("select public.admin_set_order_status($1, 'cancelled', 'No longer needed')", [cancelled.id]));
+    const notification = (await database.query('select * from public.order_status_emails where order_id = $1', [cancelled.id])).rows[0];
+    assert.equal(notification.status, 'cancelled');
+    assert.equal(notification.order_snapshot.cancellation_reason, 'No longer needed');
+  } finally { await database.close(); }
+});
+
 test('SQL installs; profiles are automatic, private, and cannot self-promote', async () => {
   const database = await createDatabase();
   try {
@@ -641,7 +950,7 @@ test('item snapshots preserve prices and nested order details respect ownership'
       await assert.rejects(database.exec('delete from public.stripe_webhook_events'), /permission denied/);
     });
     const { rows: tables } = await database.query("select relname, relrowsecurity from pg_class join pg_namespace on pg_namespace.oid = relnamespace where nspname = 'public' and relkind = 'r'");
-    assert.equal(tables.length, 16);
+    assert.equal(tables.length, 18);
     assert.ok(tables.every((table) => table.relrowsecurity));
   } finally {
     await database.close();

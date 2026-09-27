@@ -4,10 +4,12 @@ import { createContext, useContext, useEffect, useState } from 'react';
 import { lineKey, mergeLine, parseBag, type BagLine } from '@/lib/bag';
 import type { Catalogue, Settings, TruckEvent } from '@/lib/catalogue/types';
 import { canOrder } from '@/lib/catalogue/format';
+import { catalogueRequestEvent, catalogueUpdateEvent, siteUpdateEvent } from '@/lib/site-updates';
 
 const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
   lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null; orderingOpen: boolean;
+  collectionEvents: TruckEvent[];
   add: (line: BagLine, replacing?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
   clearIfMatches: (purchased: BagLine[]) => void;
 };
@@ -20,6 +22,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
   const [now, setNow] = useState(0);
   const orderingOpen = data.catalogue.available && canOrder(data.events ?? [], data.settings, now);
+  const collectionEvents = (data.events ?? []).filter((event) => canOrder([event], data.settings, now));
 
   useEffect(() => {
     const current = Date.now();
@@ -30,13 +33,33 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     const controller = new AbortController();
+    let refreshing = false;
+    let refreshQueued = false;
+    let snapshot = '';
     async function refresh() {
+      if (controller.signal.aborted || document.visibilityState === 'hidden' || location.pathname.startsWith('/admin')) return;
+      if (refreshing) { refreshQueued = true; return; }
+      refreshing = true;
+      const request = new AbortController();
+      const timeout = window.setTimeout(() => request.abort(), 12000);
       try {
-        const response = await fetch('/api/catalogue', { cache: 'no-store', signal: controller.signal });
+        const response = await fetch('/api/catalogue', { cache: 'no-store', signal: AbortSignal.any([controller.signal, request.signal]) });
         if (!response.ok) throw new Error('Catalogue unavailable');
-        setData(await response.json());
+        const next = await response.json();
+        if (controller.signal.aborted || request.signal.aborted) return;
+        const serialized = JSON.stringify(next);
+        const changed = snapshot !== '' && snapshot !== serialized;
+        snapshot = serialized;
+        setData(next);
         setNow(Date.now());
-      } catch { if (!controller.signal.aborted) setData({ catalogue: { items: [], categories: [], available: false }, settings: null }); }
+        if (changed) window.dispatchEvent(new Event(catalogueUpdateEvent));
+      } catch {
+        if (!controller.signal.aborted) setData((previous) => ({ catalogue: { ...previous.catalogue, available: false }, settings: null }));
+      } finally {
+        window.clearTimeout(timeout);
+        refreshing = false;
+        if (refreshQueued && !controller.signal.aborted) { refreshQueued = false; void refresh(); }
+      }
     }
     async function hydrate() {
       let stored: BagLine[] = [];
@@ -52,8 +75,23 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     void hydrate(); void refresh();
     window.addEventListener('storage', syncStorage);
     window.addEventListener('focus', refresh);
-    const interval = window.setInterval(refresh, 60000);
-    return () => { controller.abort(); window.removeEventListener('storage', syncStorage); window.removeEventListener('focus', refresh); window.clearInterval(interval); };
+    window.addEventListener('online', refresh);
+    window.addEventListener('pageshow', refresh);
+    window.addEventListener(siteUpdateEvent, refresh);
+    window.addEventListener(catalogueRequestEvent, refresh);
+    document.addEventListener('visibilitychange', refresh);
+    const interval = window.setInterval(refresh, 15000);
+    return () => {
+      controller.abort();
+      window.removeEventListener('storage', syncStorage);
+      window.removeEventListener('focus', refresh);
+      window.removeEventListener('online', refresh);
+      window.removeEventListener('pageshow', refresh);
+      window.removeEventListener(siteUpdateEvent, refresh);
+      window.removeEventListener(catalogueRequestEvent, refresh);
+      document.removeEventListener('visibilitychange', refresh);
+      window.clearInterval(interval);
+    };
   }, []);
 
   function save(next: BagLine[]) {
@@ -62,7 +100,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     catch { setStorageError(true); }
   }
   function add(line: BagLine, replacing?: string) {
-    if (!data.catalogue.available || !canOrder(data.events ?? [], data.settings)) return;
+    if (!data.catalogue.available || !canOrder(data.events ?? [], data.settings, Date.now())) return;
     save(mergeLine(replacing ? lines.filter((candidate) => lineKey(candidate) !== replacing) : lines, line));
   }
   function setQuantity(key: string, quantity: number) {
@@ -72,7 +110,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   function clearIfMatches(purchased: BagLine[]) {
     if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) save([]);
   }
-  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
 }
 
 export function PaidOrderBagCleanup({ orderId }: { orderId: string }) {

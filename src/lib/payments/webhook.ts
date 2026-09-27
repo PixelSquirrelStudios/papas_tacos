@@ -11,10 +11,12 @@ export async function applyStripeEvent(event: Stripe.Event) {
     if (session.metadata?.integration !== 'papas_tacos') return;
     if (event.type === 'checkout.session.completed' && session.payment_status !== 'paid') return;
     if (!session.metadata.order_id || session.amount_total === null || session.currency !== 'gbp') throw new Error('Invalid checkout event');
+    if (!Number.isSafeInteger(event.created) || event.created <= 0) throw new Error('Invalid payment timestamp');
     const intent = typeof session.payment_intent === 'string' ? session.payment_intent : session.payment_intent?.id ?? null;
     const { data: refundRequired, error } = await database.rpc('process_stripe_checkout', {
       event_id: event.id, event_kind: event.type, order_uuid: session.metadata.order_id,
       session_id: session.id, intent_id: intent, amount: session.amount_total, payment_currency: session.currency,
+      occurred_at: new Date(event.created * 1000).toISOString(),
     });
     if (error) throw new Error('Payment update failed');
     if (refundRequired && intent) {

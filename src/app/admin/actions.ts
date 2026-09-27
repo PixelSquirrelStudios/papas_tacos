@@ -5,17 +5,19 @@ import { z } from 'zod';
 import { requireAdmin } from '@/lib/auth/session';
 import { adminError, adminRequest, AdminDataError } from '@/lib/admin/data';
 import { getResource, resourceSchema } from '@/lib/admin/resources';
+import { sendOrderStatusEmails } from '@/lib/payments/send-status-emails';
 
-export type AdminResult = { ok: boolean; error?: string; fields?: Record<string, string>; id?: string };
+export type AdminResult = { ok: boolean; error?: string; warning?: string; fields?: Record<string, string>; id?: string };
 const identity = z.guid();
 const version = z.iso.datetime({ offset: true });
 
-function refresh() {
-  revalidatePath('/admin', 'layout');
-  revalidatePath('/', 'layout');
+function refresh(key: string) {
+  revalidatePath('/admin', 'page');
+  revalidatePath(`/admin/${key}`);
+  revalidatePath(`/admin/${key}/reorder`);
 }
 
-export async function saveRecord(key: string, id: string | null, updatedAt: string | null, values: unknown): Promise<AdminResult> {
+export async function saveRecord(key: string, id: string | null, updatedAt: string | null, values: unknown, groupIds?: string[]): Promise<AdminResult> {
   await requireAdmin();
   const resource = getResource(key);
   if (!resource) return { ok: false, error: 'Unknown resource.' };
@@ -23,12 +25,16 @@ export async function saveRecord(key: string, id: string | null, updatedAt: stri
   if (!parsed.success) return { ok: false, error: 'Check the highlighted fields.', fields: Object.fromEntries(parsed.error.issues.map((issue) => [String(issue.path[0]), issue.message])) };
   if (id && !identity.safeParse(id).success) return { ok: false, error: 'Invalid record ID.' };
   if ((id || resource.singleton) && !version.safeParse(updatedAt).success) return { ok: false, error: 'Refresh to load the current version.' };
+  if (groupIds !== undefined && (key !== 'menu' || !z.array(identity).max(30).refine((ids) => new Set(ids).size === ids.length).safeParse(groupIds).success)) return { ok: false, error: 'Invalid modifier assignment.' };
   try {
     const editing = Boolean(id || resource.singleton);
     const query = editing ? { ...(resource.singleton ? { singleton: 'eq.true' } : { id: `eq.${id}` }), updated_at: `eq.${updatedAt}`, select: '*' } : { select: '*' };
-    const result = await adminRequest(resource.table, query, editing ? 'PATCH' : 'POST', parsed.data);
+    const payload = { ...parsed.data };
+    const result = key === 'menu' && groupIds !== undefined
+      ? await adminRequest('rpc/admin_save_menu_item', {}, 'POST', { item_id: id, expected_updated_at: updatedAt, item_values: parsed.data, group_ids: groupIds })
+      : await adminRequest(resource.table, query, editing ? 'PATCH' : 'POST', payload);
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This record changed or was removed. Refresh before editing again.');
-    refresh();
+    refresh(key);
     return { ok: true, id: result[0].id };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -41,7 +47,7 @@ export async function removeRecord(key: string, id: string, updatedAt: string, a
   try {
     const result = await adminRequest(resource.table, { id: `eq.${id}`, updated_at: `eq.${updatedAt}` }, archive ? 'PATCH' : 'DELETE', archive ? { archived_at: new Date().toISOString(), is_published: false, is_available: false } : undefined);
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This record changed or was removed. Refresh before trying again.');
-    refresh();
+    refresh(key);
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -52,7 +58,7 @@ export async function unarchiveMenuItem(id: string, updatedAt: string): Promise<
   try {
     const result = await adminRequest('menu_items', { id: `eq.${id}`, updated_at: `eq.${updatedAt}`, archived_at: 'not.is.null' }, 'PATCH', { archived_at: null, is_published: false, is_available: false });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This item changed or is no longer archived. Refresh before trying again.');
-    refresh();
+    refresh('menu');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -63,7 +69,7 @@ export async function setMenuAvailability(id: string, updatedAt: string, availab
   try {
     const result = await adminRequest('menu_items', { id: `eq.${id}`, updated_at: `eq.${updatedAt}`, archived_at: 'is.null' }, 'PATCH', { is_available: available });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This item changed or was archived. Refresh before trying again.');
-    refresh();
+    refresh('menu');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -75,7 +81,7 @@ export async function reorderRecords(key: string, ids: string[], previous: strin
   if (!resource?.sortable || !list.safeParse(ids).success || !list.safeParse(previous).success || (scope !== null && !identity.safeParse(scope).success)) return { ok: false, error: 'Invalid ordering request.' };
   try {
     await adminRequest('rpc/admin_reorder', {}, 'POST', { resource: resource.table, ordered_ids: ids, expected_ids: previous, scope_id: scope });
-    refresh();
+    refresh(key);
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -85,7 +91,7 @@ export async function assignGroups(id: string, groupIds: string[], updatedAt: st
   if (!identity.safeParse(id).success || !z.array(identity).max(30).safeParse(groupIds).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid modifier assignment.' };
   try {
     await adminRequest('rpc/admin_assign_modifier_groups', {}, 'POST', { item_id: id, group_ids: groupIds, expected_updated_at: updatedAt });
-    refresh();
+    refresh('menu');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -96,7 +102,7 @@ export async function setOrderingStatus(status: string, updatedAt: string): Prom
   try {
     const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { ordering_status: status });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Ordering settings changed. The latest status will be loaded; try again.');
-    refresh();
+    refresh('settings');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -107,7 +113,18 @@ export async function setMaintenanceMode(enabled: boolean, updatedAt: string): P
   try {
     const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { maintenance_enabled: enabled });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Site settings changed. The latest status will be loaded; try again.');
-    refresh();
+    refresh('settings');
+    return { ok: true };
+  } catch (error) { return { ok: false, error: adminError(error) }; }
+}
+
+export async function lockPickupSlot(id: string, updatedAt: string, locked: boolean): Promise<AdminResult> {
+  await requireAdmin();
+  if (!identity.safeParse(id).success || !version.safeParse(updatedAt).success || !z.boolean().safeParse(locked).success) return { ok: false, error: 'Invalid pickup slot.' };
+  try {
+    await adminRequest('rpc/admin_lock_pickup_slot', {}, 'POST', { slot_uuid: id, expected_updated_at: updatedAt, locked });
+    refresh('slots');
+    revalidatePath('/checkout');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -118,7 +135,12 @@ export async function updateOrder(id: string, operation: string, reason = ''): P
   if (reason.length > 500 || (operation === 'cancelled' && !reason.trim())) return { ok: false, error: 'Enter a cancellation reason (maximum 500 characters).' };
   try {
     await adminRequest(`rpc/${operation === 'cash_paid' ? 'admin_mark_cash_paid' : 'admin_set_order_status'}`, {}, 'POST', operation === 'cash_paid' ? { order_uuid: id } : { order_uuid: id, next_status: operation, reason: reason.trim() || null });
-    refresh();
-    return { ok: true };
+    refresh('orders');
+    try {
+      const result = await sendOrderStatusEmails(id);
+      return { ok: true, ...(result.failed ? { warning: 'Order updated, but an email is still queued. Check email delivery before retrying.' } : {}) };
+    } catch {
+      return { ok: true, warning: 'Order updated, but the email queue is unavailable. Check migration 044 and email configuration.' };
+    }
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }

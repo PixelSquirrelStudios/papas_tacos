@@ -10,6 +10,13 @@ export async function createServerSupabase() {
   if (!config) throw new Error('Supabase authentication is not configured.');
   const cookieStore = await cookies();
   return createServerClient<Database>(config.url, config.key, {
+    global: {
+      fetch: (input, init) => fetch(input, {
+        ...init,
+        cache: 'no-store',
+        signal: init?.signal ? AbortSignal.any([init.signal, AbortSignal.timeout(10000)]) : AbortSignal.timeout(10000),
+      }),
+    },
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll(cookiesToSet) {

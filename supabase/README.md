@@ -127,8 +127,9 @@ The holding page uses the existing logo and your **Contact Email**, **Contact Ph
 and **Facebook URL** settings. Empty contact channels are omitted. **Get in Touch** opens the existing
 booking enquiry form; its Resend configuration is still required (see [AUTH_SETUP.md](../docs/AUTH_SETUP.md)
 and [CATALOGUE_SETUP.md](../docs/CATALOGUE_SETUP.md)). No separate email integration is needed.
-Maintenance does not cancel orders or change the saved online-ordering status; refreshed menus stop
-offering new orders while it is enabled. Turn it off to restore the previous ordering configuration.
+Maintenance does not cancel orders or change online-ordering status. With 043, verified admins can
+order while maintenance remains enabled; customers cannot access checkout. Explicit closed/paused
+ordering remains authoritative for everyone. Turn maintenance off to restore customer access.
 
 ## Profile Email Upgrade
 
@@ -144,6 +145,38 @@ The column allows null for Auth users without an email address.
 Existing profile read policies remain in place: customers can read their own profile and admins
 can read all profiles. Neither can edit email directly through the browser API. Change emails
 through Supabase Auth; Auth remains the source of truth for login and maintenance access checks.
+
+## Nested Modifier Upgrades
+
+After upgrades 031-033, apply [034_modifier_group_nesting.sql](sql/034_modifier_group_nesting.sql),
+[035_order_item_modifier_paths.sql](sql/035_order_item_modifier_paths.sql), then
+[036_nested_modifier_checkout.sql](sql/036_nested_modifier_checkout.sql), separately in that order.
+They add reusable child groups, path-specific order snapshots and authoritative nested checkout
+validation without changing existing flat choices or historical orders. All three are repeatable.
+Do not rerun 029 after 036, as that would replace the newer reservation function.
+See [nested configuration](../docs/CATALOGUE_SETUP.md#nested-modifiers) before assigning groups.
+
+## Generated Pickup Schedules
+
+After 036, apply [038_remove_admin_checkout_override.sql](sql/038_remove_admin_checkout_override.sql),
+[039_pickup_schedules.sql](sql/039_pickup_schedules.sql), then
+[040_pickup_availability.sql](sql/040_pickup_availability.sql), then
+[041_preserve_event_times.sql](sql/041_preserve_event_times.sql),
+[042_pickup_payment_deadlines.sql](sql/042_pickup_payment_deadlines.sql), then
+[043_maintenance_ordering_access.sql](sql/043_maintenance_ordering_access.sql). These are repeatable.
+038 is safe with or without the temporary 037 upgrade; do not reapply 037 afterward.
+043 supersedes the old maintenance checkout behavior: maintenance restricts access to admins, but
+does not close ordering. Reapply 042 then 043 after rerunning earlier reservation/availability scripts.
+
+039 adds `pickup_schedules`, one row per event. 041 corrects its generator to preserve event dates:
+set Event Starts and Event Ends in the event form, then choose a pickup window within those dates.
+No existing slots or dates are rewritten by 041. Previously overwritten dates must be corrected in
+the event form. Reapply 041 after any rerun of 039. Saving a schedule sets preparation notice and
+generates complete one-order windows without changing the event's start or end.
+Existing booked times cannot be moved; matching manual locks and IDs are preserved. 040 returns
+only slot status, time and venue metadata, never customer identities. Admin locking is role/version
+checked and cannot alter taken slots. Realtime includes schedule changes for admin views.
+See [the setup workflow](../docs/STRIPE_SETUP.md#generated-pickup-schedules).
 
 ## First admin account
 
@@ -214,8 +247,10 @@ Never put a service-role key, Stripe secret, or other private credential in a `N
 ## Orders and payments
 
 Cash orders begin `ordered` / `unpaid`. Card orders begin `pending_payment` / `unpaid`.
-Migration 029 reserves them for at most one hour, bounded by pickup preparation time, and aligns
-the Stripe session expiry with that deadline. Card payments are disabled by default.
+Migration 042 keeps the payment deadline at most one hour away, bounded by pickup preparation,
+without the former extra 32-minute lead time. Stripe session expiry is separate and cannot extend
+the deadline. Signed completion timestamps determine timeliness; late completions are cancelled
+and refunded idempotently. Card payments are disabled by default.
 The normal admin flow is `ordered` -> `preparing` -> `ready_for_pickup` -> `collected`.
 An order must have recorded payment before it can be marked collected.
 Cancellation requires a reason and does not itself refund a payment.
@@ -241,8 +276,10 @@ Verified paid card orders trigger branded pickup confirmations, with replay prot
 Stripe-driven retries. See the email section in the Stripe guide for the 23-hour retry cutoff
 and reconciliation procedure. This migration does not send historical emails by itself.
 
-Reservations are conservatively retained until a signed expiration or explicit cancellation;
-timestamp expiry alone does not release checkout capacity. Webhook monitoring, background
+Reservations are conservatively retained until payment resolution, signed expiration or explicit
+cancellation; timestamp expiry alone does not release checkout capacity. Hosted sessions expire two
+hours after order creation, independently of the earlier preparation/payment deadline. Keep webhook
+forwarding active and cancel unused attempts. Webhook monitoring, background
 reconciliation, production rollout, order notification retries and VAT rules remain pre-launch work.
 Cash checkout is not yet exposed to customers. Define retention/anonymisation before launch;
 deleting an auth user intentionally does not erase financial snapshots.

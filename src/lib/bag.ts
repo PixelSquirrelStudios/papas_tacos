@@ -1,8 +1,15 @@
 import { z } from 'zod';
 import type { CatalogueItem } from './catalogue/types';
 
+const selectionId = z.string().max(148).refine((value) => {
+  if (z.guid().safeParse(value).success) return true;
+  const [path, option, extra] = value.split(':');
+  const groups = path.split('/');
+  return extra === undefined && groups.length >= 2 && groups.length <= 3 && groups.every((id) => z.guid().safeParse(id).success) && z.guid().safeParse(option).success;
+}, 'Invalid modifier choice');
+
 export const bagSchema = z.object({ version: z.literal(1), lines: z.array(z.object({
-  itemId: z.guid(), optionIds: z.array(z.guid()).max(100), quantity: z.number().int().min(1).max(99),
+  itemId: z.guid(), optionIds: z.array(selectionId).max(100), quantity: z.number().int().min(1).max(99),
 })).max(100) });
 export type BagLine = z.infer<typeof bagSchema>['lines'][number];
 
@@ -11,7 +18,7 @@ export function lineKey(line: Pick<BagLine, 'itemId' | 'optionIds'>) {
 }
 
 export function parseBag(raw: string | null): BagLine[] {
-  if (!raw || raw.length > 100000) return [];
+  if (!raw || raw.length > 1600000) return [];
   try {
     const result = bagSchema.safeParse(JSON.parse(raw));
     if (!result.success) return [];

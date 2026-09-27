@@ -1,4 +1,7 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
+import { build } from 'esbuild';
+import path from 'node:path';
+import { expandModifierGroups } from '../../src/lib/catalogue/modifiers';
 
 const itemId = '00000000-0000-4000-8000-000000000001';
 const categoryId = '00000000-0000-4000-8000-000000000010';
@@ -9,7 +12,7 @@ const guacamoleId = '00000000-0000-4000-8000-000000000031';
 
 function fixture() {
   return {
-    events: [{ pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
+    events: [{ id: 'market', title: 'Friday Market', pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
     catalogue: { available: true, categories: [{ id: categoryId, name: 'Tacos', slug: 'tacos', sort_order: 0 }], items: [{
       id: itemId, category_id: categoryId, name: 'Test Taco', slug: 'test-taco', description: 'A local test fixture, never published to Supabase.', price_pence: 850,
       image_path: null, imageUrl: '/images/tacos.jpg', image_alt: 'Test tacos', dietary_tags: ['vegetarian'], allergens: ['milk'], allergen_note: '', is_available: true, is_featured: true, is_crowd_favourite: false, sort_order: 0,
@@ -21,6 +24,297 @@ function fixture() {
     settings: { business_name: "Papa's Tacos", ordering_status: 'open', ordering_message: null, service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null },
   };
 }
+
+async function isolateOptionPicker(page: Page) {
+  const result = await build({
+    stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
+      import React from 'react';
+      import { createRoot } from 'react-dom/client';
+      import { BagProvider } from '@/components/bag/bag-provider';
+      import { SiteUpdates } from '@/components/site-updates';
+      import { MenuBrowser } from '@/components/catalogue/menu-browser';
+      import { BagView } from '@/components/bag/bag-view';
+      createRoot(document.getElementById('fixture')).render(<main className="page-width py-10"><BagProvider><SiteUpdates />{location.pathname === '/bag' ? <BagView /> : <MenuBrowser initial={{available:false,items:[],categories:[]}} />}</BagProvider></main>);
+    ` },
+    bundle: true, write: false, format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"test"' },
+    plugins: [{ name: 'option-picker-fixture', setup(builder) {
+      builder.onResolve({ filter: /^(next\/navigation|@\/lib\/supabase\/(client|config))$/ }, (args) => ({ path: args.path, namespace: 'updates-fixture' }));
+      builder.onLoad({ filter: /.*/, namespace: 'updates-fixture' }, (args) => ({ contents: args.path === 'next/navigation'
+        ? 'export const usePathname = () => location.pathname; export const useRouter = () => ({refresh() { window.__pageRefreshes = (window.__pageRefreshes || 0) + 1; }});'
+        : args.path.endsWith('/config') ? 'export const supabaseConfig = () => ({url: location.origin,key:"fixture"});'
+        : 'export const createBrowserSupabase = () => ({ channel() { const channel = {on(event, filter, callback) { window.__siteChange = callback; return channel; }, subscribe() { return channel; }}; return channel; }, removeChannel() {} });' }));
+      builder.onResolve({ filter: /^next\/(image|link)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ loader: 'tsx', resolveDir: process.cwd(), contents: args.path === 'next/link'
+        ? 'import React from "react"; export default function Link({children,...props}) { return <a {...props}>{children}</a>; }'
+        : 'import React from "react"; export default function Image({fill,unoptimized,priority,...props}) { return <img {...props} style={fill ? {position:"absolute",width:"100%",height:"100%",inset:0} : undefined} />; }' }));
+      builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+    } }],
+  });
+  await page.goto('/sign-in');
+  const styles = await page.locator('link[rel="stylesheet"]').evaluateAll((links) => links.map((link) => (link as HTMLLinkElement).href));
+  await page.route('**/__option_picker_fixture.js', (route) => route.fulfill({ contentType: 'application/javascript', body: result.outputFiles[0].text }));
+  for (const routePath of ['/menu', '/bag']) await page.route(`**${routePath}`, (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="dark"><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}</head><body><div id="fixture"></div><script src="/__option_picker_fixture.js"></script></body></html>` }));
+}
+
+test('bag shows collection events above the truck link and omits zero fees', async ({ page }, testInfo) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  data.events[0].title = 'Friday Market at the Riverside';
+  data.events.push({ ...data.events[0], id: 'closed-market', title: 'Closed Market', ordering_status: 'closed' });
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.evaluate(({ itemId, mildId }) => localStorage.setItem('papas-tacos:bag:v1', JSON.stringify({ version: 1, lines: [{ itemId, optionIds: [mildId], quantity: 1 }] })), { itemId, mildId });
+  await page.goto('/bag');
+  const summary = page.getByRole('complementary', { name: 'Order Summary' });
+  await expect(summary.getByText(data.events[0].title, { exact: true })).toBeVisible();
+  await expect(summary.getByText('Closed Market', { exact: true })).toHaveCount(0);
+  const collection = (await summary.getByText('Collection from the Truck', { exact: true }).boundingBox())!;
+  const event = (await summary.getByText(data.events[0].title, { exact: true }).boundingBox())!;
+  const link = (await summary.getByRole('link', { name: 'Find the Truck' }).boundingBox())!;
+  expect(event.y).toBeGreaterThanOrEqual(collection.y + collection.height);
+  expect(link.y).toBeGreaterThanOrEqual(event.y + event.height);
+  for (const [service, packaging] of [[0, 0], [50, 0], [0, 25], [50, 25]]) {
+    data.settings.service_fee_pence = service;
+    data.settings.packaging_fee_pence = packaging;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(summary.getByText('Service Fee', { exact: true })).toHaveCount(service > 0 ? 1 : 0);
+    await expect(summary.getByText('Packaging', { exact: true })).toHaveCount(packaging > 0 ? 1 : 0);
+    await expect(summary.getByText('Estimated Total', { exact: true }).locator('..').locator('dd')).toHaveText(`£${((850 + service + packaging) / 100).toFixed(2)}`);
+  }
+  data.events[1].ordering_status = 'open';
+  data.events[1].title = 'Saturday Market';
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(summary.getByText('Saturday Market', { exact: true })).toBeVisible();
+  await expect(summary.getByText(data.events[0].title, { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('bag-collection.png'), fullPage: true });
+});
+
+test('catalogue refreshes without reload and coalesces overlapping update signals', async ({ page }) => {
+  await page.clock.install();
+  await isolateOptionPicker(page);
+  const data = fixture();
+  let requests = 0;
+  let release: (() => void) | undefined;
+  let hold = false;
+  await page.route('**/api/catalogue', async (route) => {
+    requests++;
+    const snapshot = structuredClone(data);
+    if (hold) await new Promise<void>((resolve) => { release = resolve; });
+    await route.fulfill({ json: snapshot });
+  });
+  await page.goto('/menu');
+  await expect(page.getByRole('button', { name: 'Add Test Taco to Bag' })).toBeVisible();
+  const initialRequests = requests;
+  hold = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(() => requests).toBe(initialRequests + 1);
+  data.catalogue.items[0].name = 'Freshly Updated Taco';
+  data.catalogue.items[0].is_available = false;
+  await page.evaluate(() => {
+    for (const name of ['online', 'papas:site-updated', 'focus']) window.dispatchEvent(new Event(name));
+  });
+  expect(requests).toBe(initialRequests + 1);
+  hold = false;
+  release!();
+  await expect(page.getByRole('button', { name: 'Add Freshly Updated Taco to Bag' })).toBeDisabled();
+  expect(requests).toBe(initialRequests + 2);
+  data.catalogue.items[0].is_available = true;
+  await page.clock.fastForward(15001);
+  await expect(page.getByRole('button', { name: 'Add Freshly Updated Taco to Bag' })).toBeEnabled();
+  data.catalogue.items[0].name = 'Realtime Taco';
+  await page.evaluate(() => (window as unknown as { __siteChange: () => void }).__siteChange());
+  await page.clock.fastForward(201);
+  await expect(page.getByRole('button', { name: 'Add Realtime Taco to Bag' })).toBeVisible();
+});
+
+test('catalogue timeout closes ordering and reconnect recovers without reloading', async ({ page }) => {
+  await page.clock.install();
+  await isolateOptionPicker(page);
+  const data = fixture();
+  let hold = false;
+  let release: (() => void) | undefined;
+  await page.route('**/api/catalogue', async (route) => {
+    const snapshot = structuredClone(data);
+    if (hold) await new Promise<void>((resolve) => { release = resolve; });
+    await route.fulfill({ json: snapshot }).catch(() => {});
+  });
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeEnabled();
+  hold = true;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect.poll(() => Boolean(release)).toBe(true);
+  await page.clock.runFor(12001);
+  await expect(picker.getByRole('button', { name: 'Orders Closed' })).toBeDisabled();
+  data.catalogue.items[0].price_pence = 1100;
+  hold = false;
+  release!();
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeEnabled();
+  await expect(picker.getByText('£11.00', { exact: true })).toBeVisible();
+  await expect(picker.getByRole('radio', { name: 'Mild salsa', exact: true })).toBeChecked();
+});
+
+test('another tab updates open picker prices and availability without a page reload', async ({ page }) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  const editor = await page.context().newPage();
+  await editor.goto('/sign-in');
+  await page.bringToFront();
+  data.catalogue.items[0].price_pence = 1200;
+  data.catalogue.items[0].is_available = false;
+  await editor.evaluate(() => localStorage.setItem('papas-tacos:site-update', crypto.randomUUID()));
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeDisabled();
+  await expect(picker.getByText('£12.00', { exact: true })).toBeVisible();
+  data.events[0].ordering_status = 'closed';
+  await editor.evaluate(() => localStorage.setItem('papas-tacos:site-update', crypto.randomUUID()));
+  await expect(picker.getByRole('button', { name: 'Orders Closed' })).toBeDisabled();
+  await editor.close();
+});
+
+test('nested reusable groups keep sauces and extras separate for each part', async ({ page }, testInfo) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  const sauce = data.catalogue.items[0].groups[0];
+  sauce.name = 'Sauces';
+  sauce.min_selections = 1;
+  sauce.max_selections = 2;
+  sauce.options.push({ ...sauce.options[0], id: '00000000-0000-4000-8000-000000000022', name: 'Hot salsa', price_pence: 50 });
+  sauce.options.push({ ...sauce.options[0], id: '00000000-0000-4000-8000-000000000023', name: 'Smoky salsa', price_pence: 75 });
+  const first = '00000000-0000-4000-8000-000000000040';
+  const second = '00000000-0000-4000-8000-000000000041';
+  const extras = data.catalogue.items[0].groups[1];
+  extras.max_selections = 1;
+  data.catalogue.items[0].groups = expandModifierGroups([first, second], [
+    { id: first, name: 'Taco 1 Filling', min_selections: 1, max_selections: 1, options: [{ ...sauce.options[0], id: first, modifier_group_id: first, name: 'Ember Chicken' }], child_group_ids: [sauce.id, extras.id] },
+    { id: second, name: 'Taco 2 Filling', min_selections: 1, max_selections: 1, options: [{ ...sauce.options[0], id: second, modifier_group_id: second, name: 'Midnight Beef' }], child_group_ids: [sauce.id, extras.id] },
+    sauce, extras,
+  ]) as (typeof data.catalogue.items)[number]['groups'];
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  await picker.getByRole('radio', { name: 'Ember Chicken', exact: true }).check();
+  await picker.getByRole('radio', { name: 'Midnight Beef', exact: true }).check();
+  const firstSauce = picker.getByRole('group', { name: 'Taco 1 Filling / Sauces', exact: true });
+  const secondSauce = picker.getByRole('group', { name: 'Taco 2 Filling / Sauces', exact: true });
+  await firstSauce.getByRole('checkbox', { name: 'Mild salsa', exact: true }).check();
+  await firstSauce.getByRole('checkbox', { name: /Hot salsa/ }).check();
+  await expect(firstSauce.getByRole('checkbox', { name: /Smoky salsa/ })).toBeDisabled();
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeDisabled();
+  await secondSauce.getByRole('checkbox', { name: /Hot salsa/ }).check();
+  await expect(secondSauce.getByRole('checkbox', { name: /Smoky salsa/ })).toBeEnabled();
+  const firstExtras = picker.getByRole('group', { name: 'Taco 1 Filling / Extras', exact: true });
+  await firstExtras.getByRole('radio', { name: /Guacamole/ }).check();
+  await expect(picker.getByRole('group', { name: 'Taco 2 Filling / Extras', exact: true }).getByRole('radio', { name: 'None' })).toBeChecked();
+  await firstExtras.getByRole('radio', { name: 'None' }).check();
+  await firstExtras.getByRole('radio', { name: /Guacamole/ }).check();
+  await expect(picker.getByText('£11.00', { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: testInfo.project.name === 'mobile' ? 320 : 1440, height: 960 });
+  await secondSauce.scrollIntoViewIfNeeded();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('nested-picker.png'), fullPage: true });
+  await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
+  await page.goto('/bag');
+  const choices = page.getByRole('group', { name: 'Selected Choices' });
+  await expect(choices.getByRole('list')).toHaveCount(0);
+  const firstPart = choices.getByRole('region', { name: 'Taco 1', exact: true });
+  const secondPart = choices.getByRole('region', { name: 'Taco 2', exact: true });
+  await expect(firstPart.getByRole('term')).toHaveText(['Filling', 'Sauces', 'Extras']);
+  await expect(secondPart.getByRole('term')).toHaveText(['Filling', 'Sauces']);
+  await expect(firstPart.locator('[data-slot="badge"]')).toHaveText(['Ember Chicken', 'Mild salsa', 'Hot salsa+£0.50', 'Guacamole+£1.50']);
+  await expect(secondPart.locator('[data-slot="badge"]')).toHaveText(['Midnight Beef', 'Hot salsa+£0.50']);
+  await expect(choices).not.toContainText('Included');
+  for (const block of await choices.locator('section, dd, [data-slot="badge"]').all()) expect(await block.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath('grouped-bag.png'), fullPage: true });
+  await page.getByRole('button', { name: 'Edit Test Taco' }).click();
+  await expect(firstSauce.getByRole('checkbox', { name: /Hot salsa/ })).toBeChecked();
+  await expect(secondSauce.getByRole('checkbox', { name: /Hot salsa/ })).toBeChecked();
+  await secondSauce.getByRole('checkbox', { name: /Hot salsa/ }).uncheck();
+  await expect(firstSauce.getByRole('checkbox', { name: /Hot salsa/ })).toBeChecked();
+  await expect(picker.getByRole('button', { name: 'Update Bag' })).toBeDisabled();
+});
+
+test('sold-out options are faded disabled blocks with badges and normal cursors', async ({ page }, testInfo) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  const extras = data.catalogue.items[0].groups[1];
+  extras.options.push({ ...extras.options[0], id: '00000000-0000-4000-8000-000000000032', name: 'Slow Roasted Sweetcorn and Black Bean Salsa', price_pence: 0, is_available: false });
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  await expect(picker.getByText('Included', { exact: true })).toHaveCount(0);
+  await expect(picker.getByText(/£0\.00/)).toHaveCount(0);
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  await picker.getByRole('checkbox', { name: /Guacamole/ }).check();
+  extras.options[0].is_available = false;
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  const unavailable = picker.locator('[data-sold-out]');
+  await expect(unavailable).toHaveCount(2);
+  await expect(picker.getByRole('checkbox', { name: /Guacamole/ })).not.toBeChecked();
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeEnabled();
+  await expect(picker.getByText('£8.50', { exact: true })).toBeVisible();
+  for (const block of await unavailable.all()) {
+    await expect(block.locator('input')).toBeDisabled();
+    await expect(block.locator('[data-slot="badge"]')).toHaveText('Sold Out');
+    await expect(block.locator('[data-slot="badge"]')).toHaveClass(/bg-red-600/);
+    await expect(block).toHaveCSS('filter', 'none');
+    await expect(block).toHaveCSS('opacity', '0.5');
+    await expect(block.locator('label')).toHaveCSS('cursor', 'default');
+    await expect(block.locator('input')).toHaveCSS('cursor', 'default');
+  }
+  for (const width of [testInfo.project.name === 'mobile' ? 390 : 1440, 320]) {
+    await page.setViewportSize({ width, height: 960 });
+    await unavailable.last().scrollIntoViewIfNeeded();
+    for (const block of await unavailable.all()) expect(await block.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`sold-out-options-${width}.png`), fullPage: true });
+  }
+});
+
+test('option images and descriptions switch with choices and survive bag editing', async ({ page }, testInfo) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  const flavour = data.catalogue.items[0].groups[0];
+  Object.assign(flavour.options[0], { description: '<p><strong>Mild roasted salsa.</strong></p>', imageUrl: '/images/tacos.jpg?option=mild', image_alt: 'Mild salsa preview' });
+  flavour.options.push({ ...flavour.options[0], id: '00000000-0000-4000-8000-000000000022', name: 'Plain', description: '', imageUrl: null, image_alt: '' } as typeof flavour.options[number]);
+  flavour.options.push({ ...flavour.options[0], id: '00000000-0000-4000-8000-000000000023', name: 'Unavailable flavour', is_available: false });
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.goto('/menu');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeDisabled();
+  await expect(picker.getByRole('radio', { name: /Unavailable flavour/ })).toBeDisabled();
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  await expect(picker.locator('[aria-live="polite"] strong')).toHaveText('Mild roasted salsa.');
+  await expect.poll(() => picker.getByAltText('Mild salsa preview').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  await expect(picker.getByAltText('Mild salsa preview')).toHaveCSS('object-fit', 'contain');
+  await picker.getByRole('radio', { name: 'Plain', exact: true }).check();
+  await expect(picker.getByAltText('Test tacos')).toBeVisible();
+  await expect(picker.locator('[aria-live="polite"]')).toContainText(data.catalogue.items[0].description);
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  for (const width of [testInfo.project.name === 'mobile' ? 390 : 1440, 320]) {
+    await page.setViewportSize({ width, height: 960 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    for (const label of await picker.locator('fieldset label').all()) expect(await label.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await picker.locator('[aria-live="polite"]').scrollIntoViewIfNeeded();
+    await page.screenshot({ path: testInfo.outputPath(`option-preview-${width}.png`), fullPage: true });
+  }
+  await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
+  await expect(picker).not.toBeVisible();
+  await page.goto('/bag');
+  await page.getByRole('button', { name: 'Edit Test Taco' }).click();
+  await expect(picker.getByRole('radio', { name: 'Mild salsa', exact: true })).toBeChecked();
+  await expect(picker.getByAltText('Mild salsa preview')).toBeVisible();
+});
 
 test('ordering controls fail closed and react to global and event changes', async ({ page }) => {
   const data = fixture();
@@ -78,7 +372,7 @@ test('anonymous customisation, extras, fees, edit and reload persistence', async
   await page.getByRole('button', { name: 'Add Test Taco to bag' }).click();
   const picker = page.getByRole('dialog');
   await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeDisabled();
-  await picker.getByRole('radio', { name: 'Mild salsa Included' }).check();
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
   await picker.getByRole('checkbox', { name: /Guacamole/ }).check();
   await picker.getByRole('button', { name: 'Increase Test Taco' }).click();
   await expect(picker).toContainText('£20.00');
@@ -126,7 +420,7 @@ test('filtering and sold-out refresh retain the bag but flag unavailability', as
   await expect(page.getByText('No dishes match your selection.')).toBeVisible();
   await page.getByRole('button', { name: 'Reset Filters' }).click();
   await page.getByRole('button', { name: 'Add Test Taco to bag' }).click();
-  await page.getByRole('radio', { name: 'Mild salsa Included' }).check();
+  await page.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
   await page.getByRole('button', { name: 'Add to Bag', exact: true }).click();
   data.catalogue.items[0].is_available = false;
   await page.goto('/bag');
@@ -475,8 +769,7 @@ test('long food labels and a populated bag stay usable at narrow widths', async 
     await page.screenshot({ path: testInfo.outputPath(`menu-badges-${width}.png`), fullPage: true });
     await page.getByRole('link', { name: 'View Bag', exact: true }).click();
     await expect(page.getByText('Add £7.00 more to reach the £15.00 minimum food order.')).toBeVisible();
-    await expect(page.getByRole('article')).toHaveCSS('background-color', 'rgb(34, 37, 34)');
-    await expect(page.getByRole('article')).toHaveCSS('border-top-width', '1px');
+    await expect(page.getByRole('article')).toHaveCSS('border-bottom-width', '1px');
     for (const action of ['Increase', 'Decrease']) {
       const button = page.getByRole('button', { name: `${action} ${data.catalogue.items[0].name}`, exact: true });
       await expect(button).toHaveCSS('color', 'rgb(240, 187, 125)');
@@ -490,8 +783,8 @@ test('long food labels and a populated bag stay usable at narrow widths', async 
     }
     await expect(page.getByRole('complementary').getByRole('status').filter({ hasText: 'Online checkout' })).toHaveCSS('border-top-width', '1px');
     for (const action of ['Edit', 'Remove']) await expect(page.getByRole('button', { name: `${action} ${data.catalogue.items[0].name}`, exact: true })).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
-    await expect(page.getByRole('list', { name: 'Selected Choices' })).toContainText('Taco 1: Ember Chicken');
-    await expect(page.getByRole('list', { name: 'Selected Choices' })).toContainText('Taco 2: Midnight Beef');
+    await expect(page.getByRole('group', { name: 'Selected Choices' }).getByRole('region', { name: 'Taco 1', exact: true })).toContainText('Ember Chicken');
+    await expect(page.getByRole('group', { name: 'Selected Choices' }).getByRole('region', { name: 'Taco 2', exact: true })).toContainText('Midnight Beef');
     for (const label of ['Category', 'Dietary', 'Allergens']) {
       const information = page.getByRole('article').getByRole('group', { name: label, exact: true });
       await expect(information).toBeVisible();

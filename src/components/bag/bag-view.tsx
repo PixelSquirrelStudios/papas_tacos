@@ -5,14 +5,40 @@ import Image from 'next/image';
 import { useState } from 'react';
 import { ArrowRight, CircleAlert, Info, MapPin, Pencil, Plus, ReceiptText, ShoppingBag, Trash2, UtensilsCrossed } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
 import { Skeleton } from '@/components/ui/skeleton';
 import { FoodBadges } from '@/components/catalogue/food-badges';
 import { useBag } from './bag-provider';
 import { ItemPicker, QuantityControl } from './item-picker';
 import { lineKey, money, quoteLine, type BagLine } from '@/lib/bag';
 
+function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
+  if (!quote.item || !quote.options.length) return null;
+  const groups = quote.item.groups;
+  return <div aria-label="Selected Choices" role="group" className="col-span-2 grid min-w-0 gap-3">
+    {groups.filter((group) => !group.parentId).map((root) => {
+      const selectedGroups = groups.filter((group) => (group.id === root.id || group.id.startsWith(`${root.id}/`)) && quote.options.some((option) => option.modifier_group_id === group.id));
+      if (!selectedGroups.length) return null;
+      const title = (root.label || root.name).replace(/ filling$/i, '');
+      return <section key={root.id} aria-label={title} className="min-w-0 overflow-hidden rounded-lg border border-brand-yellow/30">
+        <h4 className="border-b border-brand-yellow/20 bg-brand-yellow/10 px-4 py-3 text-sm font-semibold text-brand-yellow wrap-break-word">{title}</h4>
+        <dl className="grid min-w-0 gap-3 p-3 sm:grid-cols-2">
+          {selectedGroups.map((group) => <div key={group.id} className="min-w-0 bg-muted/40 p-3">
+            <dt className="mb-2 text-xs font-semibold text-muted-foreground wrap-break-word">{group.id === root.id ? (/ filling$/i.test(root.label || root.name) ? 'Filling' : 'Choices') : group.name.slice(root.name.length + 3)}</dt>
+            <dd className="flex min-w-0 flex-wrap gap-2">{quote.options.filter((option) => option.modifier_group_id === group.id).map((option) => <Badge key={option.id} variant="outline" className={`max-w-full flex-wrap justify-start gap-x-2 gap-y-1 rounded-md px-2.5 py-1.5 text-sm whitespace-normal ${option.is_available ? 'border-turquoise/25 bg-turquoise/5' : 'border-primary/30 bg-primary/5 text-muted-foreground'}`}>
+              <span className="min-w-0 wrap-anywhere">{option.name}</span>
+              {option.price_pence > 0 && <span className="tabular-nums text-muted-foreground">+{money(option.price_pence)}</span>}
+              {!option.is_available && <span className="font-semibold text-primary">Sold Out</span>}
+            </Badge>)}</dd>
+          </div>)}
+        </dl>
+      </section>;
+    })}
+  </div>;
+}
+
 export function BagView() {
-  const { lines, ready, storageError, catalogue, settings, orderingOpen, remove, setQuantity } = useBag();
+  const { lines, ready, storageError, catalogue, settings, orderingOpen, collectionEvents, remove, setQuantity } = useBag();
   const [editing, setEditing] = useState<BagLine | null>(null);
   const quotes = lines.map((line) => ({ line, quote: quoteLine(line, catalogue.items) }));
   const subtotal = quotes.reduce((total, { quote }) => total + quote.total, 0);
@@ -30,13 +56,13 @@ export function BagView() {
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-12">
       <section aria-labelledby="bag-items-title" className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-5"><h2 id="bag-items-title" className="flex items-center gap-2 text-lg font-semibold"><ShoppingBag className="size-5 text-turquoise" aria-hidden="true" />Your Items<span className="ml-1 text-sm font-normal text-muted-foreground" aria-live="polite">({itemCount})</span></h2><Link href="/menu" className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-brand-yellow transition-colors duration-200 hover:bg-white/5"><Plus className="size-4" aria-hidden="true" />Add More</Link></div>
-        {quotes.map(({ line, quote }) => <article key={lineKey(line)} className="mt-5 overflow-hidden rounded-lg border border-border bg-card p-4 shadow-sm sm:p-6">
+        {quotes.map(({ line, quote }) => <article key={lineKey(line)} className="min-w-0 border-b border-border py-6">
           <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-4 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-5">
             <div className="relative aspect-square self-start overflow-hidden rounded-lg border-2 border-brand-yellow bg-muted">{quote.item?.imageUrl ? <Image src={quote.item.imageUrl} alt={quote.item.image_alt || quote.item.name} fill unoptimized sizes="(max-width: 640px) 80px, 120px" className="object-cover" /> : <div className="grid h-full place-items-center"><UtensilsCrossed className="size-8 text-muted-foreground" aria-label="Item Image Unavailable" /></div>}</div>
             <div className="min-w-0"><div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1"><h3 className="min-w-0 break-words text-lg font-semibold leading-snug">{quote.item?.name || 'Saved Menu Item'}</h3><strong className="text-lg tabular-nums">{catalogue.available && quote.item && quote.options.length === line.optionIds.length ? money(quote.total) : '--'}</strong></div>
               {catalogue.available && quote.item && <p className="mt-1 text-xs text-muted-foreground">{money(quote.item.price_pence)} each before extras</p>}
             </div>
-            {quote.options.length > 0 && <ul aria-label="Selected Choices" className="col-span-2 grid gap-2 text-sm">{quote.options.map((option) => <li key={option.id} className="flex flex-wrap justify-between gap-x-3 gap-y-1 border-l-2 border-brand-yellow bg-background/60 px-3 py-2.5"><span className="min-w-0 break-words"><span className="font-semibold text-brand-yellow">{quote.item?.groups.find((group) => group.id === option.modifier_group_id)?.name.replace(/ filling$/i, '') ?? 'Extra'}:</span> {option.name}</span>{option.price_pence > 0 && <span className="text-muted-foreground tabular-nums">+{money(option.price_pence)} each</span>}</li>)}</ul>}
+            <SelectedChoices quote={quote} />
             {quote.item && <div className="col-span-2"><FoodBadges grouped category={catalogue.categories.find((category) => category.id === quote.item?.category_id)?.name} dietary={quote.item.dietary_tags} allergens={[...new Set([...quote.item.allergens, ...quote.options.flatMap((option) => option.allergens)])]} /></div>}
           </div>
           {catalogue.available && quote.issue && <p role="status" className="mt-4 flex items-start gap-2 border-l-2 border-primary bg-primary/5 p-3 text-sm"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />{quote.issue}</p>}
@@ -45,8 +71,8 @@ export function BagView() {
       </section>
       <aside aria-labelledby="bag-summary-title" className="min-w-0 self-start border-t border-border pt-6 lg:sticky lg:top-[121px] lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
         <h2 id="bag-summary-title" className="mb-6 flex items-center gap-2 text-xl font-semibold"><ReceiptText className="size-5 text-turquoise" aria-hidden="true" />Order Summary</h2>
-        <div className="mb-6 flex items-start gap-3 border-y py-4"><MapPin className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Collection from the Truck</p><Link href="/events" className="mt-1 inline-flex min-h-9 items-center gap-1 text-sm text-brand-yellow">Find the Truck<ArrowRight className="size-3.5" aria-hidden="true" /></Link></div></div>
-        <dl className="space-y-4 text-sm"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Items and Extras</dt><dd className="font-medium tabular-nums">{pricesAvailable ? money(subtotal) : '--'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Service Fee</dt><dd className="tabular-nums">{settings ? money(settings.service_fee_pence) : '--'}</dd></div><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Packaging</dt><dd className="tabular-nums">{settings ? money(settings.packaging_fee_pence) : '--'}</dd></div><div className="flex flex-wrap justify-between gap-3 border-t border-border pt-5 text-lg font-semibold"><dt>Estimated Total</dt><dd className="text-2xl text-brand-yellow tabular-nums">{pricesAvailable && settings ? money(subtotal + fees) : '--'}</dd></div></dl>
+        <div className="mb-6 flex items-start gap-3 border-y py-4"><MapPin className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Collection from the Truck</p>{collectionEvents.map((event) => <p key={event.id} className="mt-2 text-sm text-muted-foreground wrap-anywhere">{event.title}</p>)}<Link href="/events" className="mt-1 inline-flex min-h-9 items-center gap-1 text-sm text-brand-yellow">Find the Truck<ArrowRight className="size-3.5" aria-hidden="true" /></Link></div></div>
+        <dl className="space-y-4 text-sm"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Items and Extras</dt><dd className="font-medium tabular-nums">{pricesAvailable ? money(subtotal) : '--'}</dd></div>{settings && settings.service_fee_pence > 0 && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Service Fee</dt><dd className="tabular-nums">{money(settings.service_fee_pence)}</dd></div>}{settings && settings.packaging_fee_pence > 0 && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Packaging</dt><dd className="tabular-nums">{money(settings.packaging_fee_pence)}</dd></div>}<div className="flex flex-wrap justify-between gap-3 border-t border-border pt-5 text-lg font-semibold"><dt>Estimated Total</dt><dd className="text-2xl text-brand-yellow tabular-nums">{pricesAvailable && settings ? money(subtotal + fees) : '--'}</dd></div></dl>
         {minimumRemaining > 0 && <p className="mt-4 flex items-start gap-2 rounded-md border border-brand-yellow/25 bg-brand-yellow/5 p-3 text-sm text-brand-yellow"><Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Add {money(minimumRemaining)} more to reach the {money(settings!.minimum_order_pence)} minimum food order.</span></p>}
         {needsReview && <p role="status" className="mt-4 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm text-primary"><CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Review the highlighted items before ordering.</span></p>}
         {orderingOpen && settings?.card_enabled && pricesAvailable && !needsReview && minimumRemaining === 0 ? <Button asChild className="mt-6 h-12 w-full"><Link href="/checkout"><ShoppingBag />Checkout<ArrowRight /></Link></Button> : <Button disabled className="mt-6 h-12 w-full"><ShoppingBag />Checkout Unavailable</Button>}

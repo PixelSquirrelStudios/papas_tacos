@@ -16,6 +16,7 @@ import { supabaseConfig } from '@/lib/supabase/config';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { RecordStatus } from './record-card';
+import { notifySiteUpdated } from '@/lib/site-updates';
 
 function ReorderIdentity({ row, label }: { row: AdminRow; label: string }) {
   const path = row.image_path ?? row.featured_image_path;
@@ -71,7 +72,7 @@ export function ResourceReorder({ resourceKey, rows, scopes, scope }: { resource
         if (!result.ok) { setError(result.error || 'Unable to save the order.'); return; }
         setBaseline(next);
         toast.success('Order Saved');
-        router.refresh();
+        notifySiteUpdated();
       } catch { setError('Unable to save the order. Your changes are still here. Try again.'); }
     });
   }

@@ -1,14 +1,26 @@
 import { notFound } from 'next/navigation';
 import { requireAdmin } from '@/lib/auth/session';
-import { adminRows, adminError } from '@/lib/admin/data';
+import { adminRows, adminError, adminRequest } from '@/lib/admin/data';
 import { getResource, type AdminRow } from '@/lib/admin/resources';
 import { ResourceManager } from '@/components/admin/resource-manager';
+import { PickupManager } from '@/components/admin/pickup-manager';
+import { pickupChoicesSchema } from '@/lib/pickup';
 
 export default async function ResourcePage({ params }: { params: Promise<{ resource: string }> }) {
   await requireAdmin();
   const { resource: key } = await params;
   const resource = getResource(key);
   if (!resource) notFound();
+  if (key === 'slots') {
+    let pickupData: { events: AdminRow[]; schedules: AdminRow[]; slots: ReturnType<typeof pickupChoicesSchema.parse> } | null = null;
+    let pickupError = '';
+    try {
+      const [events, schedules, choices] = await Promise.all([adminRows('events', { order: 'sort_order.asc,id.asc' }), adminRows('pickup_schedules'), adminRequest('rpc/get_pickup_choices', {}, 'POST', {})]);
+      pickupData = { events, schedules, slots: pickupChoicesSchema.parse(choices) };
+    } catch (failure) { pickupError = adminError(failure); }
+    if (pickupData) return <PickupManager {...pickupData} />;
+    return <main className="p-8"><h1 className="text-2xl font-semibold">Pickup Slots</h1><p role="alert" className="mt-5 text-destructive">{pickupError}</p></main>;
+  }
   let rows: AdminRow[] = [];
   let references: Record<string, AdminRow[]> = {};
   let associations: AdminRow[] = [];

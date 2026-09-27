@@ -1,12 +1,13 @@
 'use client';
 
-import { useEffect, useEffectEvent, useOptimistic, useState, useTransition } from 'react';
+import { useEffect, useEffectEvent, useOptimistic, useRef, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
 import { Check, LoaderCircle, Power, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { setMaintenanceMode, setOrderingStatus, updateOrder } from '@/app/admin/actions';
 import { orderOperations } from '@/lib/admin/orders';
 import type { AdminRow } from '@/lib/admin/resources';
+import { notifySiteUpdated, siteUpdateEvent } from '@/lib/site-updates';
 import { Button } from '@/components/ui/button';
 import { Textarea } from '@/components/ui/textarea';
 import { Label } from '@/components/ui/label';
@@ -16,16 +17,25 @@ import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, A
 export function AdminRefresh() {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  const queued = useRef(false);
   const refresh = useEffectEvent(() => {
-    if (!pending && document.visibilityState === 'visible' && !document.querySelector('[role="dialog"], [role="alertdialog"], [data-admin-editing="true"]')) startTransition(() => router.refresh());
+    queued.current = true;
+    if (!pending && document.visibilityState === 'visible' && !document.querySelector('[role="dialog"], [role="alertdialog"], [data-admin-editing="true"]')) {
+      queued.current = false;
+      startTransition(() => router.refresh());
+    }
   });
+  useEffect(() => { if (!pending && queued.current) refresh(); }, [pending]);
   useEffect(() => {
-    const update = () => refresh();
+    const update = (event?: Event) => { if (!(event instanceof CustomEvent && event.detail?.localSave)) refresh(); };
+    const observer = new MutationObserver(() => { if (queued.current) refresh(); });
+    observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-admin-editing'] });
     const timer = setInterval(update, 15000);
     window.addEventListener('focus', update);
     window.addEventListener('online', update);
+    window.addEventListener(siteUpdateEvent, update);
     document.addEventListener('visibilitychange', update);
-    return () => { clearInterval(timer); window.removeEventListener('focus', update); window.removeEventListener('online', update); document.removeEventListener('visibilitychange', update); };
+    return () => { observer.disconnect(); clearInterval(timer); window.removeEventListener('focus', update); window.removeEventListener('online', update); window.removeEventListener(siteUpdateEvent, update); document.removeEventListener('visibilitychange', update); };
   }, []);
   return null;
 }
@@ -46,10 +56,9 @@ export function OnlineOrderingControl({ status, updatedAt }: { status: string; u
           setCurrent(checked ? 'open' : 'closed');
           try {
             const result = await setOrderingStatus(checked ? 'open' : 'closed', updatedAt);
-            if (!result.ok) setError(result.error ?? 'Unable to update ordering.');
-            else toast.success(checked ? 'Online ordering opened' : 'Online ordering closed');
+            if (!result.ok) { setError(result.error ?? 'Unable to update ordering.'); router.refresh(); }
+            else { toast.success(checked ? 'Online ordering opened' : 'Online ordering closed'); notifySiteUpdated(); }
           } catch { setError('Unable to update ordering. Please try again.'); }
-          router.refresh();
         });
       }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
     </div>
@@ -74,10 +83,9 @@ export function MaintenanceControl({ enabled, updatedAt }: { enabled?: boolean; 
           setCurrent(checked);
           try {
             const result = await setMaintenanceMode(checked, updatedAt);
-            if (!result.ok) setError(result.error ?? 'Unable to update maintenance mode.');
-            else toast.success(checked ? 'Maintenance mode enabled' : 'Website is live');
+            if (!result.ok) { setError(result.error ?? 'Unable to update maintenance mode.'); router.refresh(); }
+            else { toast.success(checked ? 'Maintenance mode enabled' : 'Website is live'); notifySiteUpdated(); }
           } catch { setError('Unable to update maintenance mode. Please try again.'); }
-          router.refresh();
         });
       }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
     </div>
@@ -92,5 +100,5 @@ export function OrderControls({ order }: { order: AdminRow }) {
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
-  return <><div className="flex flex-wrap gap-3">{orderOperations(String(order.status), String(order.payment_method), String(order.payment_status)).map((action) => <Button key={action.value} variant={action.value === 'cancelled' ? 'outline' : 'default'} onClick={() => { setError(''); setReason(''); setOperation(action); }}><Check />{action.label}</Button>)}</div><AlertDialog open={Boolean(operation)} onOpenChange={(open) => { if (!open && !pending) setOperation(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{operation?.label}?</AlertDialogTitle><AlertDialogDescription>Order #{String(order.order_number)}{operation?.value === 'cash_paid' ? ': confirm the cash has been received.' : operation?.value === 'cancelled' ? '. Cancellation does not issue a card refund. Review any paid amount separately with your payment provider.' : '. This updates the order status.'}</AlertDialogDescription></AlertDialogHeader>{operation?.value === 'cancelled' && <div className="space-y-2"><Label htmlFor="cancel-reason">Cancellation Reason</Label><Textarea id="cancel-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={pending} /></div>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<AlertDialogFooter><AlertDialogCancel disabled={pending}>Back</AlertDialogCancel><Button disabled={pending || (operation?.value === 'cancelled' && !reason.trim())} onClick={() => startTransition(async () => { if (!operation) return; try { const result = await updateOrder(order.id!, operation.value, reason); if (!result.ok) setError(result.error ?? 'Update failed.'); else { toast.success('Order updated'); setOperation(null); router.refresh(); } } catch { setError('Unable to update the order. Try again.'); } })}>{pending ? 'Updating...' : 'Confirm'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
+  return <><div className="flex flex-wrap gap-3">{orderOperations(String(order.status), String(order.payment_method), String(order.payment_status)).map((action) => <Button key={action.value} variant={action.value === 'cancelled' ? 'outline' : 'default'} onClick={() => { setError(''); setReason(''); setOperation(action); }}><Check />{action.label}</Button>)}</div><AlertDialog open={Boolean(operation)} onOpenChange={(open) => { if (!open && !pending) setOperation(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{operation?.label}?</AlertDialogTitle><AlertDialogDescription>Order #{String(order.order_number)}{operation?.value === 'cash_paid' ? ': confirm the cash has been received.' : operation?.value === 'cancelled' ? '. Cancellation does not issue a card refund. Review any paid amount separately with your payment provider.' : '. This updates the order status.'}</AlertDialogDescription></AlertDialogHeader>{operation?.value === 'cancelled' && <div className="space-y-2"><Label htmlFor="cancel-reason">Cancellation Reason</Label><Textarea id="cancel-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={pending} /></div>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<AlertDialogFooter><AlertDialogCancel disabled={pending}>Back</AlertDialogCancel><Button disabled={pending || (operation?.value === 'cancelled' && !reason.trim())} onClick={() => startTransition(async () => { if (!operation) return; try { const result = await updateOrder(order.id!, operation.value, reason); if (!result.ok) setError(result.error ?? 'Update failed.'); else { if (result.warning) toast.warning(result.warning, {duration:10000}); else toast.success('Order updated'); setOperation(null); router.refresh(); } } catch { setError('Unable to update the order. Try again.'); } })}>{pending ? 'Updating...' : 'Confirm'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
 }

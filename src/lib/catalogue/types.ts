@@ -10,8 +10,8 @@ export const itemSchema = z.object({
   is_available: z.boolean(), is_featured: z.boolean(), sort_order: z.number(),
   is_crowd_favourite: z.boolean().default(false),
 });
-export const groupSchema = z.object({ id, name: z.string(), min_selections: z.number().int(), max_selections: z.number().int() });
-export const optionSchema = z.object({ id, modifier_group_id: id, name: z.string(), price_pence: z.number().int().nonnegative(), allergens: z.array(z.string()), is_available: z.boolean(), sort_order: z.number() });
+export const groupSchema = z.object({ id, name: z.string(), min_selections: z.number().int(), max_selections: z.number().int(), child_group_ids: z.array(id).default([]) });
+export const optionSchema = z.object({ id, modifier_group_id: id, name: z.string(), description: z.string().default(''), image_path: z.string().nullable().default(null), image_alt: z.string().default(''), price_pence: z.number().int().nonnegative(), allergens: z.array(z.string()), is_available: z.boolean(), sort_order: z.number() });
 export const associationSchema = z.object({ menu_item_id: id, modifier_group_id: id, sort_order: z.number() });
 export const settingsSchema = z.object({
   card_enabled: z.boolean().default(false),
@@ -44,7 +44,7 @@ export const testimonialSchema = z.object({ id, author_name: z.string(), body: z
 
 export type Category = z.infer<typeof categorySchema>;
 export type MenuItem = z.infer<typeof itemSchema>;
-export type ModifierGroup = z.infer<typeof groupSchema> & { options: z.infer<typeof optionSchema>[] };
+export type ModifierGroup = Omit<z.infer<typeof groupSchema>, 'child_group_ids'> & { child_group_ids?: string[]; parentId?: string; label?: string; depth?: number; options: (z.infer<typeof optionSchema> & { imageUrl?: string | null })[] };
 export type CatalogueItem = MenuItem & { groups: ModifierGroup[]; imageUrl: string | null };
 export type Settings = z.infer<typeof settingsSchema>;
 export type TruckEvent = z.infer<typeof eventSchema> & { imageUrl: string | null };
