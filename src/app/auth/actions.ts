@@ -41,9 +41,18 @@ export async function requestMagicLink(_previous: AuthFormState, formData: FormD
       });
       if (error) {
         console.error('[auth] Signup failed', { code: error.code, status: error.status });
-        return { status: 'error', message: error.code === 'weak_password'
-          ? 'Choose a stronger password with a mix of letters, numbers and symbols.'
-          : 'We could not create your account. If you already have an account, choose Sign In. Otherwise, please try again shortly.' };
+        const messages: Record<string, string> = {
+          user_already_exists: 'An account already exists with this email address. Choose Sign In Instead to continue with your password, an email link or Google.',
+          email_exists: 'An account already exists with this email address. Choose Sign In Instead to continue with your password, an email link or Google.',
+          weak_password: 'Choose a stronger password with at least 12 characters and a mix of letters, numbers and symbols. Avoid common or previously leaked passwords.',
+          email_address_invalid: 'Check your email address for mistakes and try again.',
+          email_address_not_authorized: 'We cannot send account emails to this address right now. Please contact us for help.',
+          over_email_send_rate_limit: 'Too many account emails have been requested. Please wait a few minutes before trying again.',
+          over_request_rate_limit: 'Too many attempts have been made. Please wait a few minutes before trying again.',
+          signup_disabled: 'New account registration is temporarily unavailable. Existing customers can choose Sign In Instead.',
+        };
+        return { status: 'error', message: messages[error.code || '']
+          || 'We could not create your account right now. Please try again shortly. If you have registered before, choose Sign In Instead.' };
       }
       if (!data.session) {
         console.warn('[auth] Signup returned no session; check email confirmation settings or existing account.');

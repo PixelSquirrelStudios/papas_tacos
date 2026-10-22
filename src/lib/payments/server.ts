@@ -3,10 +3,18 @@ import Stripe from 'stripe';
 import { createClient } from '@supabase/supabase-js';
 import { supabaseConfig } from '@/lib/supabase/config';
 
+export function stripeMode(): 'test' | 'live' {
+  const mode = process.env.STRIPE_MODE ?? 'test';
+  if (mode !== 'test' && mode !== 'live') throw new Error('STRIPE_MODE must be test or live');
+  if (!process.env.STRIPE_SECRET_KEY?.startsWith(`sk_${mode}_`)) {
+    throw new Error('Stripe secret key does not match STRIPE_MODE');
+  }
+  return mode;
+}
+
 export function stripeClient() {
-  const key = process.env.STRIPE_SECRET_KEY;
-  if (!key?.startsWith('sk_test_')) throw new Error('Stripe test payments are not configured');
-  return new Stripe(key, { maxNetworkRetries: 2, timeout: 15000 });
+  stripeMode();
+  return new Stripe(process.env.STRIPE_SECRET_KEY!, { maxNetworkRetries: 2, timeout: 15000 });
 }
 
 export function paymentDatabase() {
@@ -17,5 +25,11 @@ export function paymentDatabase() {
 }
 
 export function checkoutConfigured() {
-  return Boolean(process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_') && process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_') && process.env.SUPABASE_SECRET_KEY);
+  try {
+    stripeMode();
+  } catch {
+    console.error('[stripe] Invalid payment mode or mismatched secret key.');
+    return false;
+  }
+  return Boolean(process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_') && process.env.SUPABASE_SECRET_KEY);
 }

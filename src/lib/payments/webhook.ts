@@ -1,10 +1,10 @@
 import 'server-only';
 import type Stripe from 'stripe';
-import { paymentDatabase, stripeClient } from './server';
+import { paymentDatabase, stripeClient, stripeMode } from './server';
 import { sendOrderConfirmation } from './send-confirmation';
 
 export async function applyStripeEvent(event: Stripe.Event) {
-  if (event.livemode) throw new Error('Live payments are not enabled');
+  if (event.livemode !== (stripeMode() === 'live')) throw new Error('Stripe event mode does not match configured payment mode');
   const database = paymentDatabase();
   if (event.type === 'checkout.session.completed' || event.type === 'checkout.session.expired') {
     const session = event.data.object;

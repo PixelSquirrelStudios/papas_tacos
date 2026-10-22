@@ -4,6 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 
 process.loadEnvFile('.env.local');
+if (process.env.STRIPE_MODE && process.env.STRIPE_MODE !== 'test') throw new Error('Local webhook forwarding requires STRIPE_MODE=test.');
 if (!process.env.STRIPE_SECRET_KEY?.startsWith('sk_test_')) throw new Error('A Stripe test secret key is required.');
 const portable = join(process.env.LOCALAPPDATA || '', 'StripeCLI', 'stripe.exe');
 const binary = process.env.STRIPE_CLI_PATH || (existsSync(portable) ? portable : 'stripe');

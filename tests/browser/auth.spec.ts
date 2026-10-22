@@ -78,6 +78,24 @@ test('auth tabs preserve checkout return path and validate before sending', asyn
   await page.screenshot({ path: testInfo.outputPath('signup.png'), fullPage: true });
 });
 
+test('password visibility toggles without changing its value or submitting either form', async ({ page }) => {
+  for (const mode of ['signup', 'login']) {
+    await page.goto(`/sign-in?mode=${mode}`);
+    if (mode === 'login') await page.getByRole('button', { name: 'Use a password instead', exact: true }).click();
+    const password = page.getByLabel('Password', { exact: true });
+    await password.fill('A-long-password-123');
+    await expect(password).toHaveAttribute('type', 'password');
+    await page.getByRole('button', { name: 'Show password', exact: true }).click();
+    await expect(password).toHaveAttribute('type', 'text');
+    await expect(password).toHaveValue('A-long-password-123');
+    await expect(page.getByRole('button', { name: 'Hide password', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Hide password', exact: true }).click();
+    await expect(password).toHaveAttribute('type', 'password');
+    await expect(password).toHaveValue('A-long-password-123');
+    await expect(page.locator('main').getByRole('alert')).toHaveCount(0);
+  }
+});
+
 test('password sign-in is optional and keeps the checkout return path', async ({ page }) => {
   await page.goto('/sign-in?next=%2Fcheckout%3Fevent%3Ddrive-in');
   await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);

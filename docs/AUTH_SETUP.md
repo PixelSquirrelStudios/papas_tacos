@@ -107,6 +107,9 @@ Consider retaining confirmation if verified mailbox ownership becomes a business
 The sign-in tab defaults to single-use magic links and does not create unknown users.
 Customers who registered with a password can select **Use a password instead**. Password
 sign-in failures offer magic-link recovery; no password-reset flow is required to order.
+Signup failures distinguish existing accounts, password policy, invalid email, rate limiting
+and disabled registration. An outlined **Sign In Instead** button switches to login without
+losing the checkout return path. Unknown failures retain a retry message and server-side error code.
 Successful signup/password sign-in resumes the validated local `next` path, including checkout.
 The magic-link request success response intentionally avoids revealing whether an account exists.
 

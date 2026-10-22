@@ -571,15 +571,53 @@ test('checkout slot requests preserve session identity and fail closed on access
   } finally { globalThis.fetch = originalFetch; delete globalThis.__pickupAccess; }
 });
 
-test('webhooks require valid signatures, retry failed writes and never accept live events', async () => {
+test('Stripe configuration requires an explicit matching live mode and defaults safely to test', async () => {
+  const names = ['STRIPE_MODE', 'STRIPE_SECRET_KEY', 'STRIPE_WEBHOOK_SECRET', 'SUPABASE_SECRET_KEY'];
+  const original = Object.fromEntries(names.map((name) => [name, process.env[name]]));
+  try {
+    const { stripeMode, stripeClient, checkoutConfigured } = await load('src/lib/payments/server.ts', {
+      'server-only': '', '@/lib/supabase/config': 'export function supabaseConfig() { return {url:"https://fixture.example",key:"fixture"}; }',
+    });
+    process.env.STRIPE_WEBHOOK_SECRET = 'whsec_fixture';
+    process.env.SUPABASE_SECRET_KEY = 'fixture';
+    delete process.env.STRIPE_MODE;
+    process.env.STRIPE_SECRET_KEY = 'sk_test_fixture';
+    assert.equal(stripeMode(), 'test');
+    assert.equal(checkoutConfigured(), true);
+    assert.ok(stripeClient());
+    process.env.STRIPE_SECRET_KEY = 'sk_live_fixture';
+    assert.throws(stripeMode, /does not match/);
+    assert.equal(checkoutConfigured(), false);
+    process.env.STRIPE_MODE = 'live';
+    assert.equal(stripeMode(), 'live');
+    assert.equal(checkoutConfigured(), true);
+    assert.ok(stripeClient());
+    process.env.STRIPE_SECRET_KEY = 'sk_test_fixture';
+    assert.throws(stripeClient, /does not match/);
+    process.env.STRIPE_MODE = 'invalid';
+    assert.throws(stripeMode, /must be test or live/);
+    assert.equal(checkoutConfigured(), false);
+    process.env.STRIPE_MODE = 'test';
+    delete process.env.STRIPE_WEBHOOK_SECRET;
+    assert.equal(checkoutConfigured(), false);
+  } finally {
+    for (const name of names) {
+      if (original[name] === undefined) delete process.env[name];
+      else process.env[name] = original[name];
+    }
+  }
+});
+
+test('webhooks require valid signatures, retry failed writes and reject mismatched payment modes', async () => {
   const stripe = new Stripe('sk_test_fixture');
-  const state = { stripe, calls: [], fail: false, refund: false, refunds: [], confirmations: [], emailFail: false };
+  const state = { stripe, mode: 'test', calls: [], fail: false, refund: false, refunds: [], confirmations: [], emailFail: false };
   stripe.refunds.create = async (...args) => { state.refunds.push(args); return {}; };
   globalThis.__webhookTest = state;
   const originalSecret = process.env.STRIPE_WEBHOOK_SECRET;
   process.env.STRIPE_WEBHOOK_SECRET = 'whsec_fixture';
   try {
     const server = `export const stripeClient = () => globalThis.__webhookTest.stripe;
+      export const stripeMode = () => globalThis.__webhookTest.mode;
       export const paymentDatabase = () => ({rpc: async (name, args) => { const state = globalThis.__webhookTest; state.calls.push([name,args]); return {data: state.refund, error: state.fail ? {} : null}; }});`;
     const { POST } = await load('src/app/api/stripe/webhook/route.ts', { 'server-only': '', '@/lib/payments/server': server, './server': server,
       './send-confirmation': 'export async function sendOrderConfirmation(id) { const state = globalThis.__webhookTest; if (state.emailFail) throw new Error("Email unavailable"); state.confirmations.push(id); }',
@@ -610,6 +648,27 @@ test('webhooks require valid signatures, retry failed writes and never accept li
     const calls = state.calls.length;
     assert.equal((await send({ ...event, data: { object: { ...event.data.object, payment_status: 'unpaid' } } })).status, 200);
     assert.equal(state.calls.length, calls);
+    state.mode = 'live';
+    assert.equal((await send()).status, 500);
+    assert.equal(state.calls.length, calls);
+    state.refund = false;
+    const liveEvent = { ...event, id: 'evt_live_fixture', livemode: true };
+    assert.equal((await send(liveEvent, 'invalid')).status, 400);
+    assert.equal(state.calls.length, calls);
+    assert.equal((await send(liveEvent)).status, 200);
+    assert.equal(state.calls.at(-1)[0], 'process_stripe_checkout');
+    const expired = { ...liveEvent, type: 'checkout.session.expired' };
+    assert.equal((await send(expired)).status, 200);
+    assert.equal(state.calls.at(-1)[1].event_kind, 'checkout.session.expired');
+    const refunded = { ...liveEvent, type: 'charge.refunded', data: { object: {
+      metadata: { integration: 'papas_tacos' }, payment_intent: 'pi_live_fixture', amount_refunded: 1275,
+    } } };
+    assert.equal((await send(refunded)).status, 200);
+    assert.equal(state.calls.at(-1)[0], 'process_stripe_refund');
+    assert.equal(state.calls.at(-1)[1].refunded, 1275);
+    state.refund = true;
+    assert.equal((await send(liveEvent)).status, 200);
+    assert.equal(state.refunds.length, 2);
   } finally {
     delete globalThis.__webhookTest;
     if (originalSecret === undefined) delete process.env.STRIPE_WEBHOOK_SECRET; else process.env.STRIPE_WEBHOOK_SECRET = originalSecret;

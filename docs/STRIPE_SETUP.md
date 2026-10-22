@@ -1,9 +1,9 @@
-# Stripe Test Payments
+# Stripe Payments
 
 ## Setup
 
 1. Apply [029_stripe_checkout.sql](../supabase/sql/029_stripe_checkout.sql) in Supabase SQL Editor after migrations 000-028, then [030_order_confirmation_emails.sql](../supabase/sql/030_order_confirmation_emails.sql). These add atomic checkout and private confirmation-email delivery records. Both are repeatable. Do not enable checkout before applying them.
-2. Keep `STRIPE_SECRET_KEY` set to a Stripe `sk_test_` key and `SUPABASE_SECRET_KEY` server-only. This implementation deliberately refuses live Stripe keys. Hosted Checkout does not need the publishable key in the browser.
+2. For testing, set `STRIPE_MODE=test` (also the default when unset) and `STRIPE_SECRET_KEY` to a Stripe `sk_test_` key. Keep this and `SUPABASE_SECRET_KEY` server-only. Hosted Checkout does not need the publishable key in the browser.
 3. Run `npm run dev`, then `npm run stripe:listen` in a second terminal. The listener uses the Stripe CLI, reads the test key from the local environment, and saves `STRIPE_WEBHOOK_SECRET` without printing it. Keep it running while testing. Restart Next.js if it does not reload the environment change.
 4. In Site Settings, enable Card Payments and set ordering to Open. Publish an event with pickup enabled and ordering open, then generate its schedule in Admin > Pickup Slots as described below. Maintenance restricts access to verified admins, but does not close ordering; disable it when opening to customers.
 5. Sign in, add available menu items, open `/checkout`, select pickup/contact details, and pay on Stripe's hosted page.
@@ -11,6 +11,33 @@
 The portable CLI is installed locally at `%LOCALAPPDATA%\StripeCLI\stripe.exe` on this development machine. Elsewhere, install the official [Stripe CLI](https://docs.stripe.com/stripe-cli). Set `STRIPE_CLI_PATH` if it is not on PATH. Set `STRIPE_FORWARD_ORIGIN=http://localhost:3001` when the app uses another port. Local forwarding uses the CLI's connection to Stripe; no application WebSocket endpoint is required.
 
 Never commit environment files or expose secret keys as `NEXT_PUBLIC_*` variables. The local CLI signing secret is not the secret for a deployed webhook endpoint.
+
+## Live payments
+
+The application supports one Stripe mode per deployment. It refuses mismatched mode/key
+configuration and rejects signed webhook events from the other mode before database writes.
+To enable real payments:
+
+1. Complete Stripe account activation, business verification and payout bank details.
+2. Apply database upgrades through 049. Keep ordering closed while switching modes and resolve
+   outstanding test reservations first. Prefer separate test/staging and live databases so test
+   orders, email deliveries and reports are not mixed with real sales.
+3. In Stripe live mode, create a **Snapshot events** webhook destination at
+   `https://www.papastacos.co.uk/api/stripe/webhook`, subscribing to
+   `checkout.session.completed`, `checkout.session.expired` and `charge.refunded`.
+   Use the snapshot API version matching the installed Stripe SDK's API version.
+4. In production hosting, set `STRIPE_MODE=live`, the matching `STRIPE_SECRET_KEY=sk_live_...`,
+   and that live endpoint's `STRIPE_WEBHOOK_SECRET=whsec_...`. Never share or commit their values.
+   Deploy/restart so all three take effect together. Updating local environment variables alone
+   does not update production.
+5. Confirm production `SITE_URL`, Supabase configuration, email sender and event ordering settings.
+6. Make one small real card payment, verify the webhook succeeds, the order is marked paid and
+   the confirmation email arrives. Verify a full refund updates the order too. Test cancellation,
+   retry, duplicate webhook delivery and late-payment refund handling in staging.
+
+Only card payments are enabled. Delayed payment methods require additional async webhook
+handlers before activation. Do not run the local Stripe listener against live credentials;
+it is test-only and can replace the local webhook signing secret.
 
 ## Table and Car Service
 

@@ -339,7 +339,19 @@ test('signup creates a password account and resumes checkout only with a real se
     state.session = null;
     assert.equal((await requestMagicLink({}, form)).status, 'error');
     state.error = { code: 'user_already_exists', status: 422 };
-    assert.match((await requestMagicLink({}, form)).message, /already have an account/);
+    assert.match((await requestMagicLink({}, form)).message, /account already exists/);
+    for (const [code, message] of [
+      ['email_exists', /Sign In Instead/],
+      ['weak_password', /stronger password/],
+      ['email_address_invalid', /email address for mistakes/],
+      ['over_email_send_rate_limit', /wait a few minutes/],
+      ['over_request_rate_limit', /wait a few minutes/],
+      ['signup_disabled', /registration is temporarily unavailable/],
+      ['unexpected_failure', /try again shortly/],
+    ]) {
+      state.error = { code, status: 422 };
+      assert.match((await requestMagicLink({}, form)).message, message);
+    }
     state.error = null;
     form.set('mode', 'login');
     assert.equal((await requestMagicLink({}, form)).status, 'success');
