@@ -19,6 +19,15 @@ view/download paid-order receipts and receive branded pickup-confirmation emails
 See [Stripe setup](docs/STRIPE_SETUP.md) and apply migrations 029-030 before enabling card checkout.
 Cash checkout, ready-for-pickup notifications and live payments remain future work.
 
+The admin overview refreshes its data in the background every 15 seconds while visible and online.
+Failed updates leave the last successful dashboard on screen with an explicit stale-data warning;
+updates retry automatically and also resume on reconnection. Data is kept only in memory, not browser storage.
+
+Events support pickup, table service and car service. Table/car checkout uses a required location number
+instead of pickup slots, with event QR codes, an outstanding/completed admin queue, and confirmation plus
+completion thank-you emails. Apply SQL upgrade 045 after 044 before using this feature.
+See [table/car ordering setup](docs/STRIPE_SETUP.md#table-and-car-service).
+
 Read [the Supabase setup guide](supabase/README.md) before running SQL.
 Your local environment file is excluded from version control. The Stripe listener updates only its webhook signing secret.
 Read [the Stage 2 auth setup guide](docs/AUTH_SETUP.md) for Supabase redirects, Google login,
@@ -67,7 +76,8 @@ and mobile without sending emails or creating hosted users. Install Chromium onc
 - The business also has a global open/paused/closed status that overrides all events.
 - Publishing an event does not automatically enable pickup orders.
 - Pausing or closing orders does not cancel or hide existing orders.
-- An order also needs an enabled future pickup slot with capacity and sufficient preparation time.
+- Pickup orders need an enabled future pickup slot with capacity and sufficient preparation time; table/car orders use delivery-location numbers instead.
+- Private events remain publicly visible, but ordering requires their secret event QR link. Apply upgrade 046 and print the private QR after enabling the setting; see the [service ordering guide](docs/STRIPE_SETUP.md#table-and-car-service).
 - Monetary amounts are integer pence in GBP; event timestamps include timezone information.
 
 ## Next stages, one at a time

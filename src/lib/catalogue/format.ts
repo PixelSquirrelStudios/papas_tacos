@@ -25,7 +25,21 @@ export function eventTime(value: string) {
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
+export function servingWindow(event: Pick<TruckEvent, 'starts_at' | 'ends_at' | 'orders_open_at' | 'orders_close_at'>) {
+  return { opens: event.orders_open_at || event.starts_at, closes: event.orders_close_at || event.ends_at };
+}
+
 export function pickupState(event: TruckEvent, settings: Settings | null, now = Date.now()) {
+  if (event.service_mode && event.service_mode !== 'pickup') {
+    const label = event.service_mode === 'table' ? 'Table service' : 'Car service';
+    if (canOrder([event], settings, now)) return `${label} orders open`;
+    if (!event.pickup_enabled) return `${label} ordering unavailable`;
+    if (!settings || settings.ordering_status === 'closed' || event.ordering_status === 'closed') return `${label} orders closed`;
+    if (settings?.ordering_status === 'paused' || event.ordering_status === 'paused') return `${label} orders paused`;
+    const opens = event.orders_open_at || event.starts_at;
+    if (now < Date.parse(opens)) return `Ordering is not open yet. You can place ${event.service_mode === 'car' ? 'car' : 'table'} delivery orders from ${eventTime(opens)} on ${eventDate(opens)}.`;
+    return `${label} orders closed`;
+  }
   if (!settings || settings.ordering_status === 'closed') return 'Pickup orders closed';
   if (settings.ordering_status === 'paused') return 'Pickup orders paused';
   if (!event.pickup_enabled) return 'No pickup orders at this event';
@@ -38,10 +52,22 @@ export function pickupState(event: TruckEvent, settings: Settings | null, now = 
 
 export function canOrder(events: TruckEvent[], settings: Settings | null, now = Date.now()) {
   return settings?.ordering_status === 'open' && events.some((event) => {
-    const opens = Date.parse(event.orders_open_at || event.starts_at);
-    const closes = Math.min(Date.parse(event.ends_at), Date.parse(event.orders_close_at || event.ends_at));
-    return event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
+    const window = servingWindow(event);
+    const opens = Date.parse(window.opens);
+    const closes = Date.parse(window.closes);
+    return (!event.is_private || event.ordering_access === true) && event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
   });
+}
+
+export function eventOrderingNotice(event: TruckEvent, settings: Settings | null, now = Date.now()) {
+  const window = servingWindow(event);
+  if (!settings) return { title: 'Ordering Unavailable', message: 'We cannot check ordering availability right now. Please try again shortly.' };
+  if (!event.pickup_enabled) return { title: 'Ordering Unavailable', message: 'Online ordering is not available for this event. Please speak to our team.' };
+  if (settings.ordering_status === 'closed' || event.ordering_status === 'closed' || now >= Date.parse(window.closes)) return { title: 'Orders Closed', message: 'We are no longer accepting orders for this event. Thank you for visiting us. If you have already ordered, our team will still look after your order.' };
+  if (settings.ordering_status === 'paused' || event.ordering_status === 'paused') return { title: 'Orders Paused', message: 'We have temporarily paused new orders. Please check back shortly. If you have already ordered, our team will still look after your order.' };
+  if (now < Date.parse(window.opens)) return { title: 'Orders Open Later', message: `Ordering is not open yet. You can place orders from ${eventTime(window.opens)} on ${eventDate(window.opens)}. You are welcome to browse the menu while you wait.` };
+  if (event.is_private && !event.ordering_access) return { title: 'Scan Event QR to Order', message: 'Please scan the QR code provided at this event to unlock ordering.' };
+  return null;
 }
 
 export function httpsLink(value: string | null | undefined) {

@@ -56,6 +56,7 @@ test.beforeAll(async () => {
       import { createRoot } from 'react-dom/client';
       import { BagProvider } from '@/components/bag/bag-provider';
       import { CheckoutForm } from '@/components/bag/checkout-form';
+      import { EventSelection } from '@/components/bag/event-selection';
       import { OrderDetails } from '@/components/account/order-views';
       const kind = new URLSearchParams(location.search).get('kind');
       const order = { id: '${itemId}', checkout_key: '${slotId}', order_number: 1234, status: kind === 'pending' ? 'pending_payment' : 'ordered', payment_status: kind === 'pending' ? 'unpaid' : 'paid', payment_method: 'card', customer_name: 'Alex Taylor', customer_phone: '07000000000', customer_note: '', created_at: '2026-09-24T12:00:00Z', total_pence: 875, subtotal_pence: 800, service_fee_pence: 50, packaging_fee_pence: 25, pickup_starts_at: '2026-09-25T17:00:00Z', pickup_ends_at: '2026-09-25T17:15:00Z', pickup_location: {venue_name:'Town Market'}, order_items: [{id:'${itemId}',item_name:'Test Taco',quantity:1,line_total_pence:800,allergen_snapshot:[],order_item_modifiers:[]}], order_status_history:[], reservation_expires_at:'2026-09-24T13:00:00Z', cancellation_reason:null };
@@ -67,7 +68,8 @@ test.beforeAll(async () => {
         {id:'first-extra',group_name:'Taco 1 Filling / Extras',option_name:'Cheese',unit_price_pence:100},
         {id:'second-sauce',group_name:'Taco 2 Filling / Sauces',option_name:'Mild Salsa',unit_price_pence:0},
       ];
-      createRoot(document.getElementById('fixture')).render(<main className="page-width py-10"><BagProvider>{kind?.startsWith('checkout') ? <><h1 className="mb-8 text-3xl font-semibold">Checkout</h1><CheckoutForm name="Alex Taylor" phone="07000000000" email="alex@example.test" slots={kind === 'checkout-empty' ? [] : ${JSON.stringify(pickupChoices)}} /></> : <OrderDetails order={order} />}</BagProvider></main>);
+      if (kind === 'service-complete') Object.assign(order, {status:'collected',pickup_location:{venue_name:'Cinema',event_title:'Drive-In Cinema',service_mode:'car',location_number:'27',number_plate:'AB12 CDE'}});
+      createRoot(document.getElementById('fixture')).render(<main className="page-width py-10"><BagProvider>{kind === 'menu-event' ? <EventSelection requestedEventId="${itemId}" /> : kind?.startsWith('checkout') ? <><h1 className="mb-8 text-3xl font-semibold">Checkout</h1><CheckoutForm name="Alex Taylor" phone="07000000000" email="alex@example.test" slots={kind === 'checkout-empty' ? [] : ${JSON.stringify(pickupChoices)}} /></> : <OrderDetails order={order} />}</BagProvider></main>);
     ` },
     bundle: true, write: false, format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"test"' },
     plugins: [{ name: 'payments-browser', setup(builder) {
@@ -86,10 +88,14 @@ async function fixture(page: Page, kind: string, admin = false, fees = { service
   await page.goto('/sign-in');
   const styles = await page.locator('link[rel="stylesheet"]').evaluateAll((links) => links.map((link) => (link as HTMLLinkElement).href));
   await page.evaluate((itemId) => localStorage.setItem('papas-tacos:bag:v1', JSON.stringify({ version: 1, lines: [{ itemId, optionIds: [], quantity: 1 }] })), itemId);
+  await page.evaluate(({ kind, itemId }) => {
+    localStorage.removeItem('papas-tacos:event');
+    if (kind === 'checkout-car' || kind === 'checkout-table') localStorage.setItem('papas-tacos:event', itemId);
+  }, { kind, itemId });
   await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
     catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
     settings: { maintenance_enabled: admin, card_enabled: true, ordering_status: 'open', service_fee_pence: fees.service, packaging_fee_pence: fees.packaging, minimum_order_pence: 0 },
-    events: [{ pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
+    events: [{ id: itemId, title: 'Drive-In Cinema', service_mode: kind === 'checkout-table' ? 'table' : kind === 'checkout-car' || kind === 'menu-event' ? 'car' : 'pickup', pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
   } }));
   await page.route('**/api/pickup-slots', (route) => route.fulfill({ json: { slots: choices, error: false } }));
   await page.route('**/__payments_fixture.js', (route) => route.fulfill({ contentType: 'application/javascript', body: bundle }));
@@ -97,6 +103,31 @@ async function fixture(page: Page, kind: string, admin = false, fees = { service
   await page.goto(`/__payments_test?kind=${kind}`);
   return choices;
 }
+
+test('selecting a pickup time applies its event menu and price before payment', async ({ page }) => {
+  await fixture(page, 'checkout');
+  const defaultId = '00000000-0000-4000-8000-000000000050';
+  const eventSetId = '00000000-0000-4000-8000-000000000051';
+  const publicSection = '00000000-0000-4000-8000-000000000052';
+  const eventSection = '00000000-0000-4000-8000-000000000053';
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
+    catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }], menuSets: {
+      sets: [{ id: defaultId, name: 'Public', is_default: true }, { id: eventSetId, name: 'Cinema', is_default: false }],
+      sections: [{ id: publicSection, menu_set_id: defaultId, title: 'Tacos', sort_order: 0 }, { id: eventSection, menu_set_id: eventSetId, title: 'THE MAIN EVENT', sort_order: 0 }],
+      entries: [{ menu_set_id: defaultId, section_id: publicSection, menu_item_id: itemId, price_pence: null, sort_order: 0 }, { menu_set_id: eventSetId, section_id: eventSection, menu_item_id: itemId, price_pence: 1200, sort_order: 0 }],
+    } },
+    settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },
+    events: [{ id: itemId, title: 'Friday Market', menu_set_id: eventSetId, service_mode: 'pickup', pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z' }],
+  } }));
+  await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+  await expect(page.getByRole('button', { name: 'Pay £8.75', exact: true })).toBeDisabled();
+  await page.getByRole('radio', { name: '18:00 - 18:20', exact: true }).check();
+  const pay = page.getByRole('button', { name: 'Pay £12.75', exact: true });
+  await expect(pay).toBeEnabled();
+  await pay.click();
+  await expect.poll(() => page.evaluate(() => Reflect.get(window, '__checkoutInput')?.expectedTotal)).toBe(1275);
+  expect(await page.evaluate(() => Reflect.get(window, '__checkoutInput').eventId)).toBe(itemId);
+});
 
 test('checkout and order summaries omit zero fees without changing totals', async ({ page }) => {
   for (const [service, packaging] of [[0, 0], [50, 0], [0, 25], [50, 25]]) {
@@ -113,6 +144,109 @@ test('checkout and order summaries omit zero fees without changing totals', asyn
   await expect(page.getByText('Total', { exact: true })).toBeVisible();
 });
 
+test('table and car checkout require delivery numbers without pickup slots', async ({ page }) => {
+  await page.clock.install();
+  for (const mode of ['car', 'table']) {
+    await fixture(page, `checkout-${mode}`);
+    let slotRequests = 0;
+    await page.route('**/api/pickup-slots', (route) => { slotRequests++; return route.fulfill({ status: 503, json: { error: 'No slots' } }); });
+    const location = page.getByRole('textbox', { name: mode === 'car' ? 'Assigned Car Number' : 'Table Number', exact: true });
+    await expect(location).toBeVisible();
+    await expect(page.getByRole('radio')).toHaveCount(0);
+    await expect(page.getByRole('region', { name: 'Ordering Information' })).toContainText('Delivery times may be longer during busy periods.');
+    await expect(page.getByText(/pickup slot/i)).toHaveCount(0);
+    const pay = page.getByRole('button', { name: 'Pay £8.75', exact: true });
+    await pay.click();
+    expect(await location.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
+    expect(await page.evaluate(() => (window as unknown as { __checkoutInput?: unknown }).__checkoutInput)).toBeUndefined();
+    await location.fill('27');
+    if (mode === 'car') await page.getByRole('textbox', { name: 'Number Plate (optional)' }).fill('AB12 CDE');
+    await pay.click();
+    await expect.poll(() => page.evaluate(() => (window as unknown as { __checkoutInput?: { locationNumber: string } }).__checkoutInput?.locationNumber)).toBe('27');
+    const input = await page.evaluate(() => (window as unknown as { __checkoutInput: Record<string, unknown> }).__checkoutInput);
+    expect(input.eventId).toBe(itemId);
+    expect(input.slotId).toBeUndefined();
+    if (mode === 'car') expect(input.numberPlate).toBe('AB12 CDE');
+    await page.clock.fastForward(30000);
+    expect(slotRequests).toBe(0);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
+test('event link preselects the event and persists it through reload and checkout', async ({ page }) => {
+  await fixture(page, 'menu-event');
+  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await expect.poll(() => page.evaluate(() => localStorage.getItem('papas-tacos:event'))).toBe(itemId);
+  await page.reload();
+  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await page.goto('/__payments_test?kind=checkout-car');
+  await expect(page.getByRole('textbox', { name: 'Assigned Car Number', exact: true })).toBeVisible();
+});
+
+test('event link requires confirmation before switching an existing bag to another event', async ({ page }) => {
+  await fixture(page, 'menu-event');
+  const otherId = '00000000-0000-4000-8000-000000000003';
+  const bag = await page.evaluate(() => localStorage.getItem('papas-tacos:bag:v1'));
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
+    catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
+    settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },
+    events: [{ id: itemId, title: 'Drive-In Cinema', service_mode: 'car' }, { id: otherId, title: 'Kitchen Tables', service_mode: 'table' }].map((event) => ({ ...event, pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null })),
+  } }));
+  await page.evaluate((id) => localStorage.setItem('papas-tacos:event', id), otherId);
+  await page.reload();
+  const event = page.getByRole('combobox', { name: 'Ordering for' });
+  await expect(event).toHaveValue(otherId);
+  await expect(page.getByRole('button', { name: 'Switch Event', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Keep Current Event', exact: true }).click();
+  await expect(event).toHaveValue(otherId);
+  await page.reload();
+  await page.getByRole('button', { name: 'Switch Event', exact: true }).click();
+  await expect(event).toHaveValue(itemId);
+  expect(await page.evaluate(() => localStorage.getItem('papas-tacos:bag:v1'))).toBe(bag);
+  await page.goto('/__payments_test?kind=checkout-car');
+  await expect(page.getByRole('textbox', { name: 'Assigned Car Number', exact: true })).toBeVisible();
+});
+
+test('expired event selection stays blocked instead of choosing another event', async ({ page }) => {
+  await fixture(page, 'menu-event');
+  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
+    catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
+    settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },
+    events: [],
+  } }));
+  await page.goto('/__payments_test?kind=checkout-car');
+  await expect(page.getByText('This event is closed, expired or unavailable.', { exact: false })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Pay £8.75', exact: true })).toBeDisabled();
+});
+
+test('private event checkout is blocked until the catalogue confirms QR access', async ({ page }) => {
+  await fixture(page, 'checkout-car');
+  let unlocked = false;
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
+    catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
+    settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },
+    events: [{ id: itemId, title: 'Drive-In Cinema', service_mode: 'car', is_private: true, ordering_access: unlocked, pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z', orders_open_at: null, orders_close_at: null }],
+  } }));
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Pay £8.75', exact: true })).toBeDisabled();
+  await expect(page.getByRole('region', { name: 'Ordering Information' })).toContainText('Orders can only be placed by scanning a QR code provided at the event.');
+  await expect(page.getByRole('status')).toContainText('Scan the QR code');
+  unlocked = true;
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Pay £8.75', exact: true })).toBeEnabled();
+  await expect(page.getByRole('region', { name: 'Ordering Information' })).not.toContainText('Orders can only be placed');
+});
+
+test('service customer orders show delivery and two progress steps with completion wording', async ({ page }) => {
+  await fixture(page, 'service-complete');
+  await expect(page.getByRole('heading', { name: 'Delivery', exact: true })).toBeVisible();
+  await expect(page.getByText('Car 27 / AB12 CDE - delivery as soon as possible')).toBeVisible();
+  await expect(page.getByRole('list', { name: 'Order progress' }).getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('list', { name: 'Order progress' })).toContainText('Complete');
+  await expect(page.getByText('Ready for Pickup', { exact: true })).toHaveCount(0);
+});
+
 test('checkout distinguishes empty schedules and permits an authorized maintenance session', async ({ page }, testInfo) => {
   await fixture(page, 'checkout-empty');
   await expect(page.getByRole('status')).toContainText('No pickup times are currently available');
@@ -127,7 +261,7 @@ test('checkout distinguishes empty schedules and permits an authorized maintenan
 
 test('checkout shows only available times and removes a selected time when booked', async ({ page }, testInfo) => {
   const choices = await fixture(page, 'checkout');
-  await expect(page.getByRole('combobox')).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(1);
   await expect(page.getByRole('radio')).toHaveCount(1);
   await expect(page.getByRole('group', { name: 'Pickup Time' }).getByText(/Available|Taken|Locked|Unavailable/, { exact: true })).toHaveCount(0);
   await page.getByRole('radio', { name: '18:00 - 18:20', exact: true }).check();

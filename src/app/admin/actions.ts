@@ -131,7 +131,7 @@ export async function lockPickupSlot(id: string, updatedAt: string, locked: bool
 
 export async function updateOrder(id: string, operation: string, reason = ''): Promise<AdminResult> {
   await requireAdmin();
-  if (!identity.safeParse(id).success || !['preparing', 'ready_for_pickup', 'collected', 'cancelled', 'cash_paid'].includes(operation)) return { ok: false, error: 'Invalid order operation.' };
+  if (!identity.safeParse(id).success || !['ordered', 'preparing', 'ready_for_pickup', 'collected', 'cancelled', 'cash_paid'].includes(operation)) return { ok: false, error: 'Invalid order operation.' };
   if (reason.length > 500 || (operation === 'cancelled' && !reason.trim())) return { ok: false, error: 'Enter a cancellation reason (maximum 500 characters).' };
   try {
     await adminRequest(`rpc/${operation === 'cash_paid' ? 'admin_mark_cash_paid' : 'admin_set_order_status'}`, {}, 'POST', operation === 'cash_paid' ? { order_uuid: id } : { order_uuid: id, next_status: operation, reason: reason.trim() || null });

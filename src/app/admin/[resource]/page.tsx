@@ -15,7 +15,7 @@ export default async function ResourcePage({ params }: { params: Promise<{ resou
     let pickupData: { events: AdminRow[]; schedules: AdminRow[]; slots: ReturnType<typeof pickupChoicesSchema.parse> } | null = null;
     let pickupError = '';
     try {
-      const [events, schedules, choices] = await Promise.all([adminRows('events', { order: 'sort_order.asc,id.asc' }), adminRows('pickup_schedules'), adminRequest('rpc/get_pickup_choices', {}, 'POST', {})]);
+      const [events, schedules, choices] = await Promise.all([adminRows('events', { service_mode: 'eq.pickup', order: 'sort_order.asc,id.asc' }), adminRows('pickup_schedules'), adminRequest('rpc/get_pickup_choices', {}, 'POST', {})]);
       pickupData = { events, schedules, slots: pickupChoicesSchema.parse(choices) };
     } catch (failure) { pickupError = adminError(failure); }
     if (pickupData) return <PickupManager {...pickupData} />;

@@ -15,6 +15,269 @@ const eventId = '00000000-0000-4000-8000-000000000010';
 const slotId = '00000000-0000-4000-8000-000000000020';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
 
+test('menu sets seed existing menus and enforce event membership and price snapshots at checkout', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec("update public.business_settings set ordering_status='open',card_enabled=true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Tacos','set-tacos',true) returning id")).rows[0].id;
+    const taco = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Taco','set-taco',800,true,true) returning id", [category])).rows[0].id;
+    const sweet = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Churros','set-churros',400,true,true) returning id", [category])).rows[0].id;
+    const migration = await readFile(new URL('048_menu_sets.sql', sqlDirectory), 'utf8');
+    await database.exec(migration);
+    const initial = (await database.query('select * from public.menu_sets where is_default')).rows[0];
+    assert.equal((await database.query('select * from public.menu_set_items where menu_set_id=$1', [initial.id])).rows.length, 2);
+    const sections = [{ title: 'THE MAIN EVENT', items: [{ itemId: taco, pricePence: 1200 }] }];
+    const save = (id, version, name, body) => asRole(database, 'authenticated', adminId, () => database.query('select * from public.admin_save_menu_set($1,$2,$3,$4)', [id, version, name, body]));
+    const cinema = (await save(null, null, 'Cinema', sections)).rows[0];
+    await assert.rejects(save(cinema.id, null, 'Stale', []), /changed/);
+    await assert.rejects(save(cinema.id, cinema.updated_at, 'Duplicate', [...sections, ...sections]), /unique constraint/);
+    await asRole(database, 'authenticated', customerId, async () => {
+      await assert.rejects(database.query('select * from public.admin_save_menu_set(null,null,$1,$2)', ['Forged', []]), /Admin access required/);
+      await assert.rejects(database.query("update public.menu_set_items set price_pence=1"), /permission denied/);
+    });
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select * from public.menu_sets')).rows.length, 2);
+      await assert.rejects(database.query("insert into public.menu_sets(name) values ('Forged')"), /permission denied/);
+    });
+    const event = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode,menu_set_id)
+      values ('set-cinema','Cinema','Venue','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',true,true,'open','car',$1) returning id`, [cinema.id])).rows[0].id;
+    const payload = { eventId: event, locationNumber: '27', name: 'Customer', email: 'customer@example.test', phone: '07000000000', expectedTotal: 1200, lines: [{ itemId: taco, quantity: 1, optionIds: [] }] };
+    const reserve = (body = payload) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), body]);
+    await assert.rejects(reserve({ ...payload, expectedTotal: 800 }), /Prices have changed/);
+    await assert.rejects(reserve({ ...payload, expectedTotal: 400, lines: [{ itemId: sweet, quantity: 1, optionIds: [] }] }), /not on the menu/);
+    const order = (await reserve()).rows[0];
+    assert.equal(order.subtotal_pence, 1200);
+    assert.equal((await database.query('select unit_price_pence from public.order_items where order_id=$1', [order.id])).rows[0].unit_price_pence, 1200);
+    await database.query('update public.events set menu_set_id=null where id=$1', [event]);
+    const fallback = (await reserve({ ...payload, expectedTotal: 800 })).rows[0];
+    assert.equal(fallback.subtotal_pence, 800);
+    for (const saved of [order, fallback]) await asRole(database, 'authenticated', adminId, () => database.query("select public.admin_set_order_status($1,'cancelled','Test cleanup')", [saved.id]));
+    const pickup = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode,menu_set_id,pickup_lead_minutes)
+      values ('set-pickup','Pickup','Venue','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '3 hours',true,true,'open','pickup',$1,5) returning id`, [cinema.id])).rows[0].id;
+    await database.query("insert into public.pickup_schedules(event_id,starts_at,ends_at,preparation_minutes) values ($1,now()+interval '30 minutes',now()+interval '1 hour',5)", [pickup]);
+    const pickupSlot = (await database.query('select id from public.pickup_slots where event_id=$1 order by starts_at limit 1', [pickup])).rows[0].id;
+    const pickupPayload = { ...payload, eventId: pickup, slotId: pickupSlot };
+    const pickupOrder = (await reserve(pickupPayload)).rows[0];
+    assert.equal(pickupOrder.subtotal_pence, 1200);
+    await assert.rejects(reserve({ ...pickupPayload, expectedTotal: 800 }), /Prices have changed/);
+    await database.query("update public.menu_items set is_available=false where id=$1", [taco]);
+    await assert.rejects(reserve(pickupPayload), /no longer available/);
+    await database.query("update public.menu_items set is_available=true where id=$1", [taco]);
+    const currentVersion = (await database.query('select updated_at from public.menu_sets where id=$1', [cinema.id])).rows[0].updated_at;
+    await save(cinema.id, currentVersion, 'Cinema', []);
+    await assert.rejects(reserve(pickupPayload), /not on the menu/);
+    await database.query('update public.menu_items set price_pence=900 where id=$1', [taco]);
+    await database.exec(migration);
+    assert.equal((await database.query('select * from public.menu_sets')).rows.length, 2);
+    assert.equal((await database.query('select unit_price_pence from public.order_items where order_id=$1', [order.id])).rows[0].unit_price_pence, 1200);
+  } finally { await database.close(); }
+});
+
+test('independent serving windows allow early and late orders with private access and pickup schedules', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec("update public.business_settings set ordering_status='open',card_enabled=true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','window-meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','window-tacos',800,true,true) returning id", [category])).rows[0].id;
+    for (const mode of ['car', 'table', 'pickup']) {
+      for (const timing of ['before', 'after']) {
+        const event = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,orders_open_at,orders_close_at,is_published,pickup_enabled,ordering_status,service_mode,is_private,pickup_lead_minutes)
+          values ($1,$1,'Venue','Street','Town','AB1 2CD',
+            now() + case when $3='before' then interval '1 hour' else interval '-2 hours' end,
+            now() + case when $3='before' then interval '2 hours' else interval '-1 hour' end,
+            now()-interval '3 hours',now()+interval '45 minutes',true,true,'open',$2,true,5)
+          returning *`, [`${mode}-${timing}`, mode, timing])).rows[0];
+        const key = await asRole(database, 'authenticated', adminId, async () => (await database.query('select * from public.admin_event_ordering_key($1)', [event.id])).rows[0].access_key);
+        assert.equal((await database.query('select public.check_event_ordering_access($1,$2) as allowed', [event.id, key])).rows[0].allowed, true);
+        const body = { eventId: event.id, eventAccess: key, locationNumber: '27', name: 'Customer', email: 'customer@example.test', phone: '07000000000', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+        if (mode === 'pickup') {
+          await database.query("insert into public.pickup_schedules(event_id,starts_at,ends_at,preparation_minutes) values ($1,now()+interval '10 minutes',now()+interval '30 minutes',5)", [event.id]);
+          const times = (await database.query('select orders_open_at,orders_close_at from public.events where id=$1', [event.id])).rows[0];
+          assert.deepEqual(times.orders_open_at, event.orders_open_at);
+          assert.deepEqual(times.orders_close_at, event.orders_close_at);
+          const choices = await asRole(database, 'anon', null, () => database.query('select * from public.get_checkout_pickup_choices()'));
+          body.slotId = choices.rows.find((row) => row.event_id === event.id && row.status === 'available').id;
+        }
+        const reserve = () => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), body]);
+        const order = (await reserve()).rows[0];
+        assert.equal(order.event_id, event.id);
+        if (mode !== 'pickup') {
+          assert.deepEqual(order.pickup_starts_at, event.orders_open_at);
+          assert.deepEqual(order.pickup_ends_at, event.orders_close_at);
+          assert.ok(Date.parse(order.reservation_expires_at) > Date.now() + 9 * 60000);
+        }
+        await asRole(database, 'authenticated', adminId, () => database.query("select public.admin_set_order_status($1,'cancelled','Test cleanup')", [order.id]));
+        await database.query("update public.events set orders_close_at=now()-interval '1 minute' where id=$1", [event.id]);
+        await assert.rejects(reserve(), /ordering_ended|ordering window/);
+        await assert.rejects(database.query('update public.events set orders_open_at=orders_close_at where id=$1', [event.id]), /check constraint/);
+      }
+    }
+    await database.exec(await readFile(new URL('047_independent_ordering_times.sql', sqlDirectory), 'utf8'));
+    assert.match((await database.query("select pg_get_functiondef('public.reserve_card_order(uuid,uuid,jsonb)'::regprocedure) as definition")).rows[0].definition, /coalesce\(event_record.orders_close_at \+ interval '5 minutes', event_record.ends_at\)/);
+  } finally { await database.close(); }
+});
+
+test('private events remain public but require secret QR access at the order boundary', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec("update public.business_settings set ordering_status='open',card_enabled=true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','private-meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','private-tacos',800,true,true) returning id", [category])).rows[0].id;
+    const createEvent = async (mode) => (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode,is_private)
+      values ($1,$1,'Cinema','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',true,true,'open',$1,true) returning id`, [mode])).rows[0].id;
+    const event = await createEvent('car');
+    const otherEvent = await createEvent('table');
+    let key;
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select is_private from public.events where id=$1', [event])).rows[0].is_private, true);
+      await assert.rejects(database.query('select * from private.event_ordering_keys'), /permission denied/);
+      await assert.rejects(database.query('select * from public.admin_event_ordering_key($1)', [event]), /permission denied/);
+    });
+    await asRole(database, 'authenticated', customerId, async () => {
+      await assert.rejects(database.query('select * from public.admin_event_ordering_key($1)', [event]), /Admin access required/);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      key = (await database.query('select * from public.admin_event_ordering_key($1)', [event])).rows[0].access_key;
+      assert.match(key, /^[a-f0-9]{64}$/);
+      assert.equal((await database.query('select * from public.admin_event_ordering_key($1)', [event])).rows[0].access_key, key);
+    });
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select public.check_event_ordering_access($1,$2) as allowed', [event, key])).rows[0].allowed, true);
+      assert.equal((await database.query('select public.check_event_ordering_access($1,$2) as allowed', [otherEvent, key])).rows[0].allowed, false);
+    });
+    const body = { eventId: event, locationNumber: '27', name: 'Customer', email: 'customer@example.test', phone: '07000000000', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+    const reserve = (payload) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), payload]);
+    await assert.rejects(reserve(body), /Scan the QR code/);
+    await assert.rejects(reserve({ ...body, eventAccess: '0'.repeat(64) }), /Scan the QR code/);
+    await assert.rejects(reserve({ ...body, eventId: otherEvent, eventAccess: key }), /Scan the QR code/);
+    assert.equal((await reserve({ ...body, eventAccess: key })).rows[0].event_id, event);
+    await enableOrdering(database);
+    await database.query('update public.events set is_private=true where id=$1', [eventId]);
+    const pickupBody = { ...body, eventId: undefined, slotId, locationNumber: undefined };
+    await assert.rejects(reserve(pickupBody), /Scan the QR code/);
+    await assert.rejects(reserve({ ...pickupBody, eventAccess: key }), /Scan the QR code/);
+    let pickupKey;
+    await asRole(database, 'authenticated', adminId, async () => {
+      pickupKey = (await database.query('select * from public.admin_event_ordering_key($1)', [eventId])).rows[0].access_key;
+    });
+    assert.equal((await reserve({ ...pickupBody, eventAccess: pickupKey })).rows[0].event_id, eventId);
+    await database.exec(await readFile(new URL('046_private_event_ordering.sql', sqlDirectory), 'utf8'));
+    assert.equal((await database.query('select access_key from private.event_ordering_keys where event_id=$1', [event])).rows[0].access_key, key);
+    await database.query('update public.events set is_published=false where id=$1', [event]);
+    assert.equal((await database.query('select public.check_event_ordering_access($1,$2) as allowed', [event, key])).rows[0].allowed, false);
+    await database.query("update public.events set is_published=true,starts_at=now()-interval '2 hours',ends_at=now()-interval '1 hour' where id=$1", [event]);
+    assert.equal((await database.query('select public.check_event_ordering_access($1,$2) as allowed', [event, key])).rows[0].allowed, false);
+  } finally { await database.close(); }
+});
+
+test('table and car orders reserve without slots, snapshot locations, complete atomically and queue one thank-you', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec("update public.business_settings set ordering_status = 'open', card_enabled = true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','tacos',800,true,true) returning id", [category])).rows[0].id;
+    for (const mode of ['table', 'car']) {
+      const event = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode)
+        values ($1,$1,'Cinema','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',true,true,'open',$1) returning id`, [mode])).rows[0].id;
+      const body = { eventId: event, locationNumber: '27', ...(mode === 'car' ? { numberPlate: 'ab12 cde' } : {}), name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: 'No cutlery', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+      const reserve = (input = body, key = crypto.randomUUID()) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, key, input]);
+      await asRole(database, 'authenticated', customerId, async () => {
+        await assert.rejects(reserve(), /permission denied/);
+        await assert.rejects(database.query('select * from public.admin_order_counts()'), /Admin access required/);
+      });
+      await assert.rejects(reserve({ ...body, locationNumber: '' }), /valid table or car number/);
+      await assert.rejects(reserve({ ...body, locationNumber: '<script>' }), /valid table or car number/);
+      await assert.rejects(reserve({ ...body, numberPlate: 'a'.repeat(21) }), /valid table or car number/);
+      await assert.rejects(reserve({ ...body, expectedTotal: 1 }), /Prices have changed/);
+      for (const [change, reset] of [
+        ["ordering_status = 'paused'", "ordering_status = 'open'"],
+        ['pickup_enabled = false', 'pickup_enabled = true'],
+        ['is_published = false', 'is_published = true'],
+        ["orders_open_at = now() + interval '1 hour'", 'orders_open_at = null'],
+        ["orders_close_at = now() - interval '1 minute'", 'orders_close_at = null'],
+      ]) {
+        await database.query(`update public.events set ${change} where id=$1`, [event]);
+        await assert.rejects(reserve(), /Ordering unavailable/);
+        await database.query(`update public.events set ${reset} where id=$1`, [event]);
+      }
+      await database.exec("update public.business_settings set ordering_status='paused'");
+      await assert.rejects(reserve(), /business_paused/);
+      await database.exec("update public.business_settings set ordering_status='open', maintenance_enabled=true");
+      await assert.rejects(reserve(), /Card checkout is unavailable/);
+      await database.exec('update public.business_settings set maintenance_enabled=false');
+      await assert.rejects(database.query("insert into public.pickup_schedules(event_id,starts_at,ends_at,preparation_minutes) values ($1,now(),now()+interval '1 hour',20)", [event]), /require a pickup event/);
+      const key = crypto.randomUUID();
+      const order = (await reserve(body, key)).rows[0];
+      assert.equal(order.pickup_slot_id, null);
+      assert.equal(order.pickup_location.service_mode, mode);
+      assert.equal(order.pickup_location.location_number, '27');
+      assert.equal(order.pickup_location.number_plate, mode === 'car' ? 'AB12 CDE' : '');
+      assert.equal(order.status, 'pending_payment');
+      assert.equal((await reserve(body, key)).rows[0].id, order.id);
+      await assert.rejects(reserve({ ...body, locationNumber: '28' }, key), /Checkout request changed/);
+      await assert.rejects(database.query("update public.events set service_mode='pickup' where id=$1", [event]), /Service type cannot change/);
+      await asRole(database, 'authenticated', adminId, async () => {
+        assert.equal((await database.query('select * from public.admin_order_counts($1)', [[event]])).rows[0].outstanding, 0);
+        await assert.rejects(database.query("select public.admin_set_order_status($1,'collected')", [order.id]), /Invalid order status transition/);
+      });
+      await asRole(database, 'service_role', null, async () => {
+        await database.query("select public.attach_stripe_checkout($1,$2,now()+interval '30 minutes')", [order.id, `cs_${mode}`]);
+        await database.query("select public.process_stripe_checkout($1,'checkout.session.completed',$2,$3,$4,800,'gbp')", [`evt_${mode}`, order.id, `cs_${mode}`, `pi_${mode}`]);
+      });
+      assert.equal((await database.query('select status from public.orders where id=$1', [order.id])).rows[0].status, 'ordered');
+      await asRole(database, 'authenticated', customerId, async () => {
+        await assert.rejects(database.query("select public.admin_set_order_status($1,'collected')", [order.id]), /Admin access required/);
+      });
+      await asRole(database, 'authenticated', adminId, async () => {
+        assert.equal((await database.query('select * from public.admin_order_counts($1)', [[event]])).rows[0].outstanding, 1);
+        await assert.rejects(database.query("select public.admin_set_order_status($1,'preparing')", [order.id]), /Invalid order status transition/);
+        await database.query("select public.admin_set_order_status($1,'collected')", [order.id]);
+        await database.query("select public.admin_set_order_status($1,'collected')", [order.id]);
+        const counts = (await database.query('select * from public.admin_order_counts($1,$2)', [[event], mode === 'car' ? 'AB12 CDE' : '27'])).rows[0];
+        assert.equal(counts.outstanding, 0);
+        assert.equal(counts.complete, 1);
+        await database.query("select public.admin_set_order_status($1,'ordered')", [order.id]);
+        await database.query("select public.admin_set_order_status($1,'collected')", [order.id]);
+      });
+      const emails = (await database.query('select * from public.order_status_emails where order_id=$1', [order.id])).rows;
+      assert.equal(emails.length, 1);
+      assert.equal(emails[0].status, 'collected');
+      assert.equal(emails[0].order_snapshot.pickup_location.service_mode, mode);
+      const history = (await database.query("select * from public.order_status_history where order_id=$1 and status='collected'", [order.id])).rows;
+      assert.equal(history.length, 2);
+      assert.ok(history.every((entry) => entry.changed_by === adminId));
+      await database.query("update public.events set title='Renamed event' where id=$1", [event]);
+      assert.equal((await database.query('select pickup_location from public.orders where id=$1', [order.id])).rows[0].pickup_location.event_title, mode);
+    }
+    await database.exec(await readFile(new URL('045_table_car_ordering.sql', sqlDirectory), 'utf8'));
+  } finally { await database.close(); }
+});
+
+test('service checkout enforces event matching, payment cutoffs and late-payment refunds', async () => {
+  const database = await createDatabase();
+  try {
+    await enableOrdering(database);
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','tacos',800,true,true) returning id", [category])).rows[0].id;
+    const event = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,orders_close_at,is_published,pickup_enabled,ordering_status,service_mode)
+      values ('cinema','Cinema','Cinema','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',now()+interval '1 minute',true,true,'open','car') returning id,orders_close_at,ends_at`)).rows[0];
+    const body = { eventId: event.id, locationNumber: '1', name: 'Customer', email: 'customer@example.test', phone: '07000000000', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+    const reserve = (input = body) => database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), input]);
+    await assert.rejects(reserve({ ...body, slotId }), /does not match/);
+    await assert.rejects(reserve({ ...body, eventId, slotId: undefined }), /available pickup time/);
+    const order = (await reserve()).rows[0];
+    assert.ok(new Date(order.reservation_expires_at) <= new Date(new Date(event.orders_close_at).getTime() + 5 * 60000));
+    await asRole(database, 'service_role', null, async () => {
+      await database.query("select public.attach_stripe_checkout($1,'cs_late',now()+interval '30 minutes')", [order.id]);
+      const late = new Date(new Date(order.reservation_expires_at).getTime() + 1).toISOString();
+      const refund = (await database.query("select public.process_stripe_checkout('evt_late_service','checkout.session.completed',$1,'cs_late','pi_late',800,'gbp',$2) as refund", [order.id, late])).rows[0].refund;
+      assert.equal(refund, true);
+    });
+    assert.equal((await database.query('select status from public.orders where id=$1', [order.id])).rows[0].status, 'cancelled');
+    assert.equal((await database.query('select count(*)::int as count from public.order_confirmation_emails where order_id=$1', [order.id])).rows[0].count, 0);
+  } finally { await database.close(); }
+});
+
 test('nested modifiers enforce valid hierarchies and price repeated choices independently at checkout', async () => {
   const database = await createDatabase();
   try {
@@ -156,8 +419,9 @@ test('pickup schedules generate one-order windows and protect bookings, locks an
     await asRole(database,'authenticated',customerId,async () => { await assert.rejects(create(), /row-level security/); });
     const schedule = await asRole(database,'authenticated',adminId,async () => (await create()).rows[0]);
     assert.deepEqual((await database.query('select starts_at, ends_at from public.events where id=$1', [eventId])).rows[0], eventTimes);
-    await assert.rejects(database.query("update public.pickup_schedules set starts_at=$1::timestamptz-interval '1 minute' where id=$2", [eventTimes.starts_at, schedule.id]), /within the event/);
-    await assert.rejects(database.query("update public.pickup_schedules set ends_at=$1::timestamptz+interval '1 minute' where id=$2", [eventTimes.ends_at, schedule.id]), /within the event/);
+    const orderingTimes = (await database.query('select orders_open_at,orders_close_at from public.events where id=$1', [eventId])).rows[0];
+    await assert.rejects(database.query("update public.pickup_schedules set starts_at=$1::timestamptz-interval '1 minute' where id=$2", [orderingTimes.orders_open_at, schedule.id]), /within the configured ordering window/);
+    await assert.rejects(database.query("update public.pickup_schedules set ends_at=$1::timestamptz+interval '1 minute' where id=$2", [orderingTimes.orders_close_at, schedule.id]), /within the configured ordering window/);
     const rows = (await database.query('select * from public.pickup_slots order by starts_at')).rows;
     assert.equal(rows.length,3);
     assert.ok(rows.every((row) => row.capacity === 1));
@@ -618,6 +882,8 @@ async function createDatabase({ profileEmailUpgrade = true } = {}) {
   `);
   const files = (await readdir(sqlDirectory)).filter((file) => file.endsWith('.sql')).sort();
   for (const file of files) {
+    // Historical upgrade tests retain their original schema; menu-set tests apply 048 after seeding a pre-upgrade catalogue.
+    if (file === '048_menu_sets.sql') continue;
     if (!profileEmailUpgrade && file === '027_profiles_email.sql') continue;
     await database.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }
@@ -792,7 +1058,7 @@ test('catalogue and event controls allow admin writes and hide unpublished conte
       await assert.rejects(database.exec(`
         insert into public.pickup_slots (event_id, starts_at, ends_at)
         select id, now(), now() + interval '1 hour' from public.events
-      `), /within the event/);
+      `), /within the configured ordering window/);
     });
     await asRole(database, 'anon', null, async () => {
       assert.equal((await database.query('select * from public.events')).rows.length, 0);

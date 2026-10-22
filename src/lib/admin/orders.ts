@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { serviceMode } from '../service-ordering.ts';
 
 export const orderStatuses = ['pending_payment', 'ordered', 'preparing', 'ready_for_pickup', 'collected', 'cancelled'];
 const activeStatuses = orderStatuses.slice(0, 4);
@@ -10,7 +11,7 @@ export function parseOrderFilters(params: Record<string, string | string[] | und
   return {
     statuses: requested.includes('all') ? [] : [...new Set(requested.includes('active') ? [...activeStatuses, ...valid] : valid)],
     events: [...new Set(values(params.event).filter((event) => z.guid().safeParse(event).success))],
-    search: typeof params.q === 'string' ? params.q.replace(/[^a-zA-Z0-9 @.+-]/g, '').slice(0, 100).trim() : '',
+    search: typeof params.q === 'string' ? params.q.replace(/[^a-zA-Z0-9 @.+\/-]/g, '').slice(0, 100).trim() : '',
     page: Math.max(0, Math.min(10000, Number.parseInt(String(params.page ?? '0'), 10) || 0)),
   };
 }
@@ -23,8 +24,14 @@ export function orderFilterParams(search: string, statuses: string[], events: st
   return params;
 }
 
-export function orderOperations(status: string, paymentMethod: string, paymentStatus: string) {
+export function orderOperations(status: string, paymentMethod: string, paymentStatus: string, location?: unknown) {
   const operations: { value: string; label: string }[] = [];
+  if (serviceMode(location) !== 'pickup') {
+    if (status === 'ordered' && ['paid', 'partially_refunded', 'refunded'].includes(paymentStatus)) operations.push({ value: 'collected', label: 'Mark As Complete' });
+    if (status === 'collected') operations.push({ value: 'ordered', label: 'Reopen Order' });
+    if (['pending_payment', 'ordered'].includes(status)) operations.push({ value: 'cancelled', label: 'Cancel Order' });
+    return operations;
+  }
   if (status === 'ordered') operations.push({ value: 'preparing', label: 'Start Preparing' });
   if (status === 'preparing') operations.push({ value: 'ready_for_pickup', label: 'Ready for Pickup' });
   if (status === 'ready_for_pickup' && ['paid', 'partially_refunded', 'refunded'].includes(paymentStatus)) operations.push({ value: 'collected', label: 'Mark Collected' });

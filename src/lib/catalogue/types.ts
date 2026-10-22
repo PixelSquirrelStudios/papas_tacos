@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { aboutDefaults } from './about.ts';
+import { serviceModeSchema } from '../service-ordering.ts';
+import type { MenuSets } from './menu-sets.ts';
 
 const id = z.guid();
 export const categorySchema = z.object({ id, name: z.string(), slug: z.string(), sort_order: z.number() });
@@ -34,6 +36,9 @@ export const settingsSchema = z.object({
   contact_email: z.string().nullable(), contact_phone: z.string().nullable(), instagram_url: z.string().nullable(), facebook_url: z.string().nullable(),
 });
 export const eventSchema = z.object({
+  is_private: z.boolean().default(false),
+  menu_set_id: z.guid().nullable().default(null),
+  service_mode: serviceModeSchema.default('pickup'),
   sort_order: z.number().default(0),
   id, slug: z.string(), title: z.string(), description: z.string(), featured_image_path: z.string().nullable(), image_alt: z.string(),
   venue_name: z.string(), address_line_1: z.string(), address_line_2: z.string().nullable(), town: z.string(), postcode: z.string(), map_url: z.string().nullable(),
@@ -47,6 +52,6 @@ export type MenuItem = z.infer<typeof itemSchema>;
 export type ModifierGroup = Omit<z.infer<typeof groupSchema>, 'child_group_ids'> & { child_group_ids?: string[]; parentId?: string; label?: string; depth?: number; options: (z.infer<typeof optionSchema> & { imageUrl?: string | null })[] };
 export type CatalogueItem = MenuItem & { groups: ModifierGroup[]; imageUrl: string | null };
 export type Settings = z.infer<typeof settingsSchema>;
-export type TruckEvent = z.infer<typeof eventSchema> & { imageUrl: string | null };
+export type TruckEvent = z.infer<typeof eventSchema> & { imageUrl: string | null; ordering_access?: boolean };
 export type Testimonial = z.infer<typeof testimonialSchema> & { imageUrl: string | null };
-export type Catalogue = { categories: Category[]; items: CatalogueItem[]; available: boolean };
+export type Catalogue = { categories: Category[]; items: CatalogueItem[]; available: boolean; menuSets?: MenuSets };

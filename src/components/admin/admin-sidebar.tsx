@@ -20,6 +20,7 @@ export function AdminSidebar() {
     ] },
     { label: 'Catalogue', links: [
       { href: '/admin/menu', label: 'Menu Items', icon: UtensilsCrossed },
+      { href: '/admin/menu-sets', label: 'Menu Sets', icon: ListOrdered },
       { href: '/admin/categories', label: 'Categories', icon: Tags },
       { href: '/admin/modifiers', label: 'Modifier Groups', icon: SlidersHorizontal },
       { href: '/admin/options', label: 'Modifier Options', icon: ListOrdered },

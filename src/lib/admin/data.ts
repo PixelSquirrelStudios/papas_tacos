@@ -4,6 +4,7 @@ import { requireAdmin } from '@/lib/auth/session';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { supabaseConfig } from '@/lib/supabase/config';
 import type { AdminRow } from './resources';
+import type { DashboardSnapshot } from './dashboard';
 
 export class AdminDataError extends Error {
   constructor(public code: string, message: string) { super(message); }
@@ -46,8 +47,21 @@ export async function adminRows(table: string, query: Record<string, string> = {
   throw new AdminDataError('LIMIT', 'This list exceeds 10,000 records. Narrow the selection before continuing.');
 }
 
+export async function getDashboardData(): Promise<DashboardSnapshot> {
+  const [orders, menu, events, settings] = await Promise.all([
+    adminRows('orders', { select: 'id,order_number,customer_name,status,total_pence,pickup_starts_at,pickup_location', status: 'in.(pending_payment,ordered,preparing,ready_for_pickup)', order: 'pickup_starts_at.asc,id.asc' }),
+    adminRows('menu_items', { select: 'id,is_published,is_available', archived_at: 'is.null' }),
+    adminRows('events', { select: 'id,title,starts_at,venue_name', ends_at: `gte.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' }),
+    adminRows('business_settings', { select: 'ordering_status,ordering_message,maintenance_enabled,updated_at', order: 'singleton.asc' }),
+  ]);
+  return { orders, menu, events, settings: settings[0] };
+}
+
 export function adminError(error: unknown) {
   if (error instanceof AdminDataError) {
+    if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /menu_set|admin_save_menu_set/i.test(error.message)) return 'Menu sets require database upgrade 048_menu_sets.sql after 047. Apply it in supabase/sql, then refresh.';
+    if (['42703', 'PGRST202', 'PGRST204'].includes(error.code) && /is_private|admin_event_ordering_key/i.test(error.message)) return 'Private event ordering requires database upgrade 046_private_event_ordering.sql after 045. Apply it in supabase/sql, then refresh.';
+    if (['42703', 'PGRST202', 'PGRST204'].includes(error.code) && /service_mode|admin_order_counts/i.test(error.message)) return 'Table/car ordering requires database upgrade 045_table_car_ordering.sql after 044. Apply it in supabase/sql, then refresh.';
     if (['42P01', 'PGRST205', 'PGRST202'].includes(error.code) && /pickup_schedules|get_pickup_choices|admin_lock_pickup_slot/i.test(error.message)) return 'Pickup scheduling requires database upgrades 038, 039 and 040 in supabase/sql. Apply them in order, then refresh.';
     if (['42703', 'PGRST204'].includes(error.code) && /child_group_ids/i.test(error.message)) return 'Nested modifier groups are not available in the database yet. Apply supabase/sql/034_modifier_group_nesting.sql, then 035 and 036 for nested checkout, and refresh.';
     if (['42703', 'PGRST204'].includes(error.code) && /modifier_options/i.test(error.message) && /\b(description|image_path|image_alt)\b/i.test(error.message)) return 'Modifier option images and descriptions are not available in the database yet. Apply supabase/sql/031_modifier_option_content.sql, then refresh. SQL 032 does not include these columns.';

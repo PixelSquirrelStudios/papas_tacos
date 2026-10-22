@@ -7,7 +7,7 @@ import { ArrowRight, Plus, RotateCcw, Search, ShoppingBag, Skull, SlidersHorizon
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FilterSelect } from '@/components/ui/filter-select';
-import { useBag } from '@/components/bag/bag-provider';
+import { MenuOrderingProvider, useBag } from '@/components/bag/bag-provider';
 import { ItemPicker } from '@/components/bag/item-picker';
 import { money, quoteLine } from '@/lib/bag';
 import type { Catalogue, CatalogueItem } from '@/lib/catalogue/types';
@@ -18,10 +18,15 @@ import { FoodBadges } from './food-badges';
 import { ExpandableDescription, RichDescription } from './rich-description';
 import { descriptionText } from '@/lib/catalogue/rich-text';
 import { OrderingNotice } from './ordering-notice';
+import { menuCatalogue } from '@/lib/catalogue/menu-sets';
 
 export function MenuBrowser({ initial, featured = false }: { initial: Catalogue; featured?: boolean | 'papas-choice' | 'crowd-favourites' }) {
-  const { catalogue, ready, lines, orderingOpen } = useBag();
-  const source = catalogue.available ? catalogue : initial;
+  return featured ? <MenuOrderingProvider><MenuBrowserContent initial={initial} featured={featured} /></MenuOrderingProvider> : <MenuBrowserContent initial={initial} featured={featured} />;
+}
+
+function MenuBrowserContent({ initial, featured }: { initial: Catalogue; featured: boolean | 'papas-choice' | 'crowd-favourites' }) {
+  const { catalogue, ready, lines, orderingOpen, selectedEvent } = useBag();
+  const source = catalogue.available ? catalogue : menuCatalogue(initial, selectedEvent?.menu_set_id);
   const [search, setSearch] = useState('');
   const deferredSearch = useDeferredValue(search);
   const [category, setCategory] = useState<string[]>([]);

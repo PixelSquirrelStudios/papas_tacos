@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { deliveryLabel, serviceMode, serviceModeSchema } from '../service-ordering.ts';
 
 export const orderStatuses = ['pending_payment', 'ordered', 'preparing', 'ready_for_pickup', 'collected', 'cancelled'] as const;
 export const statusLabels = {
@@ -13,6 +14,7 @@ export const orderSummarySchema = z.object({
   payment_method: z.enum(['card', 'cash']), payment_status: z.enum(['unpaid', 'paid', 'partially_refunded', 'refunded', 'failed']),
   total_pence: amount, created_at: timestamp, pickup_starts_at: timestamp, pickup_ends_at: timestamp,
   pickup_location: z.object({
+    service_mode: serviceModeSchema.optional(), location_number: z.string().optional(), number_plate: z.string().optional(),
     event_title: z.string().optional(), venue_name: z.string().optional(), address_line_1: z.string().optional(),
     address_line_2: z.string().nullable().optional(), town: z.string().optional(), postcode: z.string().optional(),
   }),
@@ -67,6 +69,7 @@ export function orderDate(value: string) {
 }
 
 export function pickupWindow(order: OrderSummary) {
+  if (serviceMode(order.pickup_location) !== 'pickup') return `${deliveryLabel(order.pickup_location)} - delivery as soon as possible`;
   const end = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }).format(new Date(order.pickup_ends_at));
   return `${orderDate(order.pickup_starts_at)} - ${end}`;
 }

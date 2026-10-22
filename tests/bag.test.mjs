@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { lineKey, mergeLine, parseBag, quoteLine } from '../src/lib/bag.ts';
-import { canOrder, choiceLabel, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
+import { canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
 import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
@@ -45,6 +45,32 @@ const groupId = '00000000-0000-4000-8000-000000000003';
 const item = { id: itemId, price_pence: 850, is_available: true, groups: [{ id: groupId, name: 'Salsa', min_selections: 1, max_selections: 1, options: [{ id: optionId, modifier_group_id: groupId, price_pence: 150, is_available: true }] }] };
 const line = { itemId, optionIds: [optionId], quantity: 2 };
 
+test('event ordering notices distinguish opening, closure, pauses and QR access without allowing orders', () => {
+  const opens = Date.parse('2030-09-25T16:00:00Z');
+  const closes = Date.parse('2030-09-25T22:00:00Z');
+  const settings = { ordering_status: 'open' };
+  for (const service_mode of ['car', 'table', 'pickup']) {
+    const event = { service_mode, pickup_enabled: true, ordering_status: 'open', starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-25T21:00:00Z', orders_open_at: new Date(opens).toISOString(), orders_close_at: new Date(closes).toISOString(), is_private: true, ordering_access: true };
+    const early = eventOrderingNotice(event, settings, opens - 1);
+    assert.equal(early.title, 'Orders Open Later');
+    assert.match(early.message, /17:00 on Wed, 25 September 2030/);
+    assert.equal(canOrder([event], settings, opens - 1), false);
+    assert.equal(eventOrderingNotice(event, settings, opens), null);
+    assert.equal(eventOrderingNotice(event, settings, closes - 1), null);
+    assert.equal(eventOrderingNotice(event, settings, closes).title, 'Orders Closed');
+    assert.match(eventOrderingNotice(event, settings, closes).message, /already ordered/);
+    assert.equal(canOrder([event], settings, closes), false);
+    for (const status of ['paused', 'closed']) {
+      const expected = status === 'paused' ? 'Orders Paused' : 'Orders Closed';
+      assert.equal(eventOrderingNotice({ ...event, ordering_status: status }, settings, opens).title, expected);
+      assert.equal(eventOrderingNotice(event, { ordering_status: status }, opens).title, expected);
+    }
+    assert.equal(eventOrderingNotice({ ...event, ordering_access: false }, settings, opens).title, 'Scan Event QR to Order');
+    assert.equal(eventOrderingNotice(event, null, opens).title, 'Ordering Unavailable');
+    assert.equal(eventOrderingNotice({ ...event, pickup_enabled: false }, settings, opens).title, 'Ordering Unavailable');
+  }
+});
+
 test('ordering requires an open business and an active published event ordering window', () => {
   const now = Date.parse('2026-09-23T12:00:00Z');
   const event = { pickup_enabled: true, ordering_status: 'open', starts_at: '2026-09-23T11:00:00Z', ends_at: '2026-09-23T18:00:00Z', orders_open_at: null, orders_close_at: null };
@@ -55,6 +81,15 @@ test('ordering requires an open business and an active published event ordering 
     assert.equal(canOrder([{ ...event, ...override }], { ordering_status: 'open' }, now), false);
   }
   assert.equal(canOrder([{ ...event, starts_at: '2026-09-24T11:00:00Z', ends_at: '2026-09-24T18:00:00Z', orders_open_at: '2026-09-23T10:00:00Z' }], { ordering_status: 'open' }, now), true);
+  assert.equal(canOrder([{ ...event, is_private: true }], { ordering_status: 'open' }, now), false);
+  assert.equal(canOrder([{ ...event, is_private: true, ordering_access: false }], { ordering_status: 'open' }, now), false);
+  assert.equal(canOrder([{ ...event, is_private: true, ordering_access: true }], { ordering_status: 'open' }, now), true);
+  const early = { ...event, starts_at: '2026-09-23T13:00:00Z', orders_open_at: '2026-09-23T11:00:00Z' };
+  const late = { ...event, ends_at: '2026-09-23T11:30:00Z', orders_close_at: '2026-09-23T13:00:00Z' };
+  assert.equal(canOrder([early], { ordering_status: 'open' }, now), true);
+  assert.equal(canOrder([late], { ordering_status: 'open' }, now), true);
+  assert.equal(canOrder([late], { ordering_status: 'open' }, Date.parse(late.orders_close_at)), false);
+  assert.equal(canOrder([{ ...event, orders_close_at: '2026-09-23T11:30:00Z' }], { ordering_status: 'open' }, now), false);
 });
 
 test('ordering status is independent of maintenance access and still respects event gates', () => {
@@ -71,6 +106,15 @@ test('ordering status is independent of maintenance access and still respects ev
   assert.equal(canOrder([{ ...event, pickup_enabled: false }], settings, now), false);
   assert.equal(canOrder([], settings, now), false);
   assert.equal(canOrder([event], null, now), false);
+});
+
+test('service ordering explains exactly when orders open without overriding closed or paused controls', () => {
+  const now = Date.parse('2030-09-25T15:00:00Z');
+  const event = { service_mode: 'car', pickup_enabled: true, ordering_status: 'open', starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-25T21:00:00Z', orders_open_at: '2030-09-25T16:00:00Z', orders_close_at: null };
+  assert.equal(pickupState(event, { ordering_status: 'open' }, now), 'Ordering is not open yet. You can place car delivery orders from 17:00 on Wed, 25 September 2030.');
+  assert.equal(pickupState({ ...event, service_mode: 'table' }, { ordering_status: 'open' }, now), 'Ordering is not open yet. You can place table delivery orders from 17:00 on Wed, 25 September 2030.');
+  assert.equal(pickupState(event, { ordering_status: 'closed' }, now), 'Car service orders closed');
+  assert.equal(pickupState(event, { ordering_status: 'paused' }, now), 'Car service orders paused');
 });
 
 test('nested groups keep reused options independent, priced and required per path', () => {

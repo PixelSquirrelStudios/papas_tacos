@@ -139,6 +139,7 @@ test.beforeAll(async () => {
       import { createRoot } from 'react-dom/client';
       import { EventPreview, SocialLinks } from '@/components/catalogue/public-content';
       import { AboutContent } from '@/components/catalogue/about-content';
+      import QrStatusPage from '@/app/(public)/events/ordering-unavailable/page';
       const params = new URLSearchParams(location.search);
       const detail = params.has('detail');
       const about = params.has('about');
@@ -146,8 +147,16 @@ test.beforeAll(async () => {
       const aboutSettings = {about_page_heading: 'Our Full Story', about_full_story: '<p>Our rich story.</p>', about_image_path: '/images/tacos.jpg', about_image_alt: 'Homepage featured image', about_page_image_1_path: '/images/tacos.jpg', about_page_image_1_alt: 'Story image one', about_page_image_2_path: '/images/tacos_hero.jpg', about_page_image_2_alt: 'Story image two', about_page_image_3_path: '/images/tacos.jpg', about_page_image_3_alt: 'Story image three'};
       const event = {id: 'fixture', slug: 'street-food-weekend', title: 'Friday Street Food and Live Music at the Riverside Market', venue_name: 'Riverside Market', address_line_1: '123 Market Street', address_line_2: 'By the riverside entrance', town: 'Bristol', postcode: 'BS1 1AA', map_url: null, starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-26T21:00:00Z', pickup_enabled: true, ordering_status: 'open', orders_open_at: null, orders_close_at: null, imageUrl: '/images/tacos_hero.jpg', image_alt: 'Tacos ready for the street food market', description: 'Join us by the river for freshly made tacos, live music and an evening with the whole family. '.repeat(8)};
       if (detail) event.imageUrl = '/images/tacos.jpg';
+      event.service_mode = params.get('mode') || 'pickup';
+      event.is_private = params.has('private');
+      event.ordering_message = params.has('notes') ? 'Please keep the access lane clear.' : null;
+      if (params.has('serving')) Object.assign(event, { orders_open_at: '2030-09-25T16:00:00Z', orders_close_at: '2030-09-26T22:00:00Z' });
+      if (params.has('same-day')) event.orders_close_at = '2030-09-25T21:00:00Z';
+      if (params.has('active')) Object.assign(event, { starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z' });
+      if (params.has('ended')) Object.assign(event, { starts_at: '2020-01-01T00:00:00Z', ends_at: '2020-01-01T01:00:00Z' });
+      if (params.has('paused')) event.ordering_status = 'paused';
       if (params.has('rich')) event.description = '<p onclick="alert(1)"><strong>Fresh tacos</strong> by the river.</p><p>Music all evening.</p><ul><li>Family friendly</li></ul><script>window.__unsafeEvent=true</script>';
-      createRoot(document.getElementById('fixture')).render(about ? <main><AboutContent settings={aboutSettings} fullPage /></main> : <main className="page-width py-12"><p className="eyebrow text-primary">Out on the road</p><h1 className="page-title mb-8">{detail ? event.title : 'Find the Truck'}</h1><EventPreview event={event} settings={settings} detail={detail} />{!detail && <EventPreview event={{...event, id: 'second', slug: 'next-stop', title: 'Sunday Market', imageUrl: null, pickup_enabled: false}} settings={settings} />}<SocialLinks settings={settings} /></main>);
+      Promise.resolve(params.has('qr-status') ? QrStatusPage({ searchParams: Promise.resolve({ reason: params.get('qr-status') }) }) : about ? <main><AboutContent settings={aboutSettings} fullPage /></main> : <main className="page-width py-12"><p className="eyebrow text-primary">Out on the road</p><h1 className="page-title mb-8">{detail ? event.title : 'Find the Truck'}</h1><EventPreview event={event} settings={settings} detail={detail} featured={params.has('featured')} />{!detail && <EventPreview event={{...event, id: 'second', slug: 'next-stop', title: 'Sunday Market', imageUrl: null, pickup_enabled: false}} settings={settings} />}<SocialLinks settings={settings} /></main>).then(content => createRoot(document.getElementById('fixture')).render(content));
     ` },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"test"' },
@@ -216,6 +225,186 @@ test('event descriptions render sanitized rich text in listings and details', as
   }
 });
 
+test('QR ordering states show clear opening, paused and ended information', async ({ page }) => {
+  await fixture(page);
+  for (const mode of ['car', 'table']) {
+    for (const [state, title, message] of [
+      ['', 'Orders Open Later', 'You are welcome to browse the menu while you wait.'],
+      ['active=1&paused=1', 'Orders Paused', 'Please check back shortly.'],
+      ['ended=1', 'Orders Closed', 'We are no longer accepting orders for this event.'],
+    ]) {
+      await page.goto(`/__public_test?detail=1&mode=${mode}&${state}`);
+      const info = page.getByRole('region', { name: 'Ordering Information' });
+      const status = info.getByRole('status');
+      await expect(status).toContainText(title);
+      await expect(status).toContainText(message);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    }
+  }
+});
+
+test('expired invalid and temporarily unavailable QR codes have a styled helpful page', async ({ page }) => {
+  await fixture(page);
+  for (const [reason, heading] of [
+    ['expired', 'This event QR is no longer available'],
+    ['invalid', 'This QR link is not valid'],
+    ['verification', 'Please try scanning again'],
+  ]) {
+    await page.goto(`/__public_test?qr-status=${reason}`);
+    await expect(page.getByRole('heading', { name: heading })).toBeVisible();
+    await expect(page.getByRole('status')).toBeVisible();
+    await expect(page.getByText(/This does not cancel it/)).toBeVisible();
+    await expect(page.getByRole('link', { name: 'View Events' })).toHaveAttribute('href', '/events');
+    await expect(page.getByRole('link', { name: 'Contact Us' })).toHaveAttribute('href', '/contact');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
+test('table and car events show contextual delivery information and private QR instructions in listings and details', async ({ page }) => {
+  await fixture(page);
+  for (const mode of ['car', 'table']) {
+    for (const view of ['listing', 'detail']) {
+      for (const privateOrdering of [false, true]) {
+        await page.goto(`/__public_test?${view}=1&mode=${mode}${privateOrdering ? '&private=1' : ''}`);
+        const article = page.getByRole('article').first();
+        const info = article.getByRole('region', { name: 'Ordering Information' });
+        await expect(info).toContainText(mode === 'car' ? 'Delivery to Your Car' : 'Delivery to Your Table');
+        await expect(info).toContainText('Delivery times may be longer during busy periods.');
+        await expect(info).not.toContainText(/pickup|slot/i);
+        await expect(info.getByText('Orders can only be placed by scanning a QR code provided at the event.')).toHaveCount(privateOrdering ? 1 : 0);
+        const accepted = info.getByRole('note', { name: 'Orders Accepted' });
+        await expect(accepted).toBeVisible();
+        await expect(accepted).toContainText('Wed, 25 September 2030');
+        if (privateOrdering) {
+          const paragraphs = await info.locator('p').allTextContents();
+          expect(paragraphs.indexOf('Orders can only be placed by scanning a QR code provided at the event.')).toBeLessThan(paragraphs.indexOf(mode === 'car' ? 'Delivery to Your Car' : 'Delivery to Your Table'));
+        }
+        if (view === 'detail') {
+          await expect(article.getByRole('link', { name: 'Browse Menu' })).toHaveCount(privateOrdering ? 0 : 1);
+          await expect(article.getByRole('link', { name: 'Directions' })).toBeVisible();
+        } else {
+          await expect(article.getByRole('link', { name: 'Event Details' })).toBeVisible();
+        }
+        expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+      }
+    }
+  }
+});
+
+test('event cards and details show independent serving times without changing the event dates', async ({ page }) => {
+  await fixture(page);
+  for (const view of ['listing', 'detail']) {
+    await page.goto(`/__public_test?${view}=1&mode=car&serving=1`);
+    const article = page.getByRole('article').first();
+    const serving = article.locator('dl > div').filter({ has: page.getByText('Serving Times', { exact: true }) });
+    await expect(serving).toContainText('17:00 - 23:00');
+    const accepted = article.getByRole('note', { name: 'Orders Accepted' });
+    await expect(accepted).toContainText('Wed, 25 September 2030');
+    await expect(accepted).toContainText('17:00 - 23:00');
+    if (view === 'detail') {
+      const dates = article.locator('dl > div').filter({ has: page.getByText('Date & Time', { exact: true }) });
+      await expect(dates).toContainText('18:00 - 22:00');
+    }
+  }
+});
+
+test('orders accepted always shows the date for same-day serving windows', async ({ page }) => {
+  await fixture(page);
+  for (const view of ['listing', 'detail']) {
+    await page.goto(`/__public_test?${view}=1&mode=car&same-day=1`);
+    const accepted = page.getByRole('article').first().getByRole('note', { name: 'Orders Accepted' });
+    await expect(accepted).toContainText('Wed, 25 September 2030');
+    await expect(accepted).toContainText('18:00 - 22:00');
+    await expect(accepted).not.toContainText('until');
+  }
+});
+
+test('event additional notes have their own heading only when notes are provided', async ({ page }) => {
+  await fixture(page);
+  for (const view of ['listing', 'detail']) {
+    await page.goto(`/__public_test?${view}=1&mode=car&notes=1`);
+    const article = page.getByRole('article').first();
+    const notes = article.getByRole('region', { name: 'Additional Notes' });
+    await expect(notes.getByRole('heading', { name: 'Additional Notes', exact: true })).toBeVisible();
+    await expect(notes).toContainText('Please keep the access lane clear.');
+    await page.goto(`/__public_test?${view}=1&mode=car`);
+    await expect(page.getByRole('region', { name: 'Additional Notes' })).toHaveCount(0);
+  }
+});
+
+test('homepage featured event keeps the poster at the top and offers an expandable description beside it', async ({ page }, testInfo) => {
+  await fixture(page);
+  await page.goto('/__public_test?featured=1&mode=car&private=1&notes=1');
+  const card = page.getByRole('article').first();
+  const image = card.getByRole('img');
+  const ordering = card.getByRole('region', { name: 'Ordering Information' });
+  const title = card.getByRole('heading', { name: 'Friday Street Food and Live Music at the Riverside Market', exact: true });
+  const description = card.locator('div[id]').filter({ hasText: /^Join us by the river/ });
+  await expect(image).toHaveCSS('object-fit', 'contain');
+  await expect(ordering).toHaveCount(1);
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 960 });
+    const toggle = card.getByRole('button', { name: `Show full description for ${await title.innerText()}` });
+    await expect(toggle).toHaveText('Show More');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect.poll(() => description.evaluate((element) => element.clientHeight < element.scrollHeight)).toBe(true);
+    const collapsedHeight = (await description.boundingBox())!.height;
+    await toggle.click();
+    const collapse = card.getByRole('button', { name: /^Show less for/ });
+    await expect(collapse).toHaveText('Show Less');
+    await expect(collapse).toHaveAttribute('aria-expanded', 'true');
+    await expect.poll(async () => (await description.boundingBox())!.height).toBeGreaterThan(collapsedHeight);
+    await expect.poll(() => description.evaluate((element) => element.clientHeight >= element.scrollHeight)).toBe(true);
+    await collapse.click();
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await expect.poll(async () => (await description.boundingBox())!.height).toBe(collapsedHeight);
+    const poster = (await image.boundingBox())!;
+    const detailsButton = card.getByRole('link', { name: 'Event Details' });
+    const directionsButton = card.getByRole('link', { name: 'Directions' });
+    await expect(detailsButton).toHaveCount(1);
+    await expect(directionsButton).toHaveCount(1);
+    for (const button of [detailsButton, directionsButton]) {
+      const bounds = (await button.boundingBox())!;
+      expect(bounds.y).toBeGreaterThanOrEqual(poster.y + poster.height);
+      expect(bounds.x).toBeGreaterThanOrEqual(poster.x);
+      expect(bounds.x + bounds.width).toBeLessThanOrEqual(poster.x + poster.width + 1);
+    }
+    const detailsBounds = (await detailsButton.boundingBox())!;
+    const directionsBounds = (await directionsButton.boundingBox())!;
+    expect(Math.abs(detailsBounds.width - directionsBounds.width)).toBeLessThanOrEqual(1);
+    if (width >= 640) {
+      expect(directionsBounds.y).toBe(detailsBounds.y);
+      expect(directionsBounds.x).toBeGreaterThan(detailsBounds.x);
+      expect(Math.abs(detailsBounds.width * 2 + 12 - (poster.width - (width >= 1024 ? 0 : 28)))).toBeLessThanOrEqual(1);
+    } else {
+      expect(directionsBounds.y).toBeGreaterThan(detailsBounds.y);
+    }
+    const info = (await ordering.boundingBox())!;
+    const heading = (await title.boundingBox())!;
+    if (width >= 1024) {
+      expect(heading.x).toBeGreaterThanOrEqual(poster.x + poster.width);
+      expect(info.x).toBeGreaterThanOrEqual(poster.x + poster.width);
+      expect(heading.y).toBeLessThan(info.y);
+      expect(poster.y).toBeLessThanOrEqual(heading.y);
+    } else {
+      expect(heading.y).toBeGreaterThanOrEqual(poster.y + poster.height);
+      expect(info.y).toBeGreaterThan(heading.y);
+    }
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath(`featured-event-${width}.png`), fullPage: true });
+  }
+});
+
+test('homepage short rich descriptions remain formatted without an unnecessary toggle', async ({ page }) => {
+  await fixture(page);
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await page.goto('/__public_test?featured=1&rich=1');
+  const card = page.getByRole('article').first();
+  await expect(card.locator('strong')).toHaveText('Fresh tacos');
+  await expect(card.getByRole('listitem')).toHaveText('Family friendly');
+  await expect(card.getByRole('button', { name: /Show full description/ })).toHaveCount(0);
+});
+
 test('event cards group dates venue pickup and actions with real social brand icons', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -237,6 +426,7 @@ test('event cards group dates venue pickup and actions with real social brand ic
   await expect(directions).toHaveAttribute('rel', 'noopener noreferrer');
   await expect(page.getByLabel('Event image unavailable')).toBeVisible();
   await expect.poll(() => card.getByRole('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  await expect(card.getByRole('img')).toHaveCSS('object-fit', 'contain');
   for (const [name, icon] of [['Instagram', siInstagram], ['Facebook', siFacebook]] as const) {
     const link = page.getByRole('link', { name, exact: true });
     await expect(link.locator('svg').first().locator('path')).toHaveAttribute('d', icon.path);
@@ -258,7 +448,7 @@ test('event cards group dates venue pickup and actions with real social brand ic
     await page.screenshot({ path: testInfo.outputPath(`events-${width}.png`), fullPage: true });
   }
   await fixture(page, true);
-  await expect(page.getByRole('link', { name: 'Browse Menu' })).toHaveAttribute('href', '/menu');
+  await expect(page.getByRole('link', { name: 'Browse Menu' })).toHaveAttribute('href', '/menu?event=fixture');
   await expect(page.getByRole('link', { name: 'Event Details' })).toHaveCount(0);
   await expect(page.getByRole('article').getByText(/^Join us by the river/)).toHaveCSS('-webkit-line-clamp', 'none');
   await expect(page.getByRole('region', { name: 'About This Stop' })).toBeVisible();

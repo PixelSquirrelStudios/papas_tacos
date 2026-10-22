@@ -16,6 +16,28 @@ Run these files once. They deliberately do not silently overwrite existing schem
 If you already have tables or triggers with these names, review the conflict before proceeding.
 The folder is a manual SQL install sequence, not a Supabase CLI migration directory.
 
+### Menu sets upgrade
+
+After 047, apply [048_menu_sets.sql](sql/048_menu_sets.sql). It creates a default
+**Public Menu** using the currently published items and category headings without
+changing catalogue publication or availability. It is repeatable and does not
+overwrite saved sets on subsequent runs.
+
+Use **Admin > Menu Sets** to create reusable menus with custom sections, drag items
+from the category-grouped library, reorder sections/items and optionally override
+base item prices. Plus buttons and move buttons provide non-drag alternatives.
+Blank prices inherit the live catalogue price; modifiers retain their normal prices.
+Each item appears once per set. New catalogue items must be added to the appropriate
+sets explicitly. Removing items from sets does not archive or disable them globally.
+
+Assign a set in the event editor's **Menu Set** field; leave it on **Default Public
+Menu** to inherit the public set. Plain `/menu` and homepage dishes use the default;
+`/menu?event=<id>` uses that event's assigned set. Bag and checkout use the bag event's
+set, and selecting a pickup time synchronizes that event before showing the final
+price. Items excluded from the chosen set must be removed from the bag before paying.
+Checkout independently validates set membership and prices and snapshots the charged
+price into the order. Changes do not reprice previously reserved/paid orders.
+
 | Order | File | Purpose |
 | --- | --- | --- |
 | 000 | [000_helpers.sql](sql/000_helpers.sql) | Private helper schema and timestamp trigger |
@@ -52,6 +74,28 @@ It creates the public business-image bucket with admin-only writes. No new appli
 See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu items, events and images.
 
 ## Admin Listing Upgrades
+
+### Table/car event ordering upgrade
+
+After upgrades through [044_order_status_emails.sql](sql/044_order_status_emails.sql), apply
+[045_table_car_ordering.sql](sql/045_table_car_ordering.sql). It adds event service types (pickup/table/car),
+slot-free card reservations with delivery-location snapshots, audited completion/reopening, and
+admin-only aggregate order counts. Existing events and orders remain pickup orders. No new table is added.
+Reapply 045 last if any earlier checkout/status-function migration is rerun.
+See [table/car setup](../docs/STRIPE_SETUP.md#table-and-car-service) for ordering windows, QR printing,
+payment cutoffs and email delivery.
+
+Apply [046_private_event_ordering.sql](sql/046_private_event_ordering.sql) after 045 for private event
+ordering. It adds the public privacy flag, a protected key table in the private schema, admin-only QR-key
+generation, a key-validation RPC and a database insert guard. Private events remain publicly visible;
+only the secret QR link unlocks ordering. Reapplying 046 preserves existing printed keys. Keys are not
+stored in or returned with public event records. See the setup guide above before printing private menus.
+
+Apply [047_independent_ordering_times.sql](sql/047_independent_ordering_times.sql) after 046.
+It removes the event-end cap from explicit serving/ordering windows, aligns checkout, pickup schedules,
+availability and private QR expiry with those windows, and preserves blank-field event-time defaults.
+Service checkout deadlines follow the explicit close rather than the event end.
+It is repeatable. Reapply 045, 046 then 047 after rerunning earlier function migrations.
 
 For maintenance controls, also apply
 [025_business_settings_maintenance.sql](sql/025_business_settings_maintenance.sql) and

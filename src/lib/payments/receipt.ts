@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { orderDate, pickupAddress, pickupWindow, type CustomerOrder } from '../account/orders.ts';
 import { groupOrderChoices } from '../account/order-breakdown.ts';
+import { serviceMode } from '../service-ordering.ts';
 
 export type ReceiptContact = { email?: string | null; phone?: string | null; website?: string | null };
 
@@ -67,7 +68,8 @@ export async function createReceipt(order: CustomerOrder, payment: { paidAt: str
   text(order.customer_name, 11, true);
   text(`Payment: ${order.payment_method === 'card' ? 'Card via Stripe' : 'Cash'}`);
   position -= 8;
-  text('PICKUP', 9, true);
+  text(serviceMode(order.pickup_location) === 'pickup' ? 'PICKUP' : 'TABLE / CAR DELIVERY', 9, true);
+  if (order.pickup_location.event_title) text(order.pickup_location.event_title);
   text(pickupWindow(order));
   text(pickupAddress(order.pickup_location));
   position -= 8;

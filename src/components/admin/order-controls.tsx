@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useEffectEvent, useOptimistic, useRef, useState, useTransition } from 'react';
-import { useRouter } from 'next/navigation';
+import { usePathname, useRouter } from 'next/navigation';
 import { Check, LoaderCircle, Power, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
 import { setMaintenanceMode, setOrderingStatus, updateOrder } from '@/app/admin/actions';
@@ -14,15 +14,24 @@ import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from '@/components/ui/alert-dialog';
 
-export function AdminRefresh() {
+export function AdminRefresh({ onRefresh }: { onRefresh?: () => Promise<void> } = {}) {
   const router = useRouter();
+  const pathname = usePathname();
   const [pending, startTransition] = useTransition();
   const queued = useRef(false);
+  const inFlight = useRef(false);
   const refresh = useEffectEvent(() => {
+    if (!onRefresh && pathname === '/admin') return;
     queued.current = true;
-    if (!pending && document.visibilityState === 'visible' && !document.querySelector('[role="dialog"], [role="alertdialog"], [data-admin-editing="true"]')) {
+    if (!pending && !inFlight.current && navigator.onLine && document.visibilityState === 'visible' && !document.querySelector('[role="dialog"], [role="alertdialog"], [data-admin-editing="true"]')) {
       queued.current = false;
-      startTransition(() => router.refresh());
+      inFlight.current = true;
+      startTransition(async () => {
+        try {
+          if (onRefresh) await onRefresh();
+          else router.refresh();
+        } finally { inFlight.current = false; }
+      });
     }
   });
   useEffect(() => { if (!pending && queued.current) refresh(); }, [pending]);
@@ -94,11 +103,12 @@ export function MaintenanceControl({ enabled, updatedAt }: { enabled?: boolean; 
   </section>;
 }
 
-export function OrderControls({ order }: { order: AdminRow }) {
+export function OrderControls({ order, completionOnly = false }: { order: AdminRow; completionOnly?: boolean }) {
   const router = useRouter();
   const [operation, setOperation] = useState<{ value: string; label: string } | null>(null);
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
-  return <><div className="flex flex-wrap gap-3">{orderOperations(String(order.status), String(order.payment_method), String(order.payment_status)).map((action) => <Button key={action.value} variant={action.value === 'cancelled' ? 'outline' : 'default'} onClick={() => { setError(''); setReason(''); setOperation(action); }}><Check />{action.label}</Button>)}</div><AlertDialog open={Boolean(operation)} onOpenChange={(open) => { if (!open && !pending) setOperation(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{operation?.label}?</AlertDialogTitle><AlertDialogDescription>Order #{String(order.order_number)}{operation?.value === 'cash_paid' ? ': confirm the cash has been received.' : operation?.value === 'cancelled' ? '. Cancellation does not issue a card refund. Review any paid amount separately with your payment provider.' : '. This updates the order status.'}</AlertDialogDescription></AlertDialogHeader>{operation?.value === 'cancelled' && <div className="space-y-2"><Label htmlFor="cancel-reason">Cancellation Reason</Label><Textarea id="cancel-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={pending} /></div>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<AlertDialogFooter><AlertDialogCancel disabled={pending}>Back</AlertDialogCancel><Button disabled={pending || (operation?.value === 'cancelled' && !reason.trim())} onClick={() => startTransition(async () => { if (!operation) return; try { const result = await updateOrder(order.id!, operation.value, reason); if (!result.ok) setError(result.error ?? 'Update failed.'); else { if (result.warning) toast.warning(result.warning, {duration:10000}); else toast.success('Order updated'); setOperation(null); router.refresh(); } } catch { setError('Unable to update the order. Try again.'); } })}>{pending ? 'Updating...' : 'Confirm'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
+  const actions = orderOperations(String(order.status), String(order.payment_method), String(order.payment_status), order.pickup_location).filter((action) => !completionOnly || ['ordered', 'collected'].includes(action.value));
+  return <><div className="flex flex-wrap gap-3">{actions.map((action) => <Button key={action.value} variant={action.value === 'cancelled' ? 'outline' : 'default'} onClick={() => { setError(''); setReason(''); setOperation(action); }}><Check />{action.label}</Button>)}</div><AlertDialog open={Boolean(operation)} onOpenChange={(open) => { if (!open && !pending) setOperation(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{operation?.label}?</AlertDialogTitle><AlertDialogDescription>Order #{String(order.order_number)}{operation?.label === 'Mark As Complete' ? '. Confirm the food has been delivered. This queues the customer thank-you email.' : operation?.label === 'Reopen Order' ? '. This returns the order to outstanding. Completing it again will not send another thank-you email.' : operation?.value === 'cash_paid' ? ': confirm the cash has been received.' : operation?.value === 'cancelled' ? '. Cancellation does not issue a card refund. Review any paid amount separately with your payment provider.' : '. This updates the order status.'}</AlertDialogDescription></AlertDialogHeader>{operation?.value === 'cancelled' && <div className="space-y-2"><Label htmlFor="cancel-reason">Cancellation Reason</Label><Textarea id="cancel-reason" value={reason} onChange={(event) => setReason(event.target.value)} maxLength={500} disabled={pending} /></div>}{error && <p role="alert" className="text-sm text-destructive">{error}</p>}<AlertDialogFooter><AlertDialogCancel disabled={pending}>Back</AlertDialogCancel><Button disabled={pending || (operation?.value === 'cancelled' && !reason.trim())} onClick={() => startTransition(async () => { if (!operation) return; try { const result = await updateOrder(order.id!, operation.value, reason); if (!result.ok) setError(result.error ?? 'Update failed.'); else { if (result.warning) toast.warning(result.warning, {duration:10000}); else toast.success('Order updated'); setOperation(null); router.refresh(); } } catch { setError('Unable to update the order. Try again.'); } })}>{pending ? 'Updating...' : 'Confirm'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog></>;
 }

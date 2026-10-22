@@ -10,6 +10,7 @@ import { getMaintenanceMode } from '@/lib/catalogue/data';
 import { checkoutConfigured, paymentDatabase, stripeClient } from '@/lib/payments/server';
 import { checkoutSchema, type CheckoutResult } from '@/lib/payments/validation';
 import { orderChoicesText } from '@/lib/account/order-breakdown';
+import { savedEventAccess } from '@/lib/event-access';
 
 export async function startCheckout(input: unknown): Promise<CheckoutResult> {
   const parsed = checkoutSchema.safeParse(input);
@@ -23,17 +24,20 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
     const requestHeaders = await headers();
     const origin = appOrigin(process.env.SITE_URL, requestHeaders.get('origin') || '', process.env.NODE_ENV === 'production');
     const { key, ...values } = parsed.data;
+    const eventAccess = values.eventId ? await savedEventAccess(values.eventId) : undefined;
     const database = paymentDatabase();
     const { data: order, error } = await database.rpc('reserve_card_order', {
-      customer_uuid: viewer.user.id, request_key: key, payload: { ...values, email: viewer.user.email },
+      customer_uuid: viewer.user.id, request_key: key, payload: { ...values, ...(eventAccess ? { eventAccess } : {}), email: viewer.user.email },
     });
     if (error) {
-      const safeMessages = ['Card checkout is unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time'];
-      return { error: safeMessages.includes(error.message) ? error.message : 'Checkout is unavailable. Refresh your bag and try again.' };
+      if (error.message === 'An item is not on the menu for this event. Review your bag.') return { error: error.message };
+      if (error.message === 'Scan the QR code provided at this event before ordering') return { error: error.message };
+      const safeMessages = ['Card checkout is unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time', 'Enter a valid table or car number', 'The selected event does not match this order', 'Choose an event and an available pickup time if required'];
+      return { error: safeMessages.includes(error.message) ? error.message : error.message.startsWith('Ordering unavailable:') ? 'Ordering for this event is currently closed or paused.' : 'Checkout is unavailable. Refresh your bag and try again.' };
     }
     if (order.customer_id !== viewer.user.id || order.status !== 'pending_payment') return { error: 'This checkout has already finished. Check your account orders.' };
     const paymentDeadline = new Date(order.reservation_expires_at).getTime();
-    if (!Number.isFinite(paymentDeadline) || paymentDeadline <= Date.now()) return { error: 'The payment deadline for this pickup has passed. Choose a new pickup time.' };
+    if (!Number.isFinite(paymentDeadline) || paymentDeadline <= Date.now()) return { error: 'The payment deadline has passed. Start a new checkout while ordering is open.' };
     const stripe = stripeClient();
     const { data: payment, error: paymentError } = await database.from('payments').select('stripe_checkout_session_id').eq('order_id', order.id).eq('provider', 'stripe').single();
     if (paymentError) throw new Error('Payment unavailable');
@@ -88,7 +92,7 @@ export async function resumeCheckout(input: unknown): Promise<CheckoutResult> {
     if (error || !order || order.customer_id !== viewer.user.id) return { error: 'This checkout could not be found.' };
     if (order.status !== 'pending_payment' || order.payment_method !== 'card' || order.payment_status !== 'unpaid') return { error: 'This checkout has already finished. Refresh your account orders.' };
     const deadline = new Date(order.reservation_expires_at).getTime();
-    if (!Number.isFinite(deadline) || deadline <= Date.now()) return { error: 'The payment deadline has passed. Cancel this checkout and choose a new pickup time.' };
+    if (!Number.isFinite(deadline) || deadline <= Date.now()) return { error: 'The payment deadline has passed. Cancel this checkout and start again while ordering is open.' };
     const { data: payment, error: paymentError } = await database.from('payments').select('stripe_checkout_session_id').eq('order_id', order.id).eq('provider', 'stripe').single();
     if (paymentError || !payment?.stripe_checkout_session_id) return { error: 'No payment session is available. Cancel this checkout and start again.' };
     const session = await stripeClient().checkout.sessions.retrieve(payment.stripe_checkout_session_id);

@@ -7,6 +7,140 @@ import { testimonialSchema, eventSchema, settingsSchema, optionSchema } from '..
 import { aboutDefaults } from '../src/lib/catalogue/about.ts';
 import { build } from 'esbuild';
 import path from 'node:path';
+import { deliveryLabel, serviceMode, eventMenuLink } from '../src/lib/service-ordering.ts';
+
+test('service operations use one completion step and preserve the pickup workflow', () => {
+  const location = { service_mode: 'car', location_number: '27', number_plate: 'AB12 CDE' };
+  assert.equal(serviceMode({}), 'pickup');
+  assert.equal(deliveryLabel(location), 'Car 27 / AB12 CDE');
+  assert.equal(deliveryLabel({ ...location, service_mode: 'table', number_plate: '' }), 'Table 27');
+  assert.equal(eventMenuLink('event-id'), '/menu?event=event-id');
+  assert.deepEqual(orderOperations('ordered', 'card', 'paid', location).map((action) => action.label), ['Mark As Complete', 'Cancel Order']);
+  assert.deepEqual(orderOperations('collected', 'card', 'paid', location), [{ value: 'ordered', label: 'Reopen Order' }]);
+  assert.equal(orderOperations('pending_payment', 'card', 'unpaid', location).some((action) => action.value === 'collected'), false);
+  assert.equal(orderOperations('cancelled', 'card', 'paid', location).length, 0);
+  assert.equal(orderOperations('ordered', 'card', 'paid')[0].value, 'preparing');
+});
+
+test('service order queue uses matching location searches and event-wide counts beyond one page', async () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const state = { calls: [] };
+  globalThis.__ordersPageTest = state;
+  try {
+    const bundle = await build({
+      stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
+        import Page from '@/app/admin/orders/page';
+        import { renderToStaticMarkup } from 'react-dom/server';
+        export async function render(params) { return renderToStaticMarkup(await Page({searchParams:Promise.resolve(params)})); }
+      ` },
+      bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic',
+      banner: { js: `import { createRequire } from 'node:module'; const require = createRequire(${JSON.stringify(import.meta.url)});` },
+      plugins: [{ name: 'orders-page-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^(next\/link|@\/lib\/auth\/session|@\/lib\/admin\/data|@\/components\/)/ }, (args) => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/link'
+          ? 'export default function Link({children}) { return children; }'
+          : args.path.startsWith('@/components/') ? 'export function Button({children}) { return children; } export const Badge = Button; export function OrderFilters() { return null; } export function OrderControls() { return null; }'
+            : args.path.endsWith('/session') ? 'export async function requireAdmin() {}'
+              : `export function adminError(error) { return error.message; }
+                export async function adminRows() { return [{id:'${id}',title:'Drive-In Cinema'}]; }
+                export async function adminRequest(...args) {
+                  globalThis.__ordersPageTest.calls.push(args);
+                  if (args[0] !== 'orders') return [{outstanding:58,complete:12,cancelled:1,pending_payment:2}];
+                  return Array.from({length:51}, (_,index) => ({id:String(index),order_number:1000+index,event_id:'${id}',customer_name:'Alex',status:'ordered',payment_method:'card',payment_status:'paid',total_pence:800,pickup_location:{service_mode:'car',location_number:'A/2',number_plate:'AB12 CDE'},order_items:[{item_name:'Test Taco',quantity:2}]}));
+                }` }));
+        builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+      } }],
+    });
+    const { render } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const html = await render({ event: id, status: 'ordered', q: ' A/2 ' });
+    const query = state.calls.find(([resource]) => resource === 'orders')[1];
+    assert.equal(query.event_id, `in.(${id})`);
+    assert.equal(query.status, 'in.(ordered)');
+    assert.equal(query.order, 'created_at.asc,id.asc');
+    assert.match(query.or, /pickup_location->>location_number\.ilike\.\*A\/2\*/);
+    assert.deepEqual(state.calls.find(([resource]) => resource === 'rpc/admin_order_counts'), ['rpc/admin_order_counts', {}, 'POST', { event_uuids: [id], search_text: 'A/2' }]);
+    assert.equal((html.match(/<article /g) || []).length, 50);
+    assert.match(html, />58<\/p>/);
+    assert.match(html, /Car A\/2 \/ AB12 CDE/);
+    assert.match(html, /2 x Test Taco/);
+    assert.match(html, /Delivery as soon as possible/);
+  } finally { delete globalThis.__ordersPageTest; }
+});
+
+test('event QR endpoint authorizes admins and encodes a stable event-specific menu link', async () => {
+  const state = { viewer: null, exists: true, encoded: '', private: false };
+  const previous = process.env.SITE_URL;
+  process.env.SITE_URL = 'https://tacos.example';
+  globalThis.__eventQrTest = state;
+  try {
+    const bundle = await build({
+      entryPoints: ['src/app/api/admin/events/[id]/qr/route.ts'], bundle: true, write: false, platform: 'node', format: 'esm',
+      plugins: [{ name: 'qr-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^(qrcode|@\/lib\/auth\/session|@\/lib\/admin\/data)$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'qrcode'
+          ? 'export default { async toString(url) { globalThis.__eventQrTest.encoded = url; return "<svg></svg>"; } };'
+          : args.path.endsWith('/session') ? 'export async function getViewer() { return globalThis.__eventQrTest.viewer; }'
+            : 'export async function adminRequest(path) { const state = globalThis.__eventQrTest; if (path.startsWith("rpc/")) return [{access_key:"a".repeat(64)}]; return state.exists ? [{id:"event",is_private:state.private}] : []; } export function adminError() { return "QR unavailable"; }' }));
+        builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+      } }],
+    });
+    const { GET } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const id = '00000000-0000-4000-8000-000000000001';
+    const request = new Request(`https://tacos.example/api/admin/events/${id}/qr?download=1`);
+    const params = { params: Promise.resolve({ id }) };
+    assert.equal((await GET(request, params)).status, 401);
+    state.viewer = { profile: { role: 'customer' } };
+    assert.equal((await GET(request, params)).status, 403);
+    state.viewer = { profile: { role: 'admin' } };
+    assert.equal((await GET(request, { params: Promise.resolve({ id: 'bad' }) })).status, 404);
+    const response = await GET(request, params);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Content-Type'), 'image/svg+xml');
+    assert.match(response.headers.get('Content-Disposition'), /attachment/);
+    assert.equal(state.encoded, `https://tacos.example/menu?event=${id}`);
+    state.private = true;
+    assert.equal((await GET(request, params)).status, 200);
+    assert.equal(state.encoded, `https://tacos.example/api/events/${id}/access?key=${'a'.repeat(64)}`);
+    const opened = await GET(new Request(`https://tacos.example/api/admin/events/${id}/qr?open=1`), params);
+    assert.equal(opened.status, 303);
+    assert.equal(opened.headers.get('Location'), state.encoded);
+    state.exists = false;
+    assert.equal((await GET(request, params)).status, 404);
+  } finally {
+    delete globalThis.__eventQrTest;
+    if (previous === undefined) delete process.env.SITE_URL; else process.env.SITE_URL = previous;
+  }
+});
+
+test('dashboard refresh API requires an administrator and returns explicit uncached failures', async () => {
+  const state = { viewer: null, calls: 0, fail: false };
+  globalThis.__dashboardApiTest = state;
+  try {
+    const bundle = await build({
+      entryPoints: ['src/app/api/admin/dashboard/route.ts'], bundle: true, write: false, platform: 'node', format: 'esm',
+      plugins: [{ name: 'dashboard-api-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^@\/lib\/(auth\/session|admin\/data)$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path.endsWith('/session')
+          ? 'export async function getViewer() { return globalThis.__dashboardApiTest.viewer; }'
+          : 'export function adminError() { return "Temporary database failure"; } export async function getDashboardData() { const state = globalThis.__dashboardApiTest; state.calls++; if (state.fail) throw new Error("Database unavailable"); return {orders: [], menu: [], events: []}; }' }));
+      } }],
+    });
+    const { GET } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    assert.equal((await GET()).status, 401);
+    state.viewer = { profile: { role: 'customer' } };
+    assert.equal((await GET()).status, 403);
+    assert.equal(state.calls, 0);
+    state.viewer = { profile: { role: 'admin' } };
+    const response = await GET();
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+    assert.deepEqual(await response.json(), { orders: [], menu: [], events: [] });
+    state.fail = true;
+    const failed = await GET();
+    assert.equal(failed.status, 503);
+    assert.deepEqual(await failed.json(), { error: 'Temporary database failure' });
+  } finally { delete globalThis.__dashboardApiTest; }
+});
 
 test('admin schema errors identify option content separately from the menu save function', async () => {
   const bundle = await build({ entryPoints: ['src/lib/admin/data.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'schema-error-boundaries', setup(builder) {
@@ -25,6 +159,8 @@ test('admin schema errors identify option content separately from the menu save 
   assert.match(missingFunction, /032_menu_item_modifier_save.sql/);
   assert.match(missingFunction, /schema cache/);
   assert.match(adminError(new AdminDataError('PGRST204', "Could not find the 'child_group_ids' column of 'modifier_groups' in the schema cache")), /034_modifier_group_nesting.sql/);
+  assert.match(adminError(new AdminDataError('PGRST202', 'Could not find public.admin_order_counts in the schema cache')), /045_table_car_ordering.sql/);
+  assert.match(adminError(new AdminDataError('42703', 'column events.service_mode does not exist')), /045_table_car_ordering.sql/);
   const otherColumn = adminError(new AdminDataError('42703', 'column unrelated does not exist'));
   assert.match(otherColumn, /42703/);
   assert.doesNotMatch(otherColumn, /031_|032_/);
@@ -166,6 +302,17 @@ test('public content accepts admin images and event ordering while retaining leg
   assert.equal(testimonialSchema.shape.image_path.parse('images/testimonials/example.jpg'), 'images/testimonials/example.jpg');
 });
 
+test('admin event serving windows may start before and end after event dates but must stay ordered', () => {
+  const schema = resourceSchema(resources.events);
+  const event = { ...formPayload(resources.events, formDefaults(resources.events)), title: 'Cinema', slug: 'cinema', venue_name: 'Venue', address_line_1: 'Street', town: 'Town', postcode: 'AB1 2CD',
+    starts_at: '2026-10-21T18:00:00Z', ends_at: '2026-10-21T21:00:00Z', orders_open_at: '2026-10-21T17:00:00Z', orders_close_at: '2026-10-21T22:00:00Z' };
+  assert.equal(schema.safeParse(event).success, true);
+  assert.equal(schema.safeParse({ ...event, orders_close_at: '2026-10-21T20:00:00Z' }).success, true);
+  assert.equal(schema.safeParse({ ...event, orders_open_at: null, orders_close_at: null }).success, true);
+  assert.equal(schema.safeParse({ ...event, orders_open_at: event.orders_close_at }).success, false);
+  assert.equal(schema.safeParse({ ...event, orders_open_at: null, orders_close_at: '2026-10-21T17:00:00Z' }).success, false);
+});
+
 test('admin resources whitelist fields and validate prices and choices', () => {
   const description = resourceSchema(resources.menu).shape.description;
   assert.equal(description.parse('<p onclick="alert(1)"><strong>Fresh</strong></p><script>alert(1)</script>'), '<p><strong>Fresh</strong></p>');
@@ -209,6 +356,7 @@ test('order filters validate multiple values, preserve pagination choices and re
   assert.deepEqual(parseOrderFilters({ status: 'active' }).statuses, ['pending_payment', 'ordered', 'preparing', 'ready_for_pickup']);
   assert.deepEqual(parseOrderFilters({ status: 'invalid', event: 'invalid' }).statuses, parseOrderFilters({}).statuses);
   assert.deepEqual(parseOrderFilters({ status: 'collected', event: events[0] }).events, [events[0]]);
+  assert.equal(parseOrderFilters({ q: ' A/2,(status.eq.cancelled) ' }).search, 'A/2status.eq.cancelled');
 });
 
 test('order controls expose only legal workflow operations and never fake card payments', () => {

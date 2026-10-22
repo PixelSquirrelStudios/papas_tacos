@@ -12,6 +12,98 @@ The portable CLI is installed locally at `%LOCALAPPDATA%\StripeCLI\stripe.exe` o
 
 Never commit environment files or expose secret keys as `NEXT_PUBLIC_*` variables. The local CLI signing secret is not the secret for a deployed webhook endpoint.
 
+## Table and Car Service
+
+After all upgrades through [044_order_status_emails.sql](../supabase/sql/044_order_status_emails.sql),
+apply [045_table_car_ordering.sql](../supabase/sql/045_table_car_ordering.sql) in SQL Editor.
+It is repeatable and preserves existing pickup orders. The app does not apply hosted SQL automatically.
+If an earlier function migration is reapplied, reapply 045, 046 and 047 in order afterward.
+
+For QR-only private ordering, also apply
+[046_private_event_ordering.sql](../supabase/sql/046_private_event_ordering.sql) after 045.
+The **Private Ordering (event QR code required)** switch keeps an event visible on the public
+events listing/detail page, but blocks ordering unless the attendee has opened its secret QR link.
+Public pages explain that the QR code is provided at the event and do not expose an ordering key.
+Scanning before opening still selects the event and lets customers browse, with an
+opening date/time notice and disabled **Orders Open Later** buttons. Paused and closed
+ordering show their own status and reassure customers that existing orders are unaffected.
+Invalid, expired and temporarily unverifiable private QR links redirect without the secret
+to a styled help page; they never grant ordering access or select a different event.
+
+The menu URL controls browsing/ordering context: `/menu` uses public pickup availability
+and does not show an event selector or private delivery information. `/menu?event=<id>`
+uses only that event and displays its ordering information; an unavailable event does
+not fall back to public ordering. QR access cookies unlock private events but do not
+select them on the public menu. Local storage retains the bag's fulfilment event for
+bag/checkout continuity, not menu context. Browsing another menu never silently changes
+an existing bag: adding an item from a different context requires confirmation first.
+
+For menu sets, apply [048_menu_sets.sql](../supabase/sql/048_menu_sets.sql) after 047
+before deploying the corresponding app changes. Manage **Admin > Menu Sets** and
+choose a set in the event editor. The default public set is seeded from the existing
+published menu. Event overrides can change item base prices, not modifier prices.
+Checkout resolves the event from its pickup slot or service event, rejects items
+outside that menu, recomputes the effective prices and requires the customer's
+displayed total to match. Existing order and Stripe line-item snapshots stay unchanged.
+The ordinary `/menu?event=...` link, manually selecting an event, or directly calling checkout
+cannot unlock a private event. Access is checked again when the order is created in the database.
+
+Private QR codes use a separate unguessable key held outside public event data. Scanning validates
+the key and saves it in an HTTP-only, same-site browser cookie for up to seven days; event publication,
+expiry and ordering controls still apply. The menu URL is then cleaned of the secret, and access survives
+sign-in on the same browser. Cookie restrictions or another browser/device may require another scan.
+Download/print the QR again after enabling private ordering: a previously printed public QR will not unlock it.
+The **Open Event Menu** link in the admin QR dialog uses the same private access link as the printed code.
+An attendee can still forward the QR or its link: this is QR-link access, not proof of physical attendance.
+Keep printed codes on menus given to attendees rather than public social posts.
+
+Apply [047_independent_ordering_times.sql](../supabase/sql/047_independent_ordering_times.sql)
+after 046 to allow serving/ordering outside the event dates. **Orders Open** can be before the
+event starts, and **Orders Close** can be earlier or later than the event ends. Blank fields use
+the corresponding event time. Opening must be before closing. Event cards show the configured
+serving times; detail pages show both the event dates and serving times. Events remain selectable
+while their later ordering window is active, including private QR access.
+
+1. In **Admin > Events**, create an event with **Service Type** set to **Table** or **Car**.
+   Existing events default to Pickup. Service type cannot change once an event has orders or a pickup
+   schedule; create a new event instead.
+2. Set event dates, publish it, enable **Event Ordering Enabled**, and set **Ordering** to Open.
+   Global ordering and card payments must also be enabled. Optional **Orders Open / Orders Close**
+   values override the default event start/end for accepting new checkouts. All admin dates use Europe/London.
+3. Do not generate a pickup schedule for table/car events. They accept orders without slots or
+   slot-based capacity limits; pause event ordering when the kitchen needs to catch up.
+   Public event cards, detail pages and the selected-event info box use car/table-specific delivery guidance:
+   food is brought to the assigned location as soon as possible, with no guaranteed time during busy periods.
+4. Use **Ordering QR Code** on the event card to preview or download its SVG for printing.
+   Configure `SITE_URL` to the public HTTPS origin before printing; localhost QR codes will not work
+   on customers' phones. Test a scan on a real phone before distributing posters.
+   QR generation is local to this application, not a third-party QR service.
+5. Scanning opens `/menu?event=<event UUID>`. Selection survives bag navigation, sign-in and page reloads.
+   Switching an existing bag to a different event requires confirmation. A closed, unpublished or expired
+   selected event blocks checkout rather than silently changing events.
+6. Table checkout requires **Table Number**. Car checkout requires **Assigned Car Number**, with optional
+   **Number Plate**. Order Notes remain separate. Multiple orders may share a table/car number.
+   Staff and customer confirmations display the identifier together with the unique order number.
+7. The event card's **Outstanding Event Orders** link opens its queue oldest first. Use **Mark As Complete**
+   after delivery. Counts cover the selected events/search across all pages, regardless of the current
+   status filter. Awaiting-payment and cancelled orders are not outstanding meals. **Reopen Order** corrects
+   accidental completion; history records the staff member and timestamp.
+
+Table/car customers receive a payment confirmation and, on completion, a thank-you email encouraging
+Facebook feedback / Instagram sharing when those URLs are configured. There are no preparing/ready-for-pickup
+emails for this mode. Completion uses the existing `collected` state internally, displayed as **Complete**,
+and the 044 email queue. Repeated clicks or reopening/recompleting do not send another thank-you email.
+Cancellation emails still apply. Run the existing internal email-retry job described below in production.
+Order pages and receipts use delivery wording and retain the original event/location snapshot.
+Vehicle registrations are private customer/staff order data, not public event data.
+
+Payment must complete within ten minutes of starting checkout, no later than five minutes after an
+explicitly configured ordering close. Without a configured close, the event end remains the deadline.
+An explicit later close is not capped by the event end. New checkouts cannot begin after ordering closes.
+The Stripe session can remain open longer, but late payments are cancelled and refunded using the existing
+verified-webhook deadline handling. Delivery is as soon as possible, not a booked or guaranteed time.
+The initial version retains sign-in and card payment; guest checkout and cash-on-delivery are not included.
+
 ## Generated Pickup Schedules
 
 After the existing upgrades through 036, apply these separately, in order:
@@ -29,8 +121,11 @@ are applied by the app. If earlier reservation or availability migrations are re
 
 In the event form, set **Event Starts** and **Event Ends** for every event, including pickup-enabled
 events. Enable pickup and set Ordering to Open when taking orders. Pickup timestamps and Preparation
-Time are configured only in Pickup Slots. The pickup window must fit within the event dates; saving
-it never changes those dates. An event can be public before its pickup schedule is configured.
+Time are configured only in Pickup Slots. With upgrade 047, the pickup window must fit within the
+configured Orders Open/Close window (event times when blank), so pickup service can also extend
+outside the event dates. Set extended ordering times before generating that schedule.
+Saving a schedule never changes event dates or overwrites explicitly configured ordering times.
+An event can be public before its pickup schedule is configured.
 041 does not rewrite existing dates: correct any dates previously overwritten by 039 in the event form.
 
 In **Admin > Pickup Slots**, select the event card, then **Set Schedule**. Only pickup-enabled,

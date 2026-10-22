@@ -5,12 +5,18 @@ import { lineKey, mergeLine, parseBag, type BagLine } from '@/lib/bag';
 import type { Catalogue, Settings, TruckEvent } from '@/lib/catalogue/types';
 import { canOrder } from '@/lib/catalogue/format';
 import { catalogueRequestEvent, catalogueUpdateEvent, siteUpdateEvent } from '@/lib/site-updates';
+import { EventOrderingInfo } from '@/components/catalogue/event-ordering-info';
+import { Button } from '@/components/ui/button';
+import { menuCatalogue } from '@/lib/catalogue/menu-sets';
 
 const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
   lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null; orderingOpen: boolean;
+  sourceCatalogue: Catalogue;
   collectionEvents: TruckEvent[];
-  add: (line: BagLine, replacing?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
+  events: TruckEvent[]; selectedEventId: string; selectedEvent?: TruckEvent;
+  selectEvent: (id: string) => void;
+  add: (line: BagLine, replacing?: string, eventId?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
   clearIfMatches: (purchased: BagLine[]) => void;
 };
 const BagContext = createContext<BagContextValue | null>(null);
@@ -21,7 +27,11 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const [storageError, setStorageError] = useState(false);
   const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
   const [now, setNow] = useState(0);
-  const orderingOpen = data.catalogue.available && canOrder(data.events ?? [], data.settings, now);
+  const [selectedEventId, setSelectedEventId] = useState('');
+  const selectedEvent = data.events?.find((event) => event.id === selectedEventId);
+  const catalogue = menuCatalogue(data.catalogue, selectedEvent?.menu_set_id);
+  const eligibleEvents = selectedEventId ? (selectedEvent ? [selectedEvent] : []) : (data.events ?? []).filter(isPublicPickupEvent);
+  const orderingOpen = catalogue.available && canOrder(eligibleEvents, data.settings, now);
   const collectionEvents = (data.events ?? []).filter((event) => canOrder([event], data.settings, now));
 
   useEffect(() => {
@@ -63,14 +73,17 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     }
     async function hydrate() {
       let stored: BagLine[] = [];
+      let storedEvent = '';
       let failed = false;
       try { stored = parseBag(localStorage.getItem(storageKey)); } catch { failed = true; }
+      try { storedEvent = localStorage.getItem('papas-tacos:event') || ''; } catch { failed = true; }
       await Promise.resolve();
       if (controller.signal.aborted) return;
-      setLines(stored); setStorageError(failed); setReady(true);
+      setLines(stored); setSelectedEventId(storedEvent); setStorageError(failed); setReady(true);
     }
     function syncStorage(event: StorageEvent) {
       if (event.key === storageKey || event.key === null) setLines(parseBag(event.newValue));
+      if (event.key === 'papas-tacos:event' || event.key === null) setSelectedEventId(event.key === null ? '' : event.newValue || '');
     }
     void hydrate(); void refresh();
     window.addEventListener('storage', syncStorage);
@@ -99,8 +112,12 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, lines: next })); setStorageError(false); }
     catch { setStorageError(true); }
   }
-  function add(line: BagLine, replacing?: string) {
-    if (!data.catalogue.available || !canOrder(data.events ?? [], data.settings, Date.now())) return;
+  function add(line: BagLine, replacing?: string, eventId = selectedEventId) {
+    const events = eventId ? (data.events ?? []).filter((event) => event.id === eventId) : (data.events ?? []).filter(isPublicPickupEvent);
+    const target = (data.events ?? []).find((event) => event.id === eventId);
+    const menu = menuCatalogue(data.catalogue, target?.menu_set_id);
+    if (!menu.available || !canOrder(events, data.settings, Date.now()) || !menu.items.some((item) => item.id === line.itemId && item.is_available)) return;
+    if (eventId !== selectedEventId) selectEvent(eventId);
     save(mergeLine(replacing ? lines.filter((candidate) => lineKey(candidate) !== replacing) : lines, line));
   }
   function setQuantity(key: string, quantity: number) {
@@ -110,7 +127,53 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   function clearIfMatches(purchased: BagLine[]) {
     if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) save([]);
   }
-  return <BagContext.Provider value={{ lines, ready, storageError, ...data, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  function selectEvent(id: string) {
+    setSelectedEventId(id);
+    try { localStorage.setItem('papas-tacos:event', id); } catch { setStorageError(true); }
+  }
+  return <BagContext.Provider value={{ lines, ready, storageError, ...data, catalogue, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+}
+
+function isPublicPickupEvent(event: TruckEvent) {
+  return !event.is_private && (!event.service_mode || event.service_mode === 'pickup');
+}
+
+export function MenuOrderingProvider({ eventId = '', children }: { eventId?: string; children: React.ReactNode }) {
+  const bag = useBag();
+  const [pending, setPending] = useState<{ line: BagLine; replacing?: string } | null>(null);
+  const [error, setError] = useState('');
+  const selectedEvent = bag.events.find((event) => event.id === eventId);
+  const catalogue = menuCatalogue(bag.sourceCatalogue, selectedEvent?.menu_set_id);
+  const events = eventId ? (selectedEvent ? [selectedEvent] : []) : bag.events.filter(isPublicPickupEvent);
+  const orderingOpen = catalogue.available && canOrder(events, bag.settings);
+  function commit(line: BagLine, replacing?: string) {
+    if (!catalogue.available || !canOrder(events, bag.settings) || !catalogue.items.some((item) => item.id === line.itemId && item.is_available)) {
+      setError('Ordering availability has changed. Please review the current ordering information before trying again.');
+      return;
+    }
+    setError('');
+    bag.add(line, replacing, eventId);
+    setPending(null);
+  }
+  const value: BagContextValue = {
+    ...bag, catalogue, selectedEventId: eventId, selectedEvent, orderingOpen,
+    collectionEvents: events.filter((event) => canOrder([event], bag.settings)),
+    add(line, replacing) {
+      if (bag.lines.length && bag.selectedEventId !== eventId) setPending({ line, replacing });
+      else commit(line, replacing);
+    },
+  };
+  return <BagContext.Provider value={value}>
+    {eventId && bag.ready && <section aria-label="Ordering Event" className="my-6 space-y-3">
+      {selectedEvent ? <><h2 className="text-xl font-semibold">Ordering for {selectedEvent.title}</h2><EventOrderingInfo event={selectedEvent} settings={bag.settings} /></> : <p role="alert" className="rounded-lg border border-brand-yellow/25 bg-brand-yellow/5 p-4 text-sm">This event is closed, expired or unavailable. Please check the event link or speak to our team. You can still browse the menu.</p>}
+    </section>}
+    {error && <p role="alert" className="my-4 text-sm text-destructive">{error}</p>}
+    {pending && <section role="alert" aria-label="Switch Ordering Context" className="my-6 space-y-3 rounded-lg border border-brand-yellow/25 bg-card p-4">
+      <p>Your bag is currently for {bag.selectedEvent?.title || (bag.selectedEventId ? 'another event' : 'public pickup')}. Switch it to {selectedEvent?.title || 'public pickup ordering'} and add this item? Your existing items will be kept and availability will be checked again.</p>
+      <div className="flex flex-wrap gap-3"><Button onClick={() => commit(pending.line, pending.replacing)}>Switch and Add Item</Button><Button variant="outline" onClick={() => setPending(null)}>Keep Current Bag</Button></div>
+    </section>}
+    {children}
+  </BagContext.Provider>;
 }
 
 export function PaidOrderBagCleanup({ orderId }: { orderId: string }) {

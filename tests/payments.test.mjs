@@ -32,8 +32,9 @@ const fixtureOrder = {
 
 async function load(entry, modules) {
   const bundle = await build({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'esm', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(process.cwd() + '/package.json');" }, plugins: [{ name: 'payments-fixture', setup(builder) {
+    builder.onResolve({ filter: /^next\/server$/ }, () => ({ path: import.meta.resolve('next/server.js'), external: true }));
     builder.onResolve({ filter: /.*/ }, (args) => Object.hasOwn(modules, args.path) ? { path: args.path, namespace: 'fixture' } : undefined);
-    builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ contents: modules[args.path] }));
+    builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ contents: modules[args.path], resolveDir: process.cwd() }));
   } }] });
   return import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
 }
@@ -71,6 +72,33 @@ test('stage emails distinguish confirmation preparation ready and collected revi
       assert.ok(!email.html.includes('Your order is ready.'));
     }
   }
+});
+
+test('table and car confirmation and completion emails include location and feedback without pickup instructions', async () => {
+  const brand = { siteUrl: 'https://tacos.example', logoUrl: 'https://images.example/logo.svg', instagramUrl: 'https://instagram.com/papas', facebookUrl: 'https://facebook.com/papas' };
+  for (const mode of ['table', 'car']) {
+    const order = { ...fixtureOrder, pickup_location: { ...fixtureOrder.pickup_location, event_title: 'Drive-In Cinema', service_mode: mode, location_number: '27', number_plate: mode === 'car' ? 'AB12 CDE' : '' } };
+    const confirmed = orderConfirmationEmail(order, brand);
+    assert.match(confirmed.subject, /confirmed for delivery/);
+    assert.match(confirmed.text, /Drive-In Cinema/);
+    assert.match(confirmed.text, /27/);
+    assert.doesNotMatch(confirmed.text, /selected pickup|collecting|PICKUP/);
+    const completed = orderConfirmationEmail({ ...order, status: 'collected' }, brand, 'collected');
+    assert.match(completed.subject, /complete - thank you/);
+    assert.match(completed.text, /Your order has been delivered/);
+    assert.match(completed.text, /leave us a review on Facebook/);
+    assert.match(completed.html, /Share your visit on Instagram/);
+    assert.doesNotMatch(completed.text, /collected|pickup/);
+    if (mode === 'car') assert.match(completed.text, /AB12 CDE/);
+    const receipt = await PDFDocument.load(await createReceipt(order, { paidAt: order.created_at, refunded: 0 }));
+    assert.ok(receipt.getPageCount() >= 1);
+  }
+});
+
+test('service checkout validates dedicated location fields and does not require a slot', () => {
+  const input = { key: orderId, eventId: orderId, locationNumber: '27', numberPlate: 'ab12 cde', name: 'Customer', phone: '07000000000', note: '', expectedTotal: 800, lines: [{ itemId: orderId, optionIds: [], quantity: 1 }] };
+  assert.equal(checkoutSchema.parse(input).numberPlate, 'AB12 CDE');
+  for (const invalid of [{ ...input, eventId: undefined }, { ...input, locationNumber: '' }, { ...input, locationNumber: '<script>' }, { ...input, numberPlate: 'x'.repeat(21) }]) assert.equal(checkoutSchema.safeParse(invalid).success, false);
 });
 
 test('status delivery retries identical payloads and blocks later stages after failure', async () => {
@@ -204,7 +232,7 @@ test('checkout input rejects client prices, invalid choices and oversized bags',
   for (const invalid of [{ ...input, subtotal: 1 }, { ...input, expectedTotal: -1 }, { ...input, lines: [] }, { ...input, lines: Array(51).fill(input.lines[0]) }, { ...input, lines: [{ ...input.lines[0], quantity: 100 }] }]) assert.equal(checkoutSchema.safeParse(invalid).success, false);
 });
 
-test('checkout presents authoritative pickup statuses and fails closed when availability fails', async () => {
+test('checkout presents authoritative pickup statuses and passes pickup failures to mode-aware checkout', async () => {
   const state = { slots: [{ id: orderId, status: 'available' }, { id: customerId, status: 'taken' }], error: false };
   globalThis.__slotTest = state;
   try {
@@ -220,7 +248,7 @@ test('checkout presents authoritative pickup statuses and fails closed when avai
     state.slots = [];
     assert.deepEqual((await CheckoutPage()).props.children.at(-1).props.slots, []);
     state.error = true;
-    assert.equal((await CheckoutPage()).props.children.at(-1).props.role, 'alert');
+    assert.equal((await CheckoutPage()).props.children.at(-1).props.initialSlotError, true);
   } finally { delete globalThis.__slotTest; }
 });
 
@@ -233,6 +261,7 @@ test('checkout uses trusted order prices and a stable Stripe idempotency key', a
   state.order = order;
   try {
     const { startCheckout } = await load('src/app/(public)/checkout/actions.ts', {
+      '@/lib/event-access': 'export async function savedEventAccess() { return undefined; }',
       'server-only': '', 'next/headers': 'export async function headers() { return new Headers({ origin: "https://tacos.example" }); }',
       'next/navigation': 'export function redirect(path) { throw new Error(path); }', 'next/cache': 'export function revalidatePath() {}',
       '@/lib/auth/session': 'export async function getViewer() { return globalThis.__paymentTest.viewer; }',
@@ -307,6 +336,7 @@ test('resume checkout reuses only an owned unpaid reservation before its deadlin
   globalThis.__resumeTest = state;
   try {
     const { resumeCheckout } = await load('src/app/(public)/checkout/actions.ts', {
+      '@/lib/event-access': 'export async function savedEventAccess() { return undefined; }',
       'next/headers': 'export async function headers() {}', 'next/navigation': 'export function redirect() {}', 'next/cache': 'export function revalidatePath() {}',
       '@/lib/auth/session': 'export const getViewer = async () => globalThis.__resumeTest.viewer;',
       '@/lib/catalogue/data': 'export const getMaintenanceMode = async () => globalThis.__resumeTest.maintenance;',
@@ -354,15 +384,16 @@ test('resume checkout reuses only an owned unpaid reservation before its deadlin
 });
 
 test('catalogue API enforces maintenance access without changing saved ordering status', async () => {
-  const state = { maintenance: true, viewer: null, reads: 0 };
+  const state = { maintenance: true, viewer: null, reads: 0, events: [], key: undefined, allowed: false, fail: false };
   globalThis.__catalogueAccess = state;
   try {
     const { GET } = await load('src/app/api/catalogue/route.ts', {
+      '@/lib/event-access': 'export async function savedEventAccess() { return globalThis.__catalogueAccess.key; } export async function checkEventAccess() { const state = globalThis.__catalogueAccess; if (state.fail) throw new Error("Unavailable"); return state.allowed; }',
       '@/lib/auth/session': 'export async function getViewer() { return globalThis.__catalogueAccess.viewer; }',
       '@/lib/catalogue/data': `export const getMaintenanceMode = async () => globalThis.__catalogueAccess.maintenance;
         export async function getCatalogue() { globalThis.__catalogueAccess.reads++; return {available:true}; }
         export const getSettings = async () => ({maintenance_enabled:globalThis.__catalogueAccess.maintenance,ordering_status:'open'});
-        export const getEvents = async () => ({events:[]});`,
+        export const getEvents = async () => ({events:globalThis.__catalogueAccess.events});`,
     });
     for (const viewer of [null, { profile: { role: 'customer' } }, { profile: null }]) {
       state.viewer = viewer;
@@ -379,7 +410,132 @@ test('catalogue API enforces maintenance access without changing saved ordering 
     state.maintenance = false;
     state.viewer = null;
     assert.equal((await GET()).status, 200);
+    state.events = [{ id: orderId, is_private: true }, { id: customerId, is_private: false }];
+    assert.equal((await (await GET()).json()).events[0].ordering_access, false);
+    state.key = 'a'.repeat(64);
+    assert.equal((await (await GET()).json()).events[0].ordering_access, false);
+    state.allowed = true;
+    const unlocked = await (await GET()).json();
+    assert.equal(unlocked.events[0].ordering_access, true);
+    assert.equal(JSON.stringify(unlocked).includes(state.key), false);
+    state.fail = true;
+    assert.equal((await GET()).status, 503);
   } finally { delete globalThis.__catalogueAccess; }
+});
+
+test('private event QR validates access and sets a protected cookie before redirecting without the secret', async () => {
+  const state = { allowed: true, fail: false, checked: [] };
+  globalThis.__privateQr = state;
+  try {
+    const { GET } = await load('src/app/api/events/[id]/access/route.ts', {
+      '@/lib/event-access': `import {z} from 'zod';
+        export const eventAccessKey = z.string().regex(/^[a-f0-9]{64}$/);
+        export const eventAccessCookie = (id) => 'papas-event-'+id;
+        export async function checkEventAccess(id,key) { const state = globalThis.__privateQr; state.checked.push([id,key]); if (state.fail) throw new Error('Unavailable'); return state.allowed; }`,
+    });
+    const params = { params: Promise.resolve({ id: orderId }) };
+    const request = (key = 'a'.repeat(64)) => new Request(`https://tacos.example/api/events/${orderId}/access?key=${key}`);
+    const invalid = await GET(request('bad'), params);
+    assert.equal(invalid.status, 303);
+    assert.equal(invalid.headers.get('Location'), 'https://tacos.example/events/ordering-unavailable?reason=invalid');
+    assert.equal(invalid.headers.get('Set-Cookie'), null);
+    assert.equal(state.checked.length, 0);
+    const response = await GET(request(), params);
+    assert.equal(response.status, 303);
+    assert.equal(response.headers.get('Location'), `https://tacos.example/menu?event=${orderId}`);
+    assert.equal(response.headers.get('Referrer-Policy'), 'no-referrer');
+    assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+    const cookie = response.headers.get('Set-Cookie');
+    assert.match(cookie, new RegExp(`papas-event-${orderId}=${'a'.repeat(64)}`));
+    for (const flag of ['HttpOnly', 'Secure', 'SameSite=lax', 'Path=/']) assert.ok(cookie.includes(flag));
+    state.allowed = false;
+    const denied = await GET(request(), params);
+    assert.equal(denied.status, 303);
+    assert.equal(denied.headers.get('Location'), 'https://tacos.example/events/ordering-unavailable?reason=expired');
+    assert.equal(denied.headers.get('Set-Cookie'), null);
+    state.fail = true;
+    const unavailable = await GET(request(), params);
+    assert.equal(unavailable.status, 303);
+    assert.equal(unavailable.headers.get('Location'), 'https://tacos.example/events/ordering-unavailable?reason=verification');
+    for (const failure of [invalid, denied, unavailable]) {
+      assert.equal(failure.headers.get('Referrer-Policy'), 'no-referrer');
+      assert.equal(failure.headers.get('Cache-Control'), 'private, no-store');
+      assert.equal(failure.headers.get('Set-Cookie'), null);
+      assert.ok(!failure.headers.get('Location').includes('a'.repeat(64)));
+    }
+  } finally { delete globalThis.__privateQr; }
+});
+
+test('event access checks use the private cookie and fail explicitly when validation is unavailable', async () => {
+  const originalFetch = globalThis.fetch;
+  const state = { key: 'a'.repeat(64), status: 200, result: true, calls: [] };
+  globalThis.__accessCookie = state;
+  globalThis.fetch = async (url, options) => {
+    state.calls.push([String(url), options]);
+    return Response.json(state.result, { status: state.status });
+  };
+  try {
+    const { checkEventAccess, savedEventAccess } = await load('src/lib/event-access.ts', {
+      'server-only': '', 'next/headers': 'export async function cookies() { return {get() { return {value:globalThis.__accessCookie.key}; }}; }',
+      '@/lib/supabase/config': 'export function supabaseConfig() { return {url:"https://database.example",key:"public-test-key"}; }',
+    });
+    assert.equal(await savedEventAccess(orderId), state.key);
+    assert.equal(await checkEventAccess(orderId, state.key), true);
+    assert.equal(state.calls[0][0], 'https://database.example/rest/v1/rpc/check_event_ordering_access');
+    assert.deepEqual(JSON.parse(state.calls[0][1].body), { event_uuid: orderId, supplied_key: state.key });
+    assert.equal(state.calls[0][1].cache, 'no-store');
+    state.key = 'invalid';
+    assert.equal(await savedEventAccess(orderId), undefined);
+    state.result = false;
+    assert.equal(await checkEventAccess(orderId, 'a'.repeat(64)), false);
+    state.status = 503;
+    await assert.rejects(checkEventAccess(orderId, 'a'.repeat(64)), /could not be verified/);
+    state.status = 200;
+    state.result = { allowed: true };
+    await assert.rejects(checkEventAccess(orderId, 'a'.repeat(64)));
+  } finally { globalThis.fetch = originalFetch; delete globalThis.__accessCookie; }
+});
+
+test('catalogue keeps events discoverable after event end when their ordering close is later', async () => {
+  const originalFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (url) => { requests.push(new URL(url)); return Response.json([]); };
+  try {
+    const { getEvents } = await load('src/lib/catalogue/data.ts', {
+      'server-only': '',
+      '@/lib/supabase/config': 'export function supabaseConfig() { return {url:"https://database.example",key:"public-test-key"}; }',
+    });
+    assert.equal((await getEvents()).available, true);
+    const query = requests[0].searchParams;
+    assert.equal(query.has('ends_at'), false);
+    assert.match(query.get('or'), /^\(ends_at\.gt\.[^,]+,orders_close_at\.gt\.[^)]+\)$/);
+    assert.equal(query.get('is_published'), 'eq.true');
+  } finally { globalThis.fetch = originalFetch; }
+});
+
+test('private checkout takes QR access only from the protected cookie and reports missing access', async () => {
+  const state = { key: 'a'.repeat(64), payload: null };
+  globalThis.__privateCheckout = state;
+  try {
+    const { startCheckout } = await load('src/app/(public)/checkout/actions.ts', {
+      'server-only': '', 'next/headers': 'export async function headers() { return new Headers({origin:"http://localhost:3000"}); }',
+      'next/navigation': 'export function redirect() {}', 'next/cache': 'export function revalidatePath() {}',
+      '@/lib/auth/session': `export async function getViewer() { return {user:{id:"${customerId}",email:"customer@example.test"}}; }`,
+      '@/lib/catalogue/data': 'export async function getMaintenanceMode() { return false; }',
+      '@/lib/event-access': 'export async function savedEventAccess() { return globalThis.__privateCheckout.key; }',
+      '@/lib/payments/server': `export function checkoutConfigured() { return true; } export function stripeClient() { throw new Error("Must not open payment"); }
+        export function paymentDatabase() { return {async rpc(name,args) { globalThis.__privateCheckout.payload = args.payload; return {error:{message:"Scan the QR code provided at this event before ordering"}}; }}; }`,
+    });
+    const input = { key: orderId, eventId: orderId, locationNumber: '27', name: 'Customer', phone: '07000000000', note: '', expectedTotal: 800, lines: [{ itemId: orderId, optionIds: [], quantity: 1 }] };
+    assert.match((await startCheckout(input)).error, /Scan the QR code/);
+    assert.equal(state.payload.eventAccess, state.key);
+    state.key = undefined;
+    assert.match((await startCheckout(input)).error, /Scan the QR code/);
+    assert.equal('eventAccess' in state.payload, false);
+    state.payload = null;
+    assert.ok((await startCheckout({ ...input, eventAccess: 'b'.repeat(64) })).error);
+    assert.equal(state.payload, null);
+  } finally { delete globalThis.__privateCheckout; }
 });
 
 test('checkout slot requests preserve session identity and fail closed on access or schema errors', async () => {

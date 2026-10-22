@@ -5,6 +5,7 @@ import { supabaseConfig } from '@/lib/supabase/config';
 import { publicImageUrl } from './format';
 import { sectionOrder } from './ordering';
 import { expandModifierGroups } from './modifiers';
+import { menuSetSchema, menuSectionSchema, menuEntrySchema } from './menu-sets';
 import { associationSchema, categorySchema, eventSchema, groupSchema, itemSchema, optionSchema, settingsSchema, testimonialSchema, type Catalogue, type Settings, type TruckEvent } from './types';
 
 async function publicRows<Schema extends z.ZodType>(table: string, schema: Schema, filters: Record<string, string> = {}): Promise<z.output<Schema>[] | null> {
@@ -32,17 +33,23 @@ export function publicImage(path: string | null) {
 }
 
 export const getCatalogue = cache(async (): Promise<Catalogue> => {
-  const [categories, items, groups, options, associations] = await Promise.all([
+  const [categories, items, groups, options, associations, sets, sections, entries] = await Promise.all([
     publicRows('menu_categories', categorySchema, { is_published: 'eq.true', order: 'sort_order.asc,id.asc' }),
     publicRows('menu_items', itemSchema, { is_published: 'eq.true', archived_at: 'is.null', order: 'sort_order.asc,id.asc' }),
     publicRows('modifier_groups', groupSchema, { is_published: 'eq.true', order: 'id.asc' }),
     publicRows('modifier_options', optionSchema, { order: 'sort_order.asc,id.asc' }),
     publicRows('menu_item_modifier_groups', associationSchema, { order: 'sort_order.asc,menu_item_id.asc,modifier_group_id.asc' }),
+    publicRows('menu_sets', menuSetSchema, { order: 'id.asc' }),
+    publicRows('menu_set_sections', menuSectionSchema, { order: 'id.asc' }),
+    publicRows('menu_set_items', menuEntrySchema, { order: 'menu_set_id.asc,menu_item_id.asc' }),
   ]);
-  if (!categories || !items || !groups || !options || !associations) return { categories: [], items: [], available: false };
+  if (!categories || !items || !groups || !options || !associations || !sets || !sections || !entries || !sets.some((set) => set.is_default)) {
+    console.error('[catalogue] Menu data unavailable; verify database upgrades through 048_menu_sets.sql');
+    return { categories: [], items: [], available: false };
+  }
   const modifierGroups = groups.map((group) => ({ ...group, options: options.filter((option) => option.modifier_group_id === group.id).map((option) => ({ ...option, imageUrl: publicImage(option.image_path) })) }));
   try {
-  return { categories, available: true, items: sectionOrder(items, categories, (item) => item.category_id).filter((item) => categories.some((category) => category.id === item.category_id)).map((item) => ({
+  return { categories, available: true, menuSets: { sets, sections, entries }, items: sectionOrder(items, categories, (item) => item.category_id).filter((item) => categories.some((category) => category.id === item.category_id)).map((item) => ({
     ...item, imageUrl: publicImage(item.image_path),
     groups: expandModifierGroups(associations.filter((association) => association.menu_item_id === item.id).map((association) => association.modifier_group_id), modifierGroups),
   })) };
@@ -60,7 +67,8 @@ export async function getMaintenanceMode(): Promise<boolean | null> {
 }
 
 export const getEvents = cache(async (): Promise<{ events: TruckEvent[]; available: boolean }> => {
-  const events = await publicRows('events', eventSchema, { is_published: 'eq.true', ends_at: `gt.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' });
+  const now = new Date().toISOString();
+  const events = await publicRows('events', eventSchema, { is_published: 'eq.true', or: `(ends_at.gt.${now},orders_close_at.gt.${now})`, order: 'starts_at.asc,id.asc' });
   return { events: (events || []).map((event) => ({ ...event, imageUrl: publicImage(event.featured_image_path) })), available: events !== null };
 });
 
