@@ -172,6 +172,12 @@ test('table and car checkout require delivery numbers without pickup slots', asy
     await page.route('**/api/pickup-slots', (route) => { slotRequests++; return route.fulfill({ status: 503, json: { error: 'No slots' } }); });
     const location = page.getByRole('textbox', { name: mode === 'car' ? 'Assigned Car Number' : 'Table Number', exact: true });
     await expect(location).toBeVisible();
+    await expect(location).toHaveAttribute('required', '');
+    await expect(location).toHaveAttribute('placeholder', mode === 'car' ? 'e.g. 27 - use the number assigned by staff' : 'e.g. 12 - use the number on your table');
+    await expect(page.getByRole('textbox', { name: 'Customer Name', exact: true })).toHaveAttribute('placeholder', 'Enter your full name');
+    await expect(page.getByRole('textbox', { name: 'Phone Number', exact: true })).toHaveAttribute('required', '');
+    await expect(page.getByLabel('Order Note (optional)', { exact: true })).not.toHaveAttribute('required');
+    await expect(page.locator('label[for="checkout-location"]')).toContainText('(required)');
     await expect(page.getByRole('radio')).toHaveCount(0);
     await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();

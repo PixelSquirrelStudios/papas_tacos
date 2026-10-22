@@ -31,5 +31,13 @@ export function checkoutConfigured() {
     console.error('[stripe] Invalid payment mode or mismatched secret key.');
     return false;
   }
-  return Boolean(process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_') && process.env.SUPABASE_SECRET_KEY);
+  if (!process.env.STRIPE_WEBHOOK_SECRET?.startsWith('whsec_')) {
+    console.error('[stripe] STRIPE_WEBHOOK_SECRET is missing or does not have the expected prefix.');
+    return false;
+  }
+  if (!process.env.SUPABASE_SECRET_KEY) {
+    console.error('[stripe] SUPABASE_SECRET_KEY is missing.');
+    return false;
+  }
+  return true;
 }
