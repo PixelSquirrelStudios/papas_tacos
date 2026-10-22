@@ -5,6 +5,7 @@ import { supabaseConfig } from '@/lib/supabase/config';
 import { publicImageUrl } from './format';
 import { sectionOrder } from './ordering';
 import { expandModifierGroups } from './modifiers';
+import { resolveLinkedItems } from './linked-items';
 import { menuSetSchema, menuSectionSchema, menuEntrySchema } from './menu-sets';
 import { associationSchema, categorySchema, eventSchema, groupSchema, itemSchema, optionSchema, settingsSchema, testimonialSchema, type Catalogue, type Settings, type TruckEvent } from './types';
 
@@ -44,16 +45,16 @@ export const getCatalogue = cache(async (): Promise<Catalogue> => {
     publicRows('menu_set_items', menuEntrySchema, { order: 'menu_set_id.asc,menu_item_id.asc' }),
   ]);
   if (!categories || !items || !groups || !options || !associations || !sets || !sections || !entries || !sets.some((set) => set.is_default)) {
-    console.error('[catalogue] Menu data unavailable; verify database upgrades through 048_menu_sets.sql');
+    console.error('[catalogue] Menu data unavailable; verify database upgrades through 051_linked_menu_items.sql');
     return { categories: [], items: [], available: false };
   }
   const modifierGroups = groups.map((group) => ({ ...group, options: options.filter((option) => option.modifier_group_id === group.id).map((option) => ({ ...option, imageUrl: publicImage(option.image_path) })) }));
   try {
-  return { categories, available: true, menuSets: { sets, sections, entries }, items: sectionOrder(items, categories, (item) => item.category_id).filter((item) => categories.some((category) => category.id === item.category_id)).map((item) => ({
+  return { categories, available: true, menuSets: { sets, sections, entries }, items: resolveLinkedItems(sectionOrder(items, categories, (item) => item.category_id).filter((item) => categories.some((category) => category.id === item.category_id)).map((item) => ({
     ...item, imageUrl: publicImage(item.image_path),
     groups: expandModifierGroups(associations.filter((association) => association.menu_item_id === item.id).map((association) => association.modifier_group_id), modifierGroups),
-  })) };
-  } catch { return { categories: [], items: [], available: false }; }
+  }))) };
+  } catch (error) { console.error('[catalogue] Linked menu choices could not be resolved', error); return { categories: [], items: [], available: false }; }
 });
 
 export const getSettings = cache(async (): Promise<Settings | null> => {

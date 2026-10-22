@@ -16,7 +16,7 @@ test('homepage About event callouts and Contact appear in order and link to the 
   for (const name of ['Corporate Events', 'Parties', 'Weddings']) await expect(page.locator('#our-spirit').getByRole('heading', { name, exact: true })).toBeVisible();
   await page.getByRole('link', { name: 'Enquire About Your Event' }).click();
   await expect(page).toHaveURL(/#contact$/);
-  const enquiryForm = page.getByRole('form', { name: 'Event booking enquiry' });
+  const enquiryForm = page.getByRole('form', { name: 'Event Booking Enquiry' });
   await expect(enquiryForm).toBeVisible();
   expect((await page.getByRole('button', { name: 'Send Enquiry', exact: true }).boundingBox())!.width).toBeCloseTo((await enquiryForm.boundingBox())!.width, 1);
   const events = (await page.getByRole('heading', { name: 'THE NEXT STOP.' }).boundingBox())!;
@@ -42,15 +42,15 @@ test('homepage About event callouts and Contact appear in order and link to the 
 test('main and footer Contact links open the standalone enquiry page', async ({ page }) => {
   await page.route('https://elfsightcdn.com/platform.js', (route) => route.fulfill({ contentType: 'application/javascript', body: '' }));
   await page.goto('/');
-  const footerContact = page.getByRole('navigation', { name: 'Footer navigation' }).getByRole('link', { name: 'Contact', exact: true });
+  const footerContact = page.getByRole('navigation', { name: 'Footer Navigation' }).getByRole('link', { name: 'Contact', exact: true });
   await expect(footerContact).toHaveAttribute('href', '/contact');
-  await page.getByRole('button', { name: 'Open navigation' }).click();
-  const menuContact = page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Contact', exact: true });
+  await page.getByRole('button', { name: 'Open Navigation' }).click();
+  const menuContact = page.getByRole('navigation', { name: 'Main Navigation' }).getByRole('link', { name: 'Contact', exact: true });
   await expect(menuContact).toHaveAttribute('href', '/contact');
   await menuContact.click();
   await expect(page).toHaveURL(/\/contact$/);
   await expect(page.getByRole('heading', { level: 1, name: 'GOOD FOOD. GREAT OCCASIONS.' })).toBeVisible();
-  await expect(page.getByRole('form', { name: 'Event booking enquiry' })).toBeVisible();
+  await expect(page.getByRole('form', { name: 'Event Booking Enquiry' })).toBeVisible();
 });
 
 test('booking enquiry preserves failed input and retry identity then reports success', async ({ page }) => {
@@ -61,7 +61,7 @@ test('booking enquiry preserves failed input and retry identity then reports suc
     return route.fulfill(submitted.length === 1 ? { status: 502, json: { error: 'Your enquiry could not be sent. Please try again shortly.' } } : { json: { ok: true } });
   });
   await page.goto('/#contact');
-  const form = page.getByRole('form', { name: 'Event booking enquiry' });
+  const form = page.getByRole('form', { name: 'Event Booking Enquiry' });
   const eventType = form.getByRole('combobox', { name: 'Event Type' });
   await expect(eventType).toHaveCSS('height', '48px');
   expect((await eventType.boundingBox())?.height).toBe((await form.getByLabel('Phone Number').boundingBox())?.height);
@@ -156,7 +156,7 @@ test.beforeAll(async () => {
       if (params.has('ended')) Object.assign(event, { starts_at: '2020-01-01T00:00:00Z', ends_at: '2020-01-01T01:00:00Z' });
       if (params.has('paused')) event.ordering_status = 'paused';
       if (params.has('rich')) event.description = '<p onclick="alert(1)"><strong>Fresh tacos</strong> by the river.</p><p>Music all evening.</p><ul><li>Family friendly</li></ul><script>window.__unsafeEvent=true</script>';
-      Promise.resolve(params.has('qr-status') ? QrStatusPage({ searchParams: Promise.resolve({ reason: params.get('qr-status') }) }) : about ? <main><AboutContent settings={aboutSettings} fullPage /></main> : <main className="page-width py-12"><p className="eyebrow text-primary">Out on the road</p><h1 className="page-title mb-8">{detail ? event.title : 'Find the Truck'}</h1><EventPreview event={event} settings={settings} detail={detail} featured={params.has('featured')} />{!detail && <EventPreview event={{...event, id: 'second', slug: 'next-stop', title: 'Sunday Market', imageUrl: null, pickup_enabled: false}} settings={settings} />}<SocialLinks settings={settings} /></main>).then(content => createRoot(document.getElementById('fixture')).render(content));
+      Promise.resolve(params.has('qr-status') ? QrStatusPage({ searchParams: Promise.resolve({ reason: params.get('qr-status') }) }) : about ? <main><AboutContent settings={aboutSettings} fullPage /></main> : <main className="page-width py-12"><p className="eyebrow text-primary">Out on the Road</p><h1 className="page-title mb-8">{detail ? event.title : 'Find the Truck'}</h1><EventPreview event={event} settings={settings} detail={detail} featured={params.has('featured')} />{!detail && <EventPreview event={{...event, id: 'second', slug: 'next-stop', title: 'Sunday Market', imageUrl: null, pickup_enabled: false}} settings={settings} />}<SocialLinks settings={settings} /></main>).then(content => createRoot(document.getElementById('fixture')).render(content));
     ` },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"test"' },
@@ -424,7 +424,7 @@ test('event cards group dates venue pickup and actions with real social brand ic
   const map = new URL((await directions.getAttribute('href'))!);
   expect(map.searchParams.get('query')).toContain('Riverside Market 123 Market Street Bristol BS1 1AA');
   await expect(directions).toHaveAttribute('rel', 'noopener noreferrer');
-  await expect(page.getByLabel('Event image unavailable')).toBeVisible();
+  await expect(page.getByLabel('Event Image Unavailable')).toBeVisible();
   await expect.poll(() => card.getByRole('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
   await expect(card.getByRole('img')).toHaveCSS('object-fit', 'contain');
   for (const [name, icon] of [['Instagram', siInstagram], ['Facebook', siFacebook]] as const) {

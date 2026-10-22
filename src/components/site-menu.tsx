@@ -8,11 +8,11 @@ import { Button } from '@/components/ui/button';
 import { Sheet, SheetClose, SheetContent, SheetDescription, SheetHeader, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 import { useOrderingOpen } from '@/components/bag/bag-provider';
 
-export function SiteMenu({ signedIn, admin }: { signedIn: boolean; admin: boolean }) {
+export function SiteMenu({ signedIn, admin, publicMenuEnabled = true }: { signedIn: boolean; admin: boolean; publicMenuEnabled?: boolean }) {
   const orderingOpen = useOrderingOpen();
   const links = [
     { href: '/', label: 'Home' },
-    { href: '/menu', label: 'The Menu' },
+    ...(publicMenuEnabled ? [{ href: '/menu', label: 'The Menu' }] : []),
     { href: '/events', label: 'Find the Truck' },
     { href: '/testimonials', label: 'Testimonials' },
     ...(orderingOpen ? [{ href: '/bag', label: 'Your Bag' }] : []),
@@ -23,13 +23,13 @@ export function SiteMenu({ signedIn, admin }: { signedIn: boolean; admin: boolea
     ...(admin ? [{ href: '/admin', label: 'Admin Dashboard' }] : []),
   ];
   return <Sheet>
-    <SheetTrigger asChild><Button variant="ghost" size="icon" className="size-9 bg-accent hover:bg-input dark:hover:bg-input sm:size-11" aria-label="Open navigation" title="Open Navigation"><Menu className="size-5" /></Button></SheetTrigger>
+    <SheetTrigger asChild><Button variant="ghost" size="icon" className="size-9 bg-accent hover:bg-input dark:hover:bg-input sm:size-11" aria-label="Open Navigation" title="Open Navigation"><Menu className="size-5" /></Button></SheetTrigger>
     <SheetContent className="w-[min(90vw,400px)] overflow-y-auto bg-background">
       <SheetHeader className="px-7 pt-12">
         <SheetTitle className="font-display text-4xl text-primary">HOLA, AMIGO.</SheetTitle>
         <SheetDescription>Welcome to Papa&apos;s Tacos</SheetDescription>
       </SheetHeader>
-      <nav aria-label="Main navigation" className="px-7">
+      <nav aria-label="Main Navigation" className="px-7">
         {links.map((link) => <SheetClose key={link.href} asChild><Link href={link.href} className="flex min-h-16 items-center justify-between gap-4 border-b border-border py-4 text-lg hover:text-primary">{link.label}<ArrowUpRight className="size-5 shrink-0" aria-hidden="true" /></Link></SheetClose>)}
       </nav>
       {signedIn && <form action={signOut} className="px-7 py-4"><SignOutButton /></form>}

@@ -1,6 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
+import Link from 'next/link';
 import { useForm, useWatch } from 'react-hook-form';
 import { Save, LoaderCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -25,6 +26,10 @@ export function RecordEditor({ resourceKey, row, references, initialValues = {},
   const titleRef = useRef<HTMLHeadingElement>(null);
   const form = useForm<Record<string, unknown>>({ defaultValues: formDefaults(resource, row ?? initialValues) });
   const maxSelections = useWatch({ control: form.control, name: 'max_selections' });
+  const linkedId = useWatch({ control: form.control, name: 'linked_menu_item_id' });
+  const pricingMode = useWatch({ control: form.control, name: 'pricing_mode' });
+  const itemKind = useWatch({ control: form.control, name: 'item_kind' });
+  const linkedItem = references.menu_items?.find((item) => item.id === linkedId);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
   const [groupIds, setGroupIds] = useState(initialGroupIds);
@@ -53,19 +58,39 @@ export function RecordEditor({ resourceKey, row, references, initialValues = {},
     <DialogHeader className="px-6 pb-4 pt-6"><DialogTitle ref={titleRef} tabIndex={-1}>{row ? 'Edit' : 'Add'} {resource.singular}</DialogTitle><DialogDescription>{row ? String(row[resource.label] ?? resource.title) : resource.title}</DialogDescription></DialogHeader>
     <Form {...form}><form onSubmit={form.handleSubmit(submit)} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
       <div data-admin-form-scroll className="min-h-0 overflow-y-auto px-6 pb-6">
+        {resourceKey === 'menu' && <div className="mb-5 space-y-2 text-sm text-muted-foreground"><p>Products and meals can have their own stock. A grouped listing such as Cans of Pop has no base price or stock: attach a required choice group containing linked products instead.</p><p>Turn off standalone visibility for products sold only through other listings. Keep them published and allocate their own stock at each event.</p><Link href="/admin/options" className="inline-block text-brand-yellow underline">Manage Standard Modifiers and Linked Product Choices</Link></div>}
+        {resourceKey === 'options' && <div className="mb-5 space-y-2 rounded-lg border border-turquoise/25 bg-turquoise/5 p-4 text-sm"><p>Link a simple menu item to share its stock across drinks listings, meal deals and standalone sales. Its name, description, image and allergens are used automatically.</p><p className="text-muted-foreground">Only products without their own choice groups can be linked. Create the product in Menu Items first. Use a required single-choice group for drinks and sweets.</p>{linkedItem && <p className="font-medium">{String(linkedItem.name)} · {linkedItem.is_published ? 'Published' : 'Draft: unavailable to customers'} · {pricingMode === 'item' ? 'Uses the product price per unit; no extra surcharge' : 'Included in parent price, plus the fixed surcharge below'}</p>}</div>}
         {resourceKey === 'events' && <p className="mb-5 text-sm text-muted-foreground">Pickup uses scheduled slots. Table/car service aims to deliver as soon as possible, with no guaranteed time. Private events remain visible publicly, but ordering requires the secret QR code provided at the event. Download the QR again after changing privacy. Anyone given that QR link can order; it does not verify attendance. Service type cannot change after orders or a pickup schedule exist. Orders Open and Orders Close set your serving window independently of the event dates: accept orders before the event starts, and close earlier or later. Leave either blank to use the corresponding event time.</p>}
+        {resourceKey === 'settings' && <p className="mb-5 text-sm text-muted-foreground">Show Public Menu controls the generic menu page, homepage menu sections and public navigation links. Switching it off does not disable event menus or QR ordering.</p>}
         <fieldset disabled={busy} className="grid min-w-0 gap-5 sm:grid-cols-2">
         {resourceKey === 'modifiers' && <div className="space-y-2 sm:col-span-2"><label htmlFor="modifier-selection-mode" className="text-sm font-medium">Selection Mode</label><Select value={Number(maxSelections) === 1 ? 'single' : 'multiple'} disabled={busy} onValueChange={(mode) => {
           form.setValue('max_selections', mode === 'single' ? 1 : Math.max(2, Number(form.getValues('max_selections'))), { shouldDirty: true });
           if (mode === 'single') form.setValue('min_selections', Math.min(1, Number(form.getValues('min_selections'))), { shouldDirty: true });
         }}><SelectTrigger id="modifier-selection-mode" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="single">Single Choice</SelectItem><SelectItem value="multiple">Multiple Choices</SelectItem></SelectContent></Select></div>}
-        {resource.fields.map((definition) => <FormField key={definition.key} control={form.control} name={definition.key} render={({ field }) => <FormItem data-admin-field={definition.key} className={definition.layout === 'full' || ['textarea', 'richtext', 'image', 'tags', 'groups'].includes(definition.type ?? '') ? 'min-w-0 sm:col-span-2' : definition.layout === 'row-start' ? 'min-w-0 sm:col-start-1' : 'min-w-0'}>
+        {resource.fields.filter((definition) => {
+          if (resourceKey === 'options') {
+            if (linkedId && ['name', 'description', 'image_path', 'image_alt', 'allergens'].includes(definition.key)) return false;
+            if (!linkedId && ['pricing_mode', 'linked_quantity'].includes(definition.key)) return false;
+            if (linkedId && pricingMode === 'item' && definition.key === 'price_pence') return false;
+          }
+          return !(resourceKey === 'menu' && itemKind === 'group' && definition.key === 'price_pence');
+        }).map((definition) => <FormField key={definition.key} control={form.control} name={definition.key} render={({ field }) => <FormItem data-admin-field={definition.key} className={definition.layout === 'full' || ['textarea', 'richtext', 'image', 'tags', 'groups'].includes(definition.type ?? '') ? 'min-w-0 sm:col-span-2' : definition.layout === 'row-start' ? 'min-w-0 sm:col-start-1' : 'min-w-0'}>
           <FormLabel>{definition.label}{definition.required ? ' *' : ''}</FormLabel>
           {definition.type === 'boolean' ? <FormControl><Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={busy} /></FormControl>
             : definition.type === 'groups' ? <ModifierGroupSelection groups={(references.modifier_groups ?? []).filter((group) => group.id !== row?.id)} selected={(field.value as string[]) ?? []} onChange={field.onChange} disabled={busy} />
             : definition.type === 'tags' ? <div className="flex flex-wrap gap-x-5 gap-y-3">{definition.options?.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><Checkbox checked={(field.value as string[]).includes(option)} disabled={busy} onCheckedChange={(checked) => field.onChange(checked ? [...field.value as string[], option] : (field.value as string[]).filter((value) => value !== option))} />{choiceLabel(option)}</label>)}</div>
             : definition.type === 'image' ? <ImageUpload folder={definition.folder!} value={String(field.value ?? '')} onChange={field.onChange} onBusy={setUploading} />
-            : definition.type === 'select' ? <Select value={String(field.value || (definition.nullable ? '__default' : ''))} onValueChange={(value) => field.onChange(value === '__default' ? '' : value)} disabled={busy}><FormControl><SelectTrigger className="w-full"><SelectValue placeholder="Select..." /></SelectTrigger></FormControl><SelectContent>{definition.nullable && <SelectItem value="__default">Default Public Menu</SelectItem>}{definition.reference ? (references[definition.reference] ?? []).map((reference) => <SelectItem key={reference.id} value={reference.id!}>{String(reference.name ?? reference.title ?? reference.id)}</SelectItem>) : definition.options?.map((option) => <SelectItem key={option} value={option}>{choiceLabel(option)}</SelectItem>)}</SelectContent></Select>
+            : definition.type === 'select' ? <Select value={String(field.value || (definition.nullable ? '__default' : ''))} onValueChange={(value) => {
+              const next = value === '__default' ? '' : value;
+              field.onChange(next);
+              if (definition.key === 'item_kind' && next === 'group') form.setValue('price_pence', 0, { shouldDirty: true });
+              if (definition.key === 'pricing_mode' && next === 'item') form.setValue('price_pence', 0, { shouldDirty: true });
+              if (definition.key === 'linked_menu_item_id') {
+                const linked = references.menu_items?.find((item) => item.id === next);
+                if (linked) form.setValue('name', String(linked.name).slice(0, 100), { shouldDirty: true });
+                else { form.setValue('pricing_mode', 'extra'); form.setValue('linked_quantity', 1); }
+              }
+            }} disabled={busy}><FormControl><SelectTrigger className="w-full min-w-0 [&>[data-slot=select-value]]:min-w-0 [&>[data-slot=select-value]]:flex-1 [&>[data-slot=select-value]]:overflow-hidden"><SelectValue placeholder="Select..." /></SelectTrigger></FormControl><SelectContent>{definition.nullable && <SelectItem value="__default">{definition.emptyLabel ?? 'Default Public Menu'}</SelectItem>}{definition.reference ? (references[definition.reference] ?? []).map((reference) => <SelectItem key={reference.id} value={reference.id!}>{String(reference.name ?? reference.title ?? reference.id)}{definition.key === 'linked_menu_item_id' ? ` (${String(reference.slug ?? '')})${reference.is_published ? '' : ' - Draft'}` : ''}</SelectItem>) : definition.options?.map((option) => <SelectItem key={option} value={option}>{definition.optionLabels?.[option] ?? choiceLabel(option)}</SelectItem>)}</SelectContent></Select>
             : definition.type === 'richtext' ? <FormControl><RichTextEditor value={String(field.value ?? '')} onChange={field.onChange} onBlur={field.onBlur} disabled={busy} label={definition.label} maxLength={definition.max} preset={definition.editor} /></FormControl>
             : definition.type === 'textarea' ? <FormControl><Textarea {...field} value={String(field.value ?? '')} rows={4} maxLength={definition.max} /></FormControl>
             : <FormControl><Input {...field} value={String(field.value ?? '')} onChange={(event) => {

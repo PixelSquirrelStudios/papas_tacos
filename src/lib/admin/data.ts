@@ -4,7 +4,7 @@ import { requireAdmin } from '@/lib/auth/session';
 import { createServerSupabase } from '@/lib/supabase/server';
 import { supabaseConfig } from '@/lib/supabase/config';
 import type { AdminRow } from './resources';
-import type { DashboardSnapshot } from './dashboard';
+import { dashboardSnapshotSchema, type DashboardSnapshot } from './dashboard';
 
 export class AdminDataError extends Error {
   constructor(public code: string, message: string) { super(message); }
@@ -51,14 +51,17 @@ export async function getDashboardData(): Promise<DashboardSnapshot> {
   const [orders, menu, events, settings] = await Promise.all([
     adminRows('orders', { select: 'id,order_number,customer_name,status,total_pence,pickup_starts_at,pickup_location', status: 'in.(pending_payment,ordered,preparing,ready_for_pickup)', order: 'pickup_starts_at.asc,id.asc' }),
     adminRows('menu_items', { select: 'id,is_published,is_available', archived_at: 'is.null' }),
-    adminRows('events', { select: 'id,title,starts_at,venue_name', ends_at: `gte.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' }),
-    adminRows('business_settings', { select: 'ordering_status,ordering_message,maintenance_enabled,updated_at', order: 'singleton.asc' }),
+    adminRows('events', { select: 'id,title,starts_at,venue_name,address_line_1,address_line_2,town,postcode', ends_at: `gte.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' }),
+    adminRows('business_settings', { select: 'ordering_status,ordering_message,maintenance_enabled,public_menu_enabled,updated_at', order: 'singleton.asc' }),
   ]);
-  return { orders, menu, events, settings: settings[0] };
+  return dashboardSnapshotSchema.parse({ orders, menu, events, settings: settings[0] });
 }
 
 export function adminError(error: unknown) {
   if (error instanceof AdminDataError) {
+    if (['42703', 'PGRST204'].includes(error.code) && /public_menu_enabled/i.test(error.message)) return 'Public menu visibility requires database upgrade 052_public_menu_visibility.sql. Apply it, then refresh.';
+    if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /linked_menu_item|linked_quantity|pricing_mode|item_kind|show_standalone/i.test(error.message)) return 'Linked product choices require database upgrade 051_linked_menu_items.sql after 050. Apply it during an ordering maintenance window, then refresh.';
+    if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /inventory|event_stock|restock_order/i.test(error.message)) return 'Stock management requires database upgrade 050_inventory.sql after 049. Follow the stock deployment checklist before applying it, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /menu_set|admin_save_menu_set/i.test(error.message)) return 'Menu sets require database upgrade 048_menu_sets.sql after 047. Apply it in supabase/sql, then refresh.';
     if (['42703', 'PGRST202', 'PGRST204'].includes(error.code) && /is_private|admin_event_ordering_key/i.test(error.message)) return 'Private event ordering requires database upgrade 046_private_event_ordering.sql after 045. Apply it in supabase/sql, then refresh.';
     if (['42703', 'PGRST202', 'PGRST204'].includes(error.code) && /service_mode|admin_order_counts/i.test(error.message)) return 'Table/car ordering requires database upgrade 045_table_car_ordering.sql after 044. Apply it in supabase/sql, then refresh.';

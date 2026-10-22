@@ -10,7 +10,7 @@ export type MenuEntry = z.infer<typeof menuEntrySchema>;
 export type MenuSets = { sets: MenuSet[]; sections: MenuSection[]; entries: MenuEntry[] };
 
 export function menuCatalogue(source: Catalogue, menuSetId?: string | null): Catalogue {
-  if (!source.menuSets) return source;
+  if (!source.menuSets) return { ...source, stockItems: source.stockItems ?? source.items, items: source.items.filter((item) => item.show_standalone !== false) };
   const { sets, sections, entries } = source.menuSets;
   const set = menuSetId ? sets.find((set) => set.id === menuSetId) : sets.find((set) => set.is_default);
   if (!set) return { ...source, categories: [], items: [], available: false };
@@ -20,10 +20,10 @@ export function menuCatalogue(source: Catalogue, menuSetId?: string | null): Cat
     .sort((a, b) => a.sort_order - b.sort_order || a.menu_item_id.localeCompare(b.menu_item_id))
     .flatMap((entry) => {
       const item = itemsById.get(entry.menu_item_id);
-      return item ? [{ ...item, category_id: section.id, sort_order: entry.sort_order, price_pence: entry.price_pence ?? item.price_pence }] : [];
+      return item && item.show_standalone !== false ? [{ ...item, category_id: section.id, sort_order: entry.sort_order, price_pence: item.item_kind === 'group' ? 0 : entry.price_pence ?? item.price_pence }] : [];
     }));
   return {
-    ...source, items,
+    ...source, items, stockItems: source.stockItems ?? source.items,
     categories: orderedSections.map((section) => ({ id: section.id, name: section.title, slug: section.id, sort_order: section.sort_order })),
   };
 }

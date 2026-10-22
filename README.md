@@ -19,14 +19,37 @@ view/download paid-order receipts and receive branded pickup-confirmation emails
 See [Stripe setup](docs/STRIPE_SETUP.md) and apply migrations 029-030 before enabling card checkout.
 Cash checkout, ready-for-pickup notifications and live payments remain future work.
 
-The admin overview refreshes its data in the background every 15 seconds while visible and online.
+Admin pages use Supabase Realtime database-change notifications to update visible data
+without a browser reload. Apply [053](supabase/sql/053_admin_realtime.sql) to enable
+all subscribed stock, order, payment and content tables. Notifications are batched;
+the overview reloads its validated snapshot and other admin pages refresh server
+data in place, preserving filters and deferring updates while an edit is open.
 Failed updates leave the last successful dashboard on screen with an explicit stale-data warning;
-updates retry automatically and also resume on reconnection. Data is kept only in memory, not browser storage.
+updates retry on the next change, reconnection or window focus. There is no periodic
+dashboard polling. A disconnected Realtime channel displays a warning and catches
+up when it reconnects. Data is kept only in memory, not browser storage.
 
 Events support pickup, table service and car service. Table/car checkout uses a required location number
 instead of pickup slots, with event QR codes, an outstanding/completed admin queue, and confirmation plus
 completion thank-you emails. Apply SQL upgrade 045 after 044 before using this feature.
 See [table/car ordering setup](docs/STRIPE_SETUP.md#table-and-car-service).
+
+Stock management supports global products with event allocations and event-only
+meal portions, temporary checkout holds, automatic depletion, audited adjustments
+and bulk returns of unused stock. See the [stock setup and operations guide](docs/STOCK_SETUP.md)
+before applying database upgrade 050 or enabling tracking for a live event.
+Database upgrade 051 adds linked product choices: drinks and sweets can be real
+menu items reused inside grouped listings and meal deals, sharing one stock
+balance while optionally hidden from standalone listings. See the same stock
+guide for pricing rules and setup.
+
+Apply database upgrade [052](supabase/sql/052_public_menu_visibility.sql) before deploying
+the public menu visibility controls. **Show Public Menu** is available in **Admin >
+Site Settings** and on the dashboard between Online Ordering and Maintenance.
+Turning it off hides homepage menu sections, the public menu page and its header,
+site-menu and footer links. Event menus and QR ordering remain available with their
+normal access, ordering and stock checks. The default is on; this is a display
+setting, not a privacy restriction on published catalogue data.
 
 Read [the Supabase setup guide](supabase/README.md) before running SQL.
 Your local environment file is excluded from version control. The Stripe listener updates only its webhook signing secret.
@@ -49,6 +72,11 @@ Open the local URL printed by Next.js, normally `http://localhost:3000`.
 Keep that origin consistent throughout login. Production requires an HTTPS `SITE_URL`.
 
 ## Local verification
+
+UI text uses Title Case for headings, labels, buttons, badges, statuses, table
+headings and dropdown options. Keep explanations, warnings and other full
+sentences in sentence case. Preserve saved content, product names, URLs and
+internal identifiers rather than applying automatic capitalisation to them.
 
 With a current Node.js LTS release and npm installed:
 

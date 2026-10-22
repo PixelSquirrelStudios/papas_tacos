@@ -108,7 +108,7 @@ test('menu set editor drags library items into sections and between sections', a
     expect(Math.abs((await preview.boundingBox())!.width - cardBounds.width)).toBeLessThan(2);
     if (await source.getAttribute('aria-label') === 'Reorder Taco') {
       await expect(preview.locator('input')).toHaveValue('12.50');
-      await expect(preview).toContainText('Catalogue price');
+      await expect(preview).toContainText('Catalogue Price');
     } else {
       await expect(preview).toContainText('£8.50');
     }

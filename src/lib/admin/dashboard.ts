@@ -6,7 +6,7 @@ export const dashboardSnapshotSchema = z.object({
   orders: z.array(row),
   menu: z.array(row),
   events: z.array(row),
-  settings: row.optional(),
+  settings: row.extend({ public_menu_enabled: z.boolean(), updated_at: z.string() }).optional(),
 });
 
 export type DashboardSnapshot = z.infer<typeof dashboardSnapshotSchema>;

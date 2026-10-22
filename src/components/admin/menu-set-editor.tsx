@@ -19,6 +19,12 @@ import { notifySiteUpdated } from '@/lib/site-updates';
 type Entry = { itemId: string; price: string };
 type Section = { id: string; title: string; items: Entry[] };
 
+function editableSections(sections: MenuSection[], entries: MenuEntry[]): Section[] {
+  return sections.map((section) => ({
+    id: section.id, title: section.title, items: entries.filter((entry) => entry.section_id === section.id).map((entry) => ({ itemId: entry.menu_item_id, price: entry.price_pence === null ? '' : (entry.price_pence / 100).toFixed(2) })),
+  }));
+}
+
 const menuCollisions: CollisionDetection = (args) => {
   const sectionDrag = String(args.active.id).startsWith('section:');
   const containers = args.droppableContainers.filter((container) => sectionDrag ? String(container.id).startsWith('section:') : container.id !== args.active.id);
@@ -43,7 +49,7 @@ function LibraryItem(props: LibraryProps) {
 function LibraryCard({ item, added, disabled, onAdd, rootProps, handleProps }: LibraryProps & { rootProps?: ComponentProps<'div'>; handleProps?: ComponentProps<typeof Button> }) {
   return <div {...rootProps} className={`flex items-center gap-2 rounded-lg border bg-muted p-2 shadow-sm transition-colors ${added ? 'border-border opacity-50' : 'border-border hover:border-turquoise/50 hover:bg-muted'}`}>
     <Button {...handleProps} variant="ghost" size="icon" aria-label={`Drag ${item.name}`} disabled={added || disabled} className="mr-2 shrink-0 touch-none cursor-grab rounded-md bg-background/60 text-muted-foreground hover:text-turquoise active:cursor-grabbing"><GripVertical /></Button>
-    <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{String(item.name)}</p>{typeof item.slug === 'string' && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.slug}</p>}<p className="mt-1 text-xs text-muted-foreground">{money(Number(item.price_pence))}{!item.is_published ? ' - Unpublished' : !item.is_available ? ' - Sold Out' : ''}</p></div>
+    <div className="min-w-0 flex-1"><p className="break-words text-sm font-medium">{String(item.name)}</p>{typeof item.slug === 'string' && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.slug}</p>}<p className="mt-1 text-xs text-muted-foreground">{item.item_kind === 'group' ? 'Priced by Choices' : money(Number(item.price_pence))}{!item.is_published ? ' - Unpublished' : !item.is_available ? ' - Sold Out' : ''}</p></div>
     <Button variant="ghost" size="icon" aria-label={`Add ${item.name} to section`} disabled={added || disabled} onClick={onAdd} className="shrink-0 text-turquoise hover:bg-turquoise/10"><Plus /></Button>
   </div>;
 }
@@ -56,11 +62,11 @@ function SetItem(props: ItemProps) {
 }
 
 function ItemCard({ entry, item, disabled, onPrice, onRemove, onMove, first, last, rootProps, handleProps }: ItemProps & { rootProps?: ComponentProps<'li'>; handleProps?: ComponentProps<typeof Button> }) {
-  const label = String(item?.name || 'Removed or archived item');
+  const label = String(item?.name || 'Removed or Archived Item');
   return <li {...rootProps} className="flex min-w-0 flex-wrap items-center gap-3 rounded-lg border border-l-4 border-border border-l-turquoise/60 bg-muted p-3 shadow-md shadow-black/10 transition-colors hover:border-turquoise/50 sm:p-4">
     <Button {...handleProps} variant="ghost" size="icon" aria-label={`Reorder ${label}`} disabled={disabled} className="mr-2 shrink-0 touch-none cursor-grab rounded-md border border-border bg-background/70 text-muted-foreground hover:text-turquoise active:cursor-grabbing"><GripVertical /></Button>
-    <div className="min-w-32 flex-1"><p className="break-words text-sm font-semibold">{label}</p>{typeof item?.slug === 'string' && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.slug}</p>}<p className="mt-1 text-xs text-muted-foreground">{item ? `Catalogue price ${money(Number(item.price_pence))}${!item.is_published ? ' - Unpublished' : !item.is_available ? ' - Sold Out' : ''}` : 'Remove this item before saving'}</p></div>
-    <label className="w-44 shrink-0 text-xs text-muted-foreground">Set Price (GBP)<Input aria-label={`Set price for ${label}`} type="number" min="0" max="1000" step="0.01" value={entry.price} placeholder="Use item price" disabled={disabled} onChange={(event) => onPrice?.(event.target.value)} className="mt-1 bg-background/80" /></label>
+    <div className="min-w-32 flex-1"><p className="break-words text-sm font-semibold">{label}</p>{typeof item?.slug === 'string' && <p className="mt-1 break-all font-mono text-xs text-muted-foreground">{item.slug}</p>}<p className="mt-1 text-xs text-muted-foreground">{item ? `${item.item_kind === 'group' ? 'Priced by Choices' : `Catalogue Price ${money(Number(item.price_pence))}`}${!item.is_published ? ' - Unpublished' : !item.is_available ? ' - Sold Out' : ''}` : 'Remove this item before saving'}</p></div>
+    {item?.item_kind === 'group' ? <p className="w-44 text-xs text-muted-foreground">Price Comes from Linked Choices</p> : <label className="w-44 shrink-0 text-xs text-muted-foreground">Set Price (GBP)<Input aria-label={`Set price for ${label}`} type="number" min="0" max="1000" step="0.01" value={entry.price} placeholder="Use Item Price" disabled={disabled} onChange={(event) => onPrice?.(event.target.value)} className="mt-1 bg-background/80" /></label>}
     <div className="flex"><Button variant="ghost" size="icon" aria-label={`Move ${label} up`} disabled={disabled || first} onClick={() => onMove?.(-1)}><ArrowUp /></Button><Button variant="ghost" size="icon" aria-label={`Move ${label} down`} disabled={disabled || last} onClick={() => onMove?.(1)}><ArrowDown /></Button><Button variant="ghost" size="icon" aria-label={`Remove ${label} from set`} disabled={disabled} onClick={onRemove}><Trash2 /></Button></div>
   </li>;
 }
@@ -77,9 +83,7 @@ function SetSection({ section, children, disabled, onTitle, onRemove, onMove, fi
 export function MenuSetEditor({ set, sections: initialSections, entries, items, categories }: { set: MenuSet | null; sections: MenuSection[]; entries: MenuEntry[]; items: AdminRow[]; categories: AdminRow[] }) {
   const router = useRouter();
   const [name, setName] = useState(set?.name || '');
-  const [sections, setSections] = useState<Section[]>(() => initialSections.map((section) => ({
-    id: section.id, title: section.title, items: entries.filter((entry) => entry.section_id === section.id).map((entry) => ({ itemId: entry.menu_item_id, price: entry.price_pence === null ? '' : (entry.price_pence / 100).toFixed(2) })),
-  })));
+  const [sections, setSections] = useState<Section[]>(() => editableSections(initialSections, entries));
   const [baseline, setBaseline] = useState(() => JSON.stringify({ name, sections }));
   const [target, setTarget] = useState(initialSections[0]?.id || '');
   const [search, setSearch] = useState('');
@@ -89,6 +93,16 @@ export function MenuSetEditor({ set, sections: initialSections, entries, items, 
   const [dropTarget, setDropTarget] = useState<{ sectionId: string; index: number } | null>(null);
   const [pending, startTransition] = useTransition();
   const dirty = baseline !== JSON.stringify({ name, sections });
+  const [source, setSource] = useState({ set, initialSections, entries });
+  if ((source.set !== set || source.initialSections !== initialSections || source.entries !== entries) && !dirty && !pending && !active) {
+    const nextName = set?.name || '';
+    const nextSections = editableSections(initialSections, entries);
+    setSource({ set, initialSections, entries });
+    setName(nextName);
+    setSections(nextSections);
+    setBaseline(JSON.stringify({ name: nextName, sections: nextSections }));
+    if (!nextSections.some((section) => section.id === target)) setTarget(nextSections[0]?.id || '');
+  }
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const assigned = new Set(sections.flatMap((section) => section.items.map((entry) => entry.itemId)));
   const byId = new Map(items.map((item) => [item.id!, item]));
@@ -147,7 +161,7 @@ export function MenuSetEditor({ set, sections: initialSections, entries, items, 
     if (invalidPrice) { setError('Use a price between 0 and 1000 GBP with at most two decimal places, or leave it blank to use the item price.'); return; }
     startTransition(async () => {
       try {
-        const result = await saveMenuSet({ id: set?.id || null, updatedAt: set?.updated_at || null, name, sections: sections.map((section) => ({ title: section.title, items: section.items.map((entry) => ({ itemId: entry.itemId, pricePence: entry.price === '' ? null : Math.round(Number(entry.price) * 100) })) })) });
+        const result = await saveMenuSet({ id: set?.id || null, updatedAt: set?.updated_at || null, name, sections: sections.map((section) => ({ title: section.title, items: section.items.map((entry) => ({ itemId: entry.itemId, pricePence: byId.get(entry.itemId)?.item_kind === 'group' || entry.price === '' ? null : Math.round(Number(entry.price) * 100) })) })) });
         if (!result.ok) { setError(result.error || 'Unable to save the menu set.'); return; }
         setBaseline(JSON.stringify({ name, sections }));
         toast.success('Menu Set Saved');
@@ -162,15 +176,15 @@ export function MenuSetEditor({ set, sections: initialSections, entries, items, 
     <h1 className="mb-3 text-3xl font-semibold">{set?.is_default ? 'Default Public Menu' : set ? 'Edit Menu Set' : 'Create Menu Set'}</h1>
     <p className="mb-5 text-sm text-muted-foreground">Custom sections do not change item categories. Blank prices use the current item price; overrides apply only to this set. Unpublished or archived items stay hidden and sold-out items cannot be ordered.</p>
     <label className="mb-5 block max-w-lg text-sm font-medium">Menu Set Name<Input value={name} maxLength={120} disabled={pending} onChange={(event) => setName(event.target.value)} className="mt-2" /></label>
-    <div className="sticky top-16 z-20 mb-5 flex items-center justify-between gap-3 border-y bg-background/95 py-3"><p role="status" className="text-sm text-muted-foreground">{pending ? 'Saving...' : dirty ? 'Unsaved Changes' : 'Saved'}</p><Button onClick={save} disabled={pending || Boolean(active) || (!dirty && Boolean(set))}><Save />Save Menu Set</Button></div>
+    <div className="sticky top-20 z-20 mb-5 flex items-center justify-between gap-3 border-y bg-background/95 py-3"><p role="status" className="text-sm text-muted-foreground">{pending ? 'Saving...' : dirty ? 'Unsaved Changes' : 'Saved'}</p><Button onClick={save} disabled={pending || Boolean(active) || (!dirty && Boolean(set))}><Save />Save Menu Set</Button></div>
     {error && <p role="alert" className="mb-5 rounded-md border border-destructive/40 p-4 text-sm text-destructive">{error}</p>}
     <DndContext sensors={sensors} collisionDetection={menuCollisions} onDragStart={({ active }) => { setActive(String(active.id)); setDragWidth(active.rect.current.initial?.width); setDropTarget(null); }} onDragMove={(event) => setDropTarget(destinationFor(event))} onDragOver={(event) => setDropTarget(destinationFor(event))} onDragEnd={finishDrag} onDragCancel={() => { setActive(null); setDropTarget(null); }}>
       <div className="grid min-w-0 gap-6 lg:grid-cols-[360px_minmax(0,1fr)]">
         <aside aria-label="Menu Item Library" className="max-h-[50vh] min-w-0 self-start overflow-y-auto rounded-lg border bg-card p-4 lg:sticky lg:top-36 lg:max-h-[70vh]">
-          <h2 className="mb-3 text-lg font-semibold">All Menu Items</h2><Input aria-label="Search Menu Items" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search items..." className="mb-3" />
-          <label className="mb-4 block text-sm">Add items to<select aria-label="Target Section" value={sections.some((section) => section.id === target) ? target : ''} onChange={(event) => setTarget(event.target.value)} className="mt-2 h-11 w-full rounded-md border bg-background px-2"><option value="">Choose a section</option>{sections.map((section) => <option key={section.id} value={section.id}>{section.title || 'Untitled Section'}</option>)}</select></label>
+          <h2 className="mb-3 text-lg font-semibold">All Menu Items</h2><Input aria-label="Search Menu Items" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search Items..." className="mb-3" />
+          <label className="mb-4 block text-sm">Add Items to<select aria-label="Target Section" value={sections.some((section) => section.id === target) ? target : ''} onChange={(event) => setTarget(event.target.value)} className="mt-2 h-11 w-full rounded-md border bg-background px-2"><option value="">Choose a Section</option>{sections.map((section) => <option key={section.id} value={section.id}>{section.title || 'Untitled Section'}</option>)}</select></label>
           {categories.map((category) => {
-            const filtered = items.filter((item) => item.category_id === category.id && `${item.name} ${item.slug ?? ''}`.toLowerCase().includes(search.toLowerCase()));
+            const filtered = items.filter((item) => item.show_standalone !== false && item.category_id === category.id && `${item.name} ${item.slug ?? ''}`.toLowerCase().includes(search.toLowerCase()));
             return filtered.length ? <section key={category.id} className="mb-5"><h3 className="mb-2 text-sm font-semibold text-brand-yellow">{String(category.name)}</h3><div className="space-y-2">{filtered.map((item) => <LibraryItem key={item.id} item={item} added={assigned.has(item.id!)} disabled={pending} onAdd={() => addItem(item.id!)} />)}</div></section> : null;
           })}
         </aside>

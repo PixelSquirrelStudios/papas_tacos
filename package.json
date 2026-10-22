@@ -13,7 +13,7 @@
     "test:auth": "node --test tests/auth.test.mjs",
     "test:account": "node --test tests/account.test.mjs",
     "test:bag": "node --test tests/bag.test.mjs",
-    "test:db": "node --test tests/database.test.mjs",
+    "test:db": "node --test tests/database.test.mjs tests/inventory.test.mjs tests/linked-items.test.mjs",
     "test:payments": "node --test tests/payments.test.mjs",
     "stripe:listen": "node scripts/stripe-listen.mjs"
   },

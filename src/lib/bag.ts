@@ -37,9 +37,11 @@ export function mergeLine(lines: BagLine[], incoming: BagLine): BagLine[] {
 
 export function quoteLine(line: BagLine, items: CatalogueItem[]) {
   const item = items.find((candidate) => candidate.id === line.itemId);
-  if (!item) return { item: null, options: [], total: 0, issue: 'This item is no longer on the menu.' };
+  if (!item || item.show_standalone === false) return { item: null, options: [], total: 0, issue: 'This item is no longer on the menu.' };
   const options = item.groups.flatMap((group) => group.options).filter((option) => line.optionIds.includes(option.id));
   let issue = item.is_available ? '' : 'This item is sold out.';
+  if (item.item_kind === 'group' && !item.groups.some((group) => group.min_selections > 0)) issue = 'This listing has no required product choices. Please choose another item.';
+  if (item.item_kind === 'group' && !options.some((option) => option.linked_menu_item_id)) issue = 'Choose a linked product for this listing.';
   if (options.length !== line.optionIds.length || options.some((option) => !option.is_available)) issue = 'One or more extras are unavailable. Please edit this item.';
   for (const group of item.groups) {
     const count = options.filter((option) => option.modifier_group_id === group.id).length;

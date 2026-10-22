@@ -20,7 +20,7 @@ export function MaintenancePage({ settings }: { settings: Settings | null }) {
       <div className="page-width relative py-14 sm:py-20">
         <div className="hero-copy mx-auto flex max-w-2xl flex-col items-center text-center">
           <Image src="/images/Papas_Tacos_Logo_Horizontal.svg" alt="Papa's Tacos" width={1110} height={290} priority unoptimized className="mb-8 h-auto w-64 max-w-full sm:w-80" />
-          <p className="eyebrow text-turquoise">Temporarily down for maintenance</p>
+          <p className="eyebrow text-turquoise">Temporarily Down for Maintenance</p>
           <h1 className="font-display text-5xl uppercase leading-tight sm:text-7xl">Papa&apos;s Tacos</h1>
           <h2 className="mt-3 font-display text-4xl uppercase leading-tight text-primary sm:text-6xl">Back online soon.</h2>
           <p className="mt-6 max-w-md text-base leading-relaxed text-foreground/80">We&apos;re giving our website a little attention. In the meantime, we&apos;re still here for your event enquiries and taco plans.</p>
@@ -39,7 +39,7 @@ export function MaintenancePage({ settings }: { settings: Settings | null }) {
           {email && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) && <a href={`mailto:${email}`} className="flex min-h-11 max-w-full items-center gap-3 text-sm hover:text-brand-yellow"><Mail className="size-4 shrink-0 text-brand-yellow" aria-hidden="true" /><span className="min-w-0 break-all">{email}</span></a>}
           {phone && /^[+\d\s()\-]+$/.test(phone) && <a href={`tel:${phone.replace(/[^+\d]/g, '')}`} className="flex min-h-11 max-w-full items-center gap-3 text-sm hover:text-brand-yellow"><Phone className="size-4 shrink-0 text-brand-yellow" aria-hidden="true" /><span className="min-w-0 break-words">{phone}</span></a>}
         </section>
-        {(httpsLink(settings?.instagram_url) || httpsLink(settings?.facebook_url)) && <section aria-label="Follow Papa's Tacos"><h2 className="mb-4 text-xs font-bold uppercase text-brand-yellow">Follow the flavour</h2><SocialLinks settings={settings} /></section>}
+        {(httpsLink(settings?.instagram_url) || httpsLink(settings?.facebook_url)) && <section aria-label="Follow Papa's Tacos"><h2 className="mb-4 text-xs font-bold uppercase text-brand-yellow">Follow the Flavour</h2><SocialLinks settings={settings} /></section>}
       </div>
       <div className="border-t border-border"><div className="page-width py-5"><p className="text-xs text-muted-foreground">&copy; {new Date().getFullYear()} Papa&apos;s Tacos. All Rights Reserved.</p></div></div>
     </footer>

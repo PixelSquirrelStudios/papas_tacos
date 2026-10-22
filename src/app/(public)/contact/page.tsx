@@ -5,7 +5,7 @@ import { getSettings } from '@/lib/catalogue/data';
 
 export const metadata: Metadata = {
   title: 'Contact',
-  description: "Enquire about booking Papa's Tacos for weddings, parties, corporate events and private occasions.",
+  description: "Enquire About Booking Papa's Tacos for weddings, parties, corporate events and private occasions.",
 };
 
 export default async function ContactPage() {

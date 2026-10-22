@@ -13,6 +13,7 @@ import { ItemPicker, QuantityControl } from './item-picker';
 import { EventSelection } from './event-selection';
 import { lineKey, money, quoteLine, type BagLine } from '@/lib/bag';
 import { eventMenuLink } from '@/lib/service-ordering';
+import { bagStockIssue } from '@/lib/inventory';
 
 function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
   if (!quote.item || !quote.options.length) return null;
@@ -29,7 +30,7 @@ function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
             <dt className="mb-2 text-xs font-semibold text-muted-foreground wrap-break-word">{group.id === root.id ? (/ filling$/i.test(root.label || root.name) ? 'Filling' : 'Choices') : group.name.slice(root.name.length + 3)}</dt>
             <dd className="flex min-w-0 flex-wrap gap-2">{quote.options.filter((option) => option.modifier_group_id === group.id).map((option) => <Badge key={option.id} variant="outline" className={`max-w-full flex-wrap justify-start gap-x-2 gap-y-1 rounded-md px-2.5 py-1.5 text-sm whitespace-normal ${option.is_available ? 'border-turquoise/25 bg-turquoise/5' : 'border-primary/30 bg-primary/5 text-muted-foreground'}`}>
               <span className="min-w-0 wrap-anywhere">{option.name}</span>
-              {option.price_pence > 0 && <span className="tabular-nums text-muted-foreground">+{money(option.price_pence)}</span>}
+              {option.price_pence > 0 && <span className="tabular-nums text-muted-foreground">{quote.item?.item_kind === 'group' && option.linked_menu_item_id && option.pricing_mode === 'item' ? '' : '+'}{money(option.price_pence)}</span>}
               {!option.is_available && <span className="font-semibold text-primary">Sold Out</span>}
             </Badge>)}</dd>
           </div>)}
@@ -40,15 +41,23 @@ function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
 }
 
 export function BagView() {
-  const { lines, ready, storageError, catalogue, settings, orderingOpen, collectionEvents, selectedEventId, remove, setQuantity } = useBag();
+  const { lines, ready, storageError, catalogue, stockAvailable, settings, orderingOpen, collectionEvents, selectedEventId, remove, setQuantity } = useBag();
   const menuLink = selectedEventId ? eventMenuLink(selectedEventId) : '/menu';
   const [editing, setEditing] = useState<BagLine | null>(null);
   const quotes = lines.map((line) => ({ line, quote: quoteLine(line, catalogue.items) }));
+  const sections = new Map<string, typeof quotes>();
+  for (const entry of quotes) {
+    const key = entry.quote.item?.item_kind === 'group' ? entry.line.itemId : lineKey(entry.line);
+    const section = sections.get(key);
+    if (section) section.push(entry);
+    else sections.set(key, [entry]);
+  }
   const subtotal = quotes.reduce((total, { quote }) => total + quote.total, 0);
   const fees = settings ? settings.service_fee_pence + settings.packaging_fee_pence : 0;
   const itemCount = lines.reduce((total, line) => total + line.quantity, 0);
   const pricesAvailable = catalogue.available && quotes.every(({ line, quote }) => quote.item && quote.options.length === line.optionIds.length);
-  const needsReview = catalogue.available && quotes.some(({ quote }) => quote.issue);
+  const stockIssue = bagStockIssue(lines, catalogue);
+  const needsReview = catalogue.available && (quotes.some(({ quote }) => quote.issue) || Boolean(stockIssue));
   const minimumRemaining = settings && pricesAvailable ? Math.max(0, settings.minimum_order_pence - subtotal) : 0;
   const editedItem = editing ? catalogue.items.find((item) => item.id === editing.itemId) : null;
   if (!ready) return <div role="status" aria-label="Loading Your Bag" className="grid gap-10 py-6 lg:grid-cols-[minmax(0,1fr)_360px]"><div className="space-y-6">{[0, 1].map((index) => <div key={index} className="flex gap-4 border-b pb-6"><Skeleton className="size-24 shrink-0 rounded-lg" /><div className="flex-1 space-y-4"><Skeleton className="h-5 w-2/3" /><Skeleton className="h-4 w-full" /><Skeleton className="h-10 w-28" /></div></div>)}</div><Skeleton className="h-64 w-full rounded-lg" /><span className="sr-only">Loading your bag...</span></div>;
@@ -57,25 +66,56 @@ export function BagView() {
     <EventSelection />
     {storageError && <p role="alert" className="mb-6 border-l-2 border-primary bg-primary/5 p-4 text-sm">Your browser cannot save this bag. Keep this page open to retain your items.</p>}
     {!catalogue.available && <p role="alert" className="mb-6 border-l-2 border-primary bg-primary/5 p-4 text-sm">We cannot check menu prices right now. Your saved items have been kept.</p>}
+    {!stockAvailable && <p role="status" className="mb-6 border-l-2 border-primary bg-primary/5 p-4 text-sm">Stock availability is being checked or is temporarily unavailable. Your saved items have been kept.</p>}
+    {stockIssue && <p role="alert" className="mb-6 border-l-2 border-primary bg-primary/5 p-4 text-sm">{stockIssue}</p>}
     <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px] lg:gap-12">
       <section aria-labelledby="bag-items-title" className="min-w-0">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b pb-5"><h2 id="bag-items-title" className="flex items-center gap-2 text-lg font-semibold"><ShoppingBag className="size-5 text-turquoise" aria-hidden="true" />Your Items<span className="ml-1 text-sm font-normal text-muted-foreground" aria-live="polite">({itemCount})</span></h2><Link href={menuLink} className="flex min-h-11 items-center gap-1.5 rounded-md px-3 text-sm font-medium text-brand-yellow transition-colors duration-200 hover:bg-white/5"><Plus className="size-4" aria-hidden="true" />Add More</Link></div>
-        {quotes.map(({ line, quote }) => <article key={lineKey(line)} className="min-w-0 border-b border-border py-6">
+        {[...sections.entries()].map(([key, entries]) => {
+          const { line, quote } = entries[0];
+          if (quote.item?.item_kind === 'group') {
+            const sectionPricesAvailable = catalogue.available && entries.every((entry) => entry.quote.options.length === entry.line.optionIds.length);
+            return <article key={key} aria-label={quote.item.name} className="min-w-0 border-b border-border py-6">
+              <div className="mb-4 flex flex-wrap items-start justify-between gap-3"><h3 className="text-lg font-semibold">{quote.item.name}</h3><strong className="text-lg tabular-nums" aria-label={`${quote.item.name} total`}>{sectionPricesAvailable ? money(entries.reduce((sum, entry) => sum + entry.quote.total, 0)) : '--'}</strong></div>
+              <div className="divide-y divide-border rounded-lg border border-border px-4">
+                {entries.map(({ line: selection, quote: selected }) => {
+                  const label = selected.options.map((option) => `${option.name}${(option.linked_quantity ?? 1) > 1 ? ` (×${option.linked_quantity})` : ''}`).join(' / ') || 'Review Saved Choices';
+                  const image = selected.options.find((option) => option.imageUrl)?.imageUrl;
+                  const priceAvailable = catalogue.available && selected.options.length === selection.optionIds.length;
+                  return <div key={lineKey(selection)} role="group" aria-label={label} className="space-y-3 py-4">
+                    <div className="flex items-start gap-3">
+                      {image && <Image src={image} alt="" width={48} height={48} unoptimized className="size-12 shrink-0 rounded-md object-cover" />}
+                      <div className="min-w-0 flex-1"><h4 className="wrap-anywhere font-semibold">{label}</h4><p className="mt-1 text-xs text-muted-foreground">{priceAvailable ? `${money(selected.total / selection.quantity)} each` : 'Price Unavailable'}</p></div>
+                      <strong className="tabular-nums">{priceAvailable ? money(selected.total) : '--'}</strong>
+                    </div>
+                    <FoodBadges allergens={[...new Set([...(selected.item?.allergens ?? []), ...selected.options.flatMap((option) => option.allergens)])]} />
+                    {catalogue.available && selected.issue && <p role="status" className="text-sm text-destructive">{selected.issue}</p>}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <QuantityControl value={selection.quantity} onChange={(quantity) => setQuantity(lineKey(selection), quantity)} label={label} />
+                      <div className="flex gap-2"><Button variant="ghost" className="h-11" aria-label={`Edit ${label}`} disabled={!catalogue.available} onClick={() => setEditing(selection)}><Pencil className="size-4" />Edit</Button><Button variant="ghost" size="icon" className="size-11" aria-label={`Remove ${label}`} onClick={() => remove(lineKey(selection))}><Trash2 className="size-4" /></Button></div>
+                    </div>
+                  </div>;
+                })}
+              </div>
+            </article>;
+          }
+          return <article key={key} className="min-w-0 border-b border-border py-6">
           <div className="grid grid-cols-[80px_minmax(0,1fr)] gap-4 sm:grid-cols-[120px_minmax(0,1fr)] sm:gap-5">
             <div className="relative aspect-square self-start overflow-hidden rounded-lg border-2 border-brand-yellow bg-muted">{quote.item?.imageUrl ? <Image src={quote.item.imageUrl} alt={quote.item.image_alt || quote.item.name} fill unoptimized sizes="(max-width: 640px) 80px, 120px" className="object-cover" /> : <div className="grid h-full place-items-center"><UtensilsCrossed className="size-8 text-muted-foreground" aria-label="Item Image Unavailable" /></div>}</div>
             <div className="min-w-0"><div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1"><h3 className="min-w-0 break-words text-lg font-semibold leading-snug">{quote.item?.name || 'Saved Menu Item'}</h3><strong className="text-lg tabular-nums">{catalogue.available && quote.item && quote.options.length === line.optionIds.length ? money(quote.total) : '--'}</strong></div>
-              {catalogue.available && quote.item && <p className="mt-1 text-xs text-muted-foreground">{money(quote.item.price_pence)} each before extras</p>}
+              {catalogue.available && quote.item && quote.options.length === line.optionIds.length && <p className="mt-1 text-xs text-muted-foreground">{money(quote.item.price_pence)} each before extras</p>}
             </div>
             <SelectedChoices quote={quote} />
             {quote.item && <div className="col-span-2"><FoodBadges grouped category={catalogue.categories.find((category) => category.id === quote.item?.category_id)?.name} dietary={quote.item.dietary_tags} allergens={[...new Set([...quote.item.allergens, ...quote.options.flatMap((option) => option.allergens)])]} /></div>}
           </div>
           {catalogue.available && quote.issue && <p role="status" className="mt-4 flex items-start gap-2 border-l-2 border-primary bg-primary/5 p-3 text-sm"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" />{quote.issue}</p>}
           <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><QuantityControl value={line.quantity} onChange={(quantity) => setQuantity(lineKey(line), quantity)} label={quote.item?.name || 'item'} /><div className="flex items-center gap-2"><Button variant="ghost" className="h-11 bg-accent/50 px-2 duration-200 hover:bg-accent/70 hover:text-foreground dark:hover:bg-accent/70 sm:px-3" aria-label={`Edit ${quote.item?.name || 'item'}`} disabled={!quote.item || !catalogue.available} onClick={() => setEditing(line)}><Pencil className="size-4" />Edit</Button><Button variant="ghost" size="icon" className="size-11 bg-accent/50 text-muted-foreground hover:text-destructive" aria-label={`Remove ${quote.item?.name || 'item'}`} title="Remove Item" onClick={() => remove(lineKey(line))}><Trash2 className="size-4" /></Button></div></div>
-        </article>)}
+        </article>;
+        })}
       </section>
       <aside aria-labelledby="bag-summary-title" className="min-w-0 self-start border-t border-border pt-6 lg:sticky lg:top-[121px] lg:border-l lg:border-t-0 lg:pl-8 lg:pt-0">
         <h2 id="bag-summary-title" className="mb-6 flex items-center gap-2 text-xl font-semibold"><ReceiptText className="size-5 text-turquoise" aria-hidden="true" />Order Summary</h2>
-        <div className="mb-6 flex items-start gap-3 border-y py-4"><MapPin className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Event Ordering</p>{collectionEvents.map((event) => <p key={event.id} className="mt-2 text-sm text-muted-foreground wrap-anywhere">{event.title} / {event.service_mode === 'table' ? 'Table delivery' : event.service_mode === 'car' ? 'Car delivery' : 'Collection from the Truck'}</p>)}<Link href="/events" className="mt-1 inline-flex min-h-9 items-center gap-1 text-sm text-brand-yellow">Find the Truck<ArrowRight className="size-3.5" aria-hidden="true" /></Link></div></div>
+        <div className="mb-6 flex items-start gap-3 border-y py-4"><MapPin className="mt-0.5 size-5 shrink-0 text-primary" aria-hidden="true" /><div className="min-w-0 flex-1"><p className="text-sm font-semibold">Event Ordering</p>{collectionEvents.map((event) => <p key={event.id} className="mt-2 text-sm text-muted-foreground wrap-anywhere">{event.title} / {event.service_mode === 'table' ? 'Table Delivery' : event.service_mode === 'car' ? 'Car Delivery' : 'Collection from the Truck'}</p>)}<Link href="/events" className="mt-1 inline-flex min-h-9 items-center gap-1 text-sm text-brand-yellow">Find the Truck<ArrowRight className="size-3.5" aria-hidden="true" /></Link></div></div>
         <dl className="space-y-4 text-sm"><div className="flex justify-between gap-3"><dt className="text-muted-foreground">Items and Extras</dt><dd className="font-medium tabular-nums">{pricesAvailable ? money(subtotal) : '--'}</dd></div>{settings && settings.service_fee_pence > 0 && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Service Fee</dt><dd className="tabular-nums">{money(settings.service_fee_pence)}</dd></div>}{settings && settings.packaging_fee_pence > 0 && <div className="flex justify-between gap-3"><dt className="text-muted-foreground">Packaging</dt><dd className="tabular-nums">{money(settings.packaging_fee_pence)}</dd></div>}<div className="flex flex-wrap justify-between gap-3 border-t border-border pt-5 text-lg font-semibold"><dt>Estimated Total</dt><dd className="text-2xl text-brand-yellow tabular-nums">{pricesAvailable && settings ? money(subtotal + fees) : '--'}</dd></div></dl>
         {minimumRemaining > 0 && <p className="mt-4 flex items-start gap-2 rounded-md border border-brand-yellow/25 bg-brand-yellow/5 p-3 text-sm text-brand-yellow"><Info className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Add {money(minimumRemaining)} more to reach the {money(settings!.minimum_order_pence)} minimum food order.</span></p>}
         {needsReview && <p role="status" className="mt-4 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm text-primary"><CircleAlert className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><span>Review the highlighted items before ordering.</span></p>}

@@ -4,7 +4,7 @@ import { useFormStatus } from 'react-dom';
 import { LoaderCircle, LogOut } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
-export function SubmitButton({ children, pendingText = 'Please wait...', className, disabled, variant = 'default' }: {
+export function SubmitButton({ children, pendingText = 'Please Wait...', className, disabled, variant = 'default' }: {
   children: React.ReactNode;
   pendingText?: string;
   className?: string;

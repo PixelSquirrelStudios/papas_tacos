@@ -5,6 +5,125 @@ import { canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, pub
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
 import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
+import { applyStock, bagStockIssue, heldQuantity, inventoryActionSchema, publicStockSchema, maximumLineQuantity } from '../src/lib/inventory.ts';
+import { resolveLinkedItems, minimumItemPrice } from '../src/lib/catalogue/linked-items.ts';
+import { menuCatalogue } from '../src/lib/catalogue/menu-sets.ts';
+
+function linkedCatalogue() {
+  const product = { id: 'fanta', name: 'Fanta Orange', price_pence: 200, is_available: true, show_standalone: false, item_kind: 'product', description: 'Orange drink', image_path: 'fanta.jpg', image_alt: 'Fanta', imageUrl: '/fanta.jpg', allergens: ['milk'], groups: [] };
+  const parent = { id: 'pop', name: 'Cans of Pop', price_pence: 0, is_available: true, item_kind: 'group', groups: [{
+    id: 'drinks', name: 'Choose a drink', min_selections: 1, max_selections: 1,
+    options: [{ id: 'choice', name: 'Old label', price_pence: 0, is_available: true, allergens: [], linked_menu_item_id: 'fanta', linked_quantity: 1, pricing_mode: 'item' }],
+  }] };
+  return { available: true, categories: [], items: [parent, product] };
+}
+
+test('linked product choices inherit canonical details and price without creating duplicate menu cards', () => {
+  const raw = linkedCatalogue();
+  const items = resolveLinkedItems(raw.items);
+  const option = items[0].groups[0].options[0];
+  assert.equal(option.name, 'Fanta Orange');
+  assert.equal(option.description, 'Orange drink');
+  assert.equal(option.imageUrl, '/fanta.jpg');
+  assert.deepEqual(option.allergens, ['milk']);
+  assert.equal(option.price_pence, 200);
+  const menu = menuCatalogue({ ...raw, items });
+  assert.deepEqual(menu.items.map((item) => item.id), ['pop']);
+  assert.equal(menu.stockItems.length, 2);
+  assert.equal(minimumItemPrice(menu.items[0]), 200);
+  assert.equal(quoteLine({ itemId: 'pop', optionIds: ['choice'], quantity: 2 }, menu.items).total, 400);
+  assert.equal(raw.items[0].groups[0].options[0].name, 'Old label');
+});
+
+test('linked pricing supports included fixed surcharges and per-unit product pricing', () => {
+  const raw = linkedCatalogue();
+  const choice = raw.items[0].groups[0].options[0];
+  choice.linked_quantity = 2;
+  assert.equal(resolveLinkedItems(raw.items)[0].groups[0].options[0].price_pence, 400);
+  choice.pricing_mode = 'extra';
+  choice.price_pence = 50;
+  assert.equal(resolveLinkedItems(raw.items)[0].groups[0].options[0].price_pence, 50);
+  choice.price_pence = 0;
+  assert.equal(resolveLinkedItems(raw.items)[0].groups[0].options[0].price_pence, 0);
+});
+
+test('shared product demand combines standalone sales, multiple parents and repeated group paths', () => {
+  const raw = linkedCatalogue();
+  raw.items[1].show_standalone = true;
+  const meal = structuredClone(raw.items[0]);
+  Object.assign(meal, { id: 'meal', name: 'Meal', item_kind: 'product', price_pence: 800 });
+  meal.groups[0].options[0].id = 'meal-drink';
+  const catalogue = applyStock({ ...raw, items: resolveLinkedItems([...raw.items, meal]) }, [
+    { menu_item_id: 'pop', tracking_mode: 'none', available_quantity: null },
+    { menu_item_id: 'meal', tracking_mode: 'event', available_quantity: 10 },
+    { menu_item_id: 'fanta', tracking_mode: 'global', available_quantity: 3 },
+  ]);
+  const lines = [
+    { itemId: 'fanta', optionIds: [], quantity: 1 },
+    { itemId: 'pop', optionIds: ['choice'], quantity: 1 },
+    { itemId: 'meal', optionIds: ['meal-drink'], quantity: 2 },
+  ];
+  assert.match(bagStockIssue(lines, catalogue), /Fanta Orange: only 3/);
+  assert.equal(maximumLineQuantity(lines[2], lines.slice(0, 2), catalogue), 1);
+  assert.equal(bagStockIssue([...lines.slice(0, 2), { ...lines[2], quantity: 1 }], catalogue), '');
+});
+
+test('linked sold-out choices and unavailable required groups prevent ordering while unrelated products remain available', () => {
+  const raw = linkedCatalogue();
+  const menu = applyStock({ ...raw, items: resolveLinkedItems(raw.items) }, [
+    { menu_item_id: 'pop', tracking_mode: 'none', available_quantity: null },
+    { menu_item_id: 'fanta', tracking_mode: 'global', available_quantity: 0 },
+  ]);
+  assert.equal(menu.items[0].groups[0].options[0].is_available, false);
+  assert.equal(menu.items[0].is_available, false);
+  const missing = resolveLinkedItems([raw.items[0]]);
+  assert.equal(missing[0].groups[0].options[0].is_available, false);
+  raw.items[1].groups = [{ id: 'extras', options: [] }];
+  assert.equal(resolveLinkedItems(raw.items)[0].groups[0].options[0].is_available, false);
+});
+
+test('stock availability preserves manual controls and fails closed for missing item records', () => {
+  const catalogue = { available: true, categories: [], items: [
+    { id: 'one', name: 'Sweets', is_available: true },
+    { id: 'two', name: 'Coke', is_available: false },
+    { id: 'three', name: 'Tacos', is_available: true },
+    { id: 'four', name: 'Missing', is_available: true },
+  ] };
+  const applied = applyStock(catalogue, [
+    { menu_item_id: 'one', tracking_mode: 'global', available_quantity: 0 },
+    { menu_item_id: 'two', tracking_mode: 'none', available_quantity: null },
+    { menu_item_id: 'three', tracking_mode: 'event', available_quantity: 8 },
+  ]);
+  assert.deepEqual(applied.items.map((item) => item.is_available), [false, false, true, false]);
+  assert.deepEqual(applied.items.map((item) => item.stock_quantity), [0, null, 8, null]);
+  assert.equal(catalogue.items[0].is_available, true);
+});
+
+test('bag stock checks aggregate different modifier choices of the same menu item', () => {
+  const catalogue = { available: true, categories: [], items: [{ id: 'taco', name: 'Tacos', stock_quantity: 3 }] };
+  const lines = [{ itemId: 'taco', optionIds: ['chicken'], quantity: 2 }, { itemId: 'taco', optionIds: ['beef'], quantity: 2 }];
+  assert.match(bagStockIssue(lines, catalogue), /only 3.*across your choices/);
+  assert.equal(bagStockIssue([{ ...lines[0], quantity: 1 }, lines[1]], catalogue), '');
+  assert.equal(bagStockIssue(lines, { ...catalogue, items: [{ ...catalogue.items[0], stock_quantity: null }] }), '');
+});
+
+test('checkout hold totals exclude expired, sold and unrelated event quantities', () => {
+  const now = Date.parse('2026-10-22T12:00:00Z');
+  const held = { menu_item_id: 'taco', event_id: 'market', quantity: 2, state: 'held', expires_at: '2026-10-22T12:01:00Z' };
+  const rows = [held, { ...held, expires_at: '2026-10-22T12:00:00Z' }, { ...held, state: 'sold' }, { ...held, event_id: 'cinema' }];
+  assert.equal(heldQuantity(rows, 'taco', 'market', now), 2);
+  assert.equal(heldQuantity(rows, 'taco', undefined, now), 4);
+});
+
+test('stock payloads reject negative, fractional, oversized or unaudited admin changes', () => {
+  const id = '00000000-0000-4000-8000-000000000001';
+  const input = { itemId: id, eventId: null, action: 'receive', quantity: 40, expectedVersion: 0, reason: 'Opening stock', trackingMode: null, unitLabel: null, requestId: id };
+  assert.equal(inventoryActionSchema.safeParse(input).success, true);
+  for (const quantity of [-1, 1.5, 1000001, NaN, Infinity]) assert.equal(inventoryActionSchema.safeParse({ ...input, quantity }).success, false);
+  assert.equal(inventoryActionSchema.safeParse({ ...input, reason: '  ' }).success, false);
+  assert.equal(inventoryActionSchema.safeParse({ ...input, expectedVersion: -1 }).success, false);
+  assert.equal(publicStockSchema.safeParse([{ menu_item_id: id, tracking_mode: 'global', available_quantity: -1 }]).success, false);
+});
 
 test('menu descriptions preserve paragraphs and formatting while stripping unsafe HTML', () => {
   assert.equal(descriptionHtml('Fresh & spicy\nWith salsa\n\nMade daily.'), '<p>Fresh &amp; spicy<br />With salsa</p><p>Made daily.</p>');
@@ -97,7 +216,7 @@ test('ordering status is independent of maintenance access and still respects ev
   const settings = { ordering_status: 'open', maintenance_enabled: true };
   const event = { pickup_enabled: true, ordering_status: 'open', starts_at: '2026-09-26T09:00:00Z', ends_at: '2026-09-26T18:00:00Z', orders_open_at: null, orders_close_at: null };
   assert.equal(canOrder([event], settings, now), true);
-  assert.equal(pickupState(event, settings, now), 'Pickup enabled for this event');
+  assert.equal(pickupState(event, settings, now), 'Pickup Enabled for This Event');
   for (const ordering_status of ['closed', 'paused']) {
     assert.equal(canOrder([event], { ...settings, ordering_status }, now), false);
     assert.equal(canOrder([{ ...event, ordering_status }], settings, now), false);
@@ -113,8 +232,8 @@ test('service ordering explains exactly when orders open without overriding clos
   const event = { service_mode: 'car', pickup_enabled: true, ordering_status: 'open', starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-25T21:00:00Z', orders_open_at: '2030-09-25T16:00:00Z', orders_close_at: null };
   assert.equal(pickupState(event, { ordering_status: 'open' }, now), 'Ordering is not open yet. You can place car delivery orders from 17:00 on Wed, 25 September 2030.');
   assert.equal(pickupState({ ...event, service_mode: 'table' }, { ordering_status: 'open' }, now), 'Ordering is not open yet. You can place table delivery orders from 17:00 on Wed, 25 September 2030.');
-  assert.equal(pickupState(event, { ordering_status: 'closed' }, now), 'Car service orders closed');
-  assert.equal(pickupState(event, { ordering_status: 'paused' }, now), 'Car service orders paused');
+  assert.equal(pickupState(event, { ordering_status: 'closed' }, now), 'Car Service Orders Closed');
+  assert.equal(pickupState(event, { ordering_status: 'paused' }, now), 'Car Service Orders Paused');
 });
 
 test('nested groups keep reused options independent, priced and required per path', () => {
@@ -184,11 +303,11 @@ test('bag uses current prices and validates required or removed extras', () => {
 test('event pickup messages follow global and event switches and London daylight saving', () => {
   const now = Date.parse('2026-09-15T12:00:00Z');
   const event = { pickup_enabled: true, ordering_status: 'open', ends_at: '2026-09-15T18:00:00Z', orders_open_at: null, orders_close_at: null };
-  assert.equal(pickupState(event, null, now), 'Pickup orders closed');
-  assert.equal(pickupState(event, { ordering_status: 'paused' }, now), 'Pickup orders paused');
-  assert.equal(pickupState({ ...event, pickup_enabled: false }, { ordering_status: 'open' }, now), 'No pickup orders at this event');
-  assert.equal(pickupState(event, { ordering_status: 'open' }, now), 'Pickup enabled for this event');
-  assert.equal(pickupState({ ...event, orders_close_at: '2026-09-15T11:00:00Z' }, { ordering_status: 'open' }, now), 'Pickup orders ended');
+  assert.equal(pickupState(event, null, now), 'Pickup Orders Closed');
+  assert.equal(pickupState(event, { ordering_status: 'paused' }, now), 'Pickup Orders Paused');
+  assert.equal(pickupState({ ...event, pickup_enabled: false }, { ordering_status: 'open' }, now), 'No Pickup Orders at This Event');
+  assert.equal(pickupState(event, { ordering_status: 'open' }, now), 'Pickup Enabled for This Event');
+  assert.equal(pickupState({ ...event, orders_close_at: '2026-09-15T11:00:00Z' }, { ordering_status: 'open' }, now), 'Pickup Orders Ended');
   assert.equal(eventTime('2026-09-15T12:00:00Z'), '13:00');
   assert.equal(eventTime('2026-12-15T12:00:00Z'), '12:00');
 });

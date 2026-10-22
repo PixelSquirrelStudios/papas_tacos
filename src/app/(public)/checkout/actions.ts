@@ -37,6 +37,8 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       }
       if (error.message === 'An item is not on the menu for this event. Review your bag.') return { error: error.message };
       if (error.message === 'Scan the QR code provided at this event before ordering') return { error: error.message };
+      if (['Stock changed. Review your bag before paying.', 'Stock availability is unavailable. Please try again shortly.'].includes(error.message)) return { error: error.message };
+      if (['Group items require at least one required choice with options', 'Group items require at least one selected linked product'].includes(error.message)) return { error: 'This listing is not ready to order. Please choose another item or contact our team.' };
       const safeMessages = ['Card checkout is unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time', 'Enter a valid table or car number', 'The selected event does not match this order', 'Choose an event and an available pickup time if required'];
       return { error: safeMessages.includes(error.message) ? error.message : error.message.startsWith('Ordering unavailable:') ? 'Ordering for this event is currently closed or paused.' : 'Checkout is unavailable. Refresh your bag and try again.' };
     }

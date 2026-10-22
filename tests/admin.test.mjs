@@ -8,6 +8,59 @@ import { aboutDefaults } from '../src/lib/catalogue/about.ts';
 import { build } from 'esbuild';
 import path from 'node:path';
 import { deliveryLabel, serviceMode, eventMenuLink } from '../src/lib/service-ordering.ts';
+import { trackingLabels } from '../src/lib/inventory.ts';
+
+test('stock and linked-product labels use Title Case without changing internal option values', () => {
+  assert.deepEqual(trackingLabels, {
+    none: 'Not Tracked',
+    global: 'Global Stock + Event Allocations',
+    event: 'Event Portions Only',
+  });
+  const kind = resources.menu.fields.find((field) => field.key === 'item_kind');
+  assert.equal(kind.label, 'Menu Item Kind');
+  assert.deepEqual(kind.options, ['product', 'group']);
+  const pricing = resources.options.fields.find((field) => field.key === 'pricing_mode');
+  assert.equal(pricing.label, 'Choice Pricing');
+  assert.deepEqual(pricing.options, ['extra', 'item']);
+  assert.equal(pricing.optionLabels.item, "Use Linked Item's Price");
+});
+
+test('stock overview orders composite-key product links without requesting a nonexistent id', async () => {
+  const calls = [];
+  globalThis.__stockOverviewTest = calls;
+  try {
+    const bundle = await build({
+      stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
+        import Page from '@/app/admin/stock/page';
+        export async function render() { return Page({searchParams:Promise.resolve({})}); }
+      ` },
+      bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic',
+      plugins: [{ name: 'stock-overview-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^(@\/lib\/auth\/session|@\/lib\/admin\/data|@\/components\/admin\/stock-manager)$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents:
+          args.path.endsWith('/session') ? 'export async function requireAdmin() {}'
+            : args.path.endsWith('/stock-manager') ? 'export function StockManager() { return null; }'
+              : `export function adminError(error) { throw error; }
+                export async function adminRequest() { return []; }
+                export async function adminRows(table, query = {}) {
+                  globalThis.__stockOverviewTest.push([table, query]);
+                  if (table === 'menu_item_modifier_groups' && (!query.order || query.order.split(',').some(part => part.startsWith('id.')))) {
+                    throw new Error('column menu_item_modifier_groups.id does not exist');
+                  }
+                  return [];
+                }` }));
+        builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+      } }],
+    });
+    const { render } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const page = await render();
+    assert.equal(typeof page.type, 'function');
+    assert.deepEqual(calls.find(([table]) => table === 'menu_item_modifier_groups'), [
+      'menu_item_modifier_groups', { order: 'menu_item_id.asc,modifier_group_id.asc' },
+    ]);
+    assert.deepEqual(page.props.uses, []);
+  } finally { delete globalThis.__stockOverviewTest; }
+});
 
 test('service operations use one completion step and preserve the pickup workflow', () => {
   const location = { service_mode: 'car', location_number: '27', number_plate: 'AB12 CDE' };
@@ -177,7 +230,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setMenuAvailability, saveRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     assert.equal((await updateOrder(id, 'preparing')).ok, true);
@@ -192,6 +245,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
     await assert.rejects(unarchiveMenuItem(id, version), /Admin access required/);
     await assert.rejects(setOrderingStatus('open', version), /Admin access required/);
     await assert.rejects(setMaintenanceMode(true, version), /Admin access required/);
+    await assert.rejects(setPublicMenuEnabled(false, version), /Admin access required/);
     await assert.rejects(setMenuAvailability(id, version, true), /Admin access required/);
     assert.equal(state.calls.length, 0);
     state.allowed = true;
@@ -201,6 +255,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await setOrderingStatus('open', 'invalid')).ok, false);
     assert.equal((await setMaintenanceMode('true', version)).ok, false);
     assert.equal((await setMaintenanceMode(true, 'invalid')).ok, false);
+    assert.equal((await setPublicMenuEnabled('false', version)).ok, false);
+    assert.equal((await setPublicMenuEnabled(false, 'invalid')).ok, false);
     assert.equal((await setMenuAvailability('invalid', version, true)).ok, false);
     assert.equal((await setMenuAvailability(id, 'invalid', true)).ok, false);
     assert.equal((await setMenuAvailability(id, version, 'true')).ok, false);
@@ -213,7 +269,10 @@ test('admin mutations protect unarchive and ordering settings with authorization
     for (const enabled of [true, false]) {
       assert.equal((await setMaintenanceMode(enabled, version)).ok, true);
       assert.deepEqual(state.calls.at(-1), ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { maintenance_enabled: enabled }]);
+      assert.equal((await setPublicMenuEnabled(enabled, version)).ok, true);
+      assert.deepEqual(state.calls.at(-1), ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { public_menu_enabled: enabled }]);
     }
+    assert.ok(state.revalidated.some(([path, type]) => path === '/' && type === 'layout'));
     const menuValues = { ...formDefaults(resources.menu), category_id: id, name: 'Taco', slug: 'taco', description: '<p onclick="alert(1)"><strong>Fresh</strong></p><script>alert(1)</script>' };
     assert.equal((await saveRecord('menu', id, version, formPayload(resources.menu, menuValues))).ok, true);
     assert.equal(state.calls.at(-1)[3].description, '<p><strong>Fresh</strong></p>');
@@ -255,9 +314,10 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
     assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
     assert.match((await setMaintenanceMode(true, version)).error, /Site settings changed/);
+    assert.match((await setPublicMenuEnabled(false, version)).error, /Site settings changed/);
     assert.ok(state.revalidated.some(([route]) => route === '/admin/menu'));
     assert.ok(state.revalidated.some(([route]) => route === '/admin/settings'));
-    assert.ok(state.revalidated.every(([route, type]) => route.startsWith('/admin') && type !== 'layout'));
+    assert.ok(state.revalidated.every(([route, type]) => (route.startsWith('/admin') && type !== 'layout') || (route === '/' && type === 'layout')));
   } finally { delete globalThis.__adminActionTest; }
 });
 

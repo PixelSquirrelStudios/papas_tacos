@@ -41,6 +41,13 @@ export function ResourceReorder({ resourceKey, rows, scopes, scope }: { resource
   const [error, setError] = useState('');
   const [pending, startTransition] = useTransition();
   const dirty = ids.some((id, index) => id !== baseline[index]);
+  const [sourceRows, setSourceRows] = useState(rows);
+  if (sourceRows !== rows && !dirty && !pending && !activeId) {
+    const next = rows.map((row) => row.id!);
+    setSourceRows(rows);
+    setBaseline(next);
+    setIds(next);
+  }
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 8 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const byId = new Map(rows.map((row) => [row.id!, row]));
   const active = activeId ? byId.get(activeId) : undefined;
@@ -82,7 +89,7 @@ export function ResourceReorder({ resourceKey, rows, scopes, scope }: { resource
     <div className="mb-7 flex flex-wrap items-center justify-between gap-4"><div><p className="mb-2 text-xs font-semibold uppercase text-turquoise">Display Order</p><h1 className="text-2xl font-semibold sm:text-3xl">Reorder {resource.title}</h1></div><span className="text-sm text-muted-foreground">{rows.length} {rows.length === 1 ? 'record' : 'records'}</span></div>
     {['menu', 'categories'].includes(resourceKey) && <nav aria-label="Menu Ordering" className="mb-6 flex gap-6 border-b text-sm font-medium">{[['categories', 'Category Order'], ['menu', 'Item Order']].map(([key, label]) => <Link key={key} href={`/admin/${key}/reorder`} aria-current={key === resourceKey ? 'page' : undefined} className={`border-b-2 pb-3 ${key === resourceKey ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`} onClick={(event) => { if (pending || (dirty && !window.confirm('Discard your unsaved order changes?'))) event.preventDefault(); }}>{label}</Link>)}</nav>}
     {resource.scope && <div className="mb-6 max-w-sm"><label className="mb-2 block text-sm font-medium" htmlFor="reorder-scope">{scopeLabel}</label><Select value={scope} disabled={pending || dirty || !scopes.length} onValueChange={(value) => router.push(`/admin/${resourceKey}/reorder?scope=${encodeURIComponent(value)}`)}><SelectTrigger id="reorder-scope" className="w-full"><SelectValue placeholder={`No ${scopeLabel?.toLowerCase()} available`} /></SelectTrigger><SelectContent>{scopes.map((entry) => <SelectItem key={entry.id} value={entry.id!}>{String(entry.name)}</SelectItem>)}</SelectContent></Select></div>}
-    <div className="sticky top-16 z-10 mb-5 flex flex-wrap items-center justify-between gap-3 border-y bg-background/95 py-4 backdrop-blur-sm"><p role="status" className={`text-sm ${dirty ? 'text-brand-yellow' : 'text-muted-foreground'}`}>{pending ? 'Saving...' : dirty ? 'Unsaved Changes' : 'Saved Order'}</p><div className="flex gap-2"><Button variant="ghost" size="icon" title="Reset Changes" aria-label="Reset Changes" disabled={!dirty || pending} onClick={() => { setIds([...baseline]); setError(''); }}><RotateCcw /></Button><Button onClick={save} disabled={!dirty || pending || Boolean(activeId)}><Save />Save Order</Button></div></div>
+    <div className="sticky top-20 z-10 mb-5 flex flex-wrap items-center justify-between gap-3 border-y bg-background/95 py-4 backdrop-blur-sm"><p role="status" className={`text-sm ${dirty ? 'text-brand-yellow' : 'text-muted-foreground'}`}>{pending ? 'Saving...' : dirty ? 'Unsaved Changes' : 'Saved Order'}</p><div className="flex gap-2"><Button variant="ghost" size="icon" title="Reset Changes" aria-label="Reset Changes" disabled={!dirty || pending} onClick={() => { setIds([...baseline]); setError(''); }}><RotateCcw /></Button><Button onClick={save} disabled={!dirty || pending || Boolean(activeId)}><Save />Save Order</Button></div></div>
     {error && <p role="alert" className="mb-5 rounded-md border border-destructive/40 bg-destructive/5 p-4 text-sm text-destructive">{error}</p>}
     {rows.length ? <DndContext id={`reorder-${resourceKey}`} sensors={sensors} collisionDetection={closestCenter} onDragStart={({ active }) => setActiveId(String(active.id))} onDragEnd={finishDrag} onDragCancel={() => setActiveId(null)}>
       <SortableContext items={ids} strategy={verticalListSortingStrategy}><ol aria-label={`${resource.title} Display Order`} className="space-y-3">{ids.map((id, index) => <SortableRecord key={id} row={byId.get(id)!} label={String(byId.get(id)![resource.label])} position={index + 1} disabled={pending || rows.length < 2} />)}</ol></SortableContext>

@@ -10,7 +10,7 @@ Do not create those objects yourself in Supabase; the local test harness only em
 2. Run each file in `supabase/sql/` separately, in the numbered order below, using the SQL Editor's default `postgres` role.
 3. Wait for success before moving to the next file. Each file has its own transaction.
 4. If a script fails, stop and resolve the error. Do not run later files or drop existing tables.
-5. After all scripts succeed, check Table Editor for the 16 application tables.
+5. After all scripts succeed, check Table Editor for the application tables listed below.
 
 Run these files once. They deliberately do not silently overwrite existing schemas.
 If you already have tables or triggers with these names, review the conflict before proceeding.
@@ -75,6 +75,37 @@ See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu it
 
 ## Admin Listing Upgrades
 
+### Admin Realtime updates
+
+Apply [053_admin_realtime.sql](sql/053_admin_realtime.sql) after 052. It ensures the
+`supabase_realtime` publication includes every table subscribed to by the admin
+and public interfaces, including stock, orders, payment records and status history.
+It is repeatable and does not change grants or row-level security. Publication
+membership does not grant customers access to admin-only records.
+
+Admin pages listen for Supabase Postgres Changes, batch bursts of notifications
+and reload authorized data in place, without a browser reload or periodic polling.
+Open dialogs and unsaved reorder/menu-set edits defer updates until editing ends.
+Reconnects, returning to the tab and regaining connectivity trigger a catch-up
+refresh. Disconnections show a warning; Supabase handles channel reconnects.
+Verify with two signed-in admin sessions: change an allocation or order status in
+one and check that the other updates without reloading. Local SQL tests verify
+publication membership/RLS; browser tests simulate channel events and reconnects.
+
+### Public menu visibility
+
+Apply [052_public_menu_visibility.sql](sql/052_public_menu_visibility.sql) after 051,
+before deploying the updated application. It adds `public_menu_enabled`, defaulting
+to true, and refreshes the admin-only settings view to include the new column.
+It is repeatable and preserves an already saved visibility setting.
+
+Use **Show Public Menu** in **Admin > Site Settings**, or the dashboard switch
+between **Online Ordering** and **Maintenance Mode**. Turning it off hides homepage
+menu sections, public menu navigation (including the footer) and the generic
+`/menu` page. Event-specific `/menu?event=<id>` pages and QR ordering retain their
+existing access, availability, pricing and stock checks. It does not unpublish
+products, cancel orders or prevent public reads of published catalogue data.
+
 ### Missing customer profile repair
 
 Apply [049_repair_customer_profiles.sql](sql/049_repair_customer_profiles.sql) after 048.
@@ -85,6 +116,122 @@ profiles, names, phone numbers and admin roles are never overwritten. Recreated 
 always receive the default customer role, never a role from signup metadata. The migration
 is repeatable and does not change saved bags, orders or event QR keys.
 Apply it again after rerunning a migration that replaces `reserve_card_order`.
+
+### Inventory upgrade
+
+Apply [050_inventory.sql](sql/050_inventory.sql) after 049. It creates inventory tracking,
+event allocations, immutable order-stock snapshots, and an admin-only movement ledger.
+Every menu item gets a default `none` tracking row; new items are seeded automatically.
+The migration deliberately fails with an actionable message if any order is still
+`pending_payment`, `ordered`, `preparing`, or `ready_for_pickup`. Put ordering in maintenance,
+resolve or complete those orders, then rerun 050. Historical completed/cancelled orders are
+not deducted retroactively; reconcile their balances manually before enabling tracking.
+
+For global tracking, `inventory_items.on_hand` is the physical unsold balance.
+`inventory_allocations.remaining` is the event's unconsumed allocation and includes active checkout
+holds. Global allocations must not sum above `on_hand`, and global sales deduct both values.
+For event-only tracking, each allocation is independently configured capacity: there is no receipt
+prerequisite or global balance constraint. Event-only sales, waste and restoration change only that
+event's allocation, never `on_hand`. Checkout creates a temporary `held` snapshot, successful payment
+converts it to `sold`, cancellation releases only active holds, and expired holds stop reducing
+availability automatically. If a paid webhook arrives after stock has been reused, the order is
+cancelled and the existing Stripe process returns its refund-required result rather than retrying
+an oversold order. Cancelling an already paid order does not restore stock; the admin must use
+`admin_restock_order(order_uuid, reason)` explicitly. Restocking is idempotent per order.
+Cash order lines deduct stock when the order is accepted.
+Checkout returns `Stock changed. Review your bag before paying.` when an item is no longer
+allocated or its held quantity is no longer available, and
+`Stock availability is unavailable. Please try again shortly.` if the inventory row/configuration
+cannot be read. The Stripe webhook path does not raise these availability errors: if a timely
+payment arrives after stock was reused, it records the paid order as cancelled and returns the
+existing refund-required result.
+
+All inventory tables grant direct reads only to admins. Customers have no direct inventory reads.
+`get_event_stock(event_uuid, supplied_key)` returns only the selected event's sellable quantity;
+for a private event pass its stored QR access key as `supplied_key`. No-event results intentionally
+hide positive global totals (`available_quantity` is null unless global stock is zero); untracked
+and event-only rows are also null without an event. Do not use this RPC to expose another event's
+allocations.
+
+Use `admin_inventory_action(item_uuid,event_uuid,action,quantity,expected_version,reason,
+tracking_mode,unit_label,request_uuid)` for configure, receive, correct, allocate, return, waste,
+and walk-up sale operations. Quantities are bounded from 0 to 1,000,000; unit labels are at most
+30 characters. Receive/correct use the item version; event allocation, return, waste, and sale use
+the allocation version. `allocate` sets the target remaining amount (not a delta); null
+`expected_version` is accepted only when creating a new allocation. Correct/waste/sale and
+tracking-mode changes require a reason. `request_uuid` should be a stable UUID per form attempt:
+identical retries by the same admin are deduplicated, while reusing it with a changed payload is
+rejected. Versions are still required for stale-write detection.
+
+For event closeout, `admin_return_event_stock(event_uuid, expected_allocations, reason)` validates
+the complete `{menu_item_id, version, remaining}` snapshot, refuses active holds, and returns every
+nonzero allocation to unallocated stock. The event must be closed or its ordering window ended.
+The movement ledger stores signed quantities: positive values add stock/allocation, negative values
+consume or return them, and hold/release/configure markers use zero. Realtime publication includes
+all four inventory tables. `inventory_order_stock` is an admin overview snapshot; active holds are
+`state = 'held' AND expires_at > now()` (cash sales are immediately `sold`), and sold/restocked
+states are retained for audit.
+
+`admin_inventory_sales()` is an admin-only, stable RPC returning
+`(menu_item_id uuid, event_id uuid, sold_quantity bigint)`. It aggregates the entire ledger,
+not the latest page: `sale` is negative for online, cash and walk-up sales, and `restore_order`
+is positive for explicit restorations. `sold_quantity = -sum(quantity)` for those two actions;
+waste, returns, allocations, holds and corrections do not affect sales totals. Fully restored
+item/event pairs return zero; pairs with no sales/restorations are absent.
+
+For event-only portions, configure `none` directly to `event` with `on_hand = 0`, then allocate
+any event capacity within the quantity limit. For example, allocate 100 and sell 9: event remaining
+is 91 and `on_hand` stays zero. Other events have independent capacities. Receipts/corrections
+remain global-only; event-only items never require a global receipt. Inventory-changing
+transactions serialize on a database advisory lock and use item/allocation versions to reject stale
+admin forms.
+
+#### Locking and snapshot guarantees
+
+Checkout takes its existing catalogue/menu-set table share locks first, then the shared inventory
+transaction advisory lock, then event/slot/order/inventory row locks. The order/payment/admin
+RPCs take that inventory lock before their first row lock; statement triggers also acquire it
+before direct order, event, slot, schedule or payment writes lock rows. This avoids the former
+row-lock/advisory-lock inversion between cancellation, payment, event closeout and checkout.
+Bulk closeout and restoration use the same lock. The lock is held until commit/rollback, so
+duplicated lines and competing baskets are evaluated against one consistent reservation state.
+Creating a hold also updates the item version (without changing `on_hand`), forcing stale
+repeatable-read writers to retry rather than oversubscribing stock.
+
+Tracked order lines must be inserted in the order-creation transaction. Later inserts, edits,
+reparenting and deletion cannot rewrite the stock snapshot; stock-bearing orders cannot change
+their event, payment method, checkout key, subtotal or extend an existing hold deadline.
+Tracking-mode changes also refuse outstanding orders originally created without tracking.
+Payment validates every held item before deducting any. Insufficient late payment changes the
+order to cancelled **before** status history/email snapshots are recorded; it never records an
+intermediate accepted order or partially consumes a multi-item order.
+
+Keep all upgrades through 051 in order. Rerunning older function-definition migrations after
+051 can replace its checkout and locking changes. Privileged custom multi-operation transactions must obey
+the same lock order; arbitrary manual `SELECT ... FOR UPDATE` before the inventory lock is not
+a supported integration pattern. Stale admin forms report `Inventory item changed` or
+`Event allocation changed`; closeout reports `Event allocations changed; refresh the stock
+overview and retry`. Refresh balances/versions before submitting a new attempt.
+
+### Linked menu items upgrade
+
+Apply [051_linked_menu_items.sql](sql/051_linked_menu_items.sql) after 050 while
+ordering is in maintenance. It adds product/group kinds, standalone visibility,
+linked option products, quantity multipliers and explicit pricing modes.
+It replaces checkout validation and inventory accounting so standalone and
+linked selections consume the same real product balance. Order usage and
+modifier details are snapshotted for safe payment, cancellation and restocking.
+
+Grouped listings cannot have a base price, menu-set price override or tracked
+stock. Reconcile existing balances and allocations and resolve active checkouts
+before converting a tracked product into a group. Linked targets must be simple
+products with no modifier groups. Existing modifiers and orders are preserved;
+no automatic flavour conversion is performed.
+
+See [Stock setup](../docs/STOCK_SETUP.md#drinks-sweets-and-linked-menu-items) for
+admin steps. Run `npm run test:db` for database, inventory and linked-choice
+regressions. The linked-choice harness applies 051 after 050 and exercises actual
+checkout and payment functions locally; it does not change the hosted database.
 
 ### Table/car event ordering upgrade
 
@@ -348,3 +495,10 @@ history, immutable snapshots, and nested order privacy.
 
 It does not connect to your hosted Supabase project. Production OAuth, PostgREST,
 Storage, Realtime, Stripe, and concurrent checkout/load tests still need integration testing.
+
+Run `node --test tests/inventory.test.mjs tests/database.test.mjs` for inventory and database
+regressions. The inventory harness applies 048 and 049 before 050 and tests the real
+`reserve_card_order` transaction, including menu-set prices, profile repair, duplicate lines,
+retry/rollback, last-item contenders, webhook expiry/replay/refunds, immutable snapshots and
+restoration permissions. PGlite serializes queries on one connection: the contender test and
+lock-order assertions are not a substitute for multi-session PostgreSQL deadlock/load testing.

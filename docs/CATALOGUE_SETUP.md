@@ -83,7 +83,31 @@ In **Admin > Modifier Options**, each option has its own rich description, image
 image description. Images use the existing menu-image upload storage. Customers see option
 thumbnails and descriptions in the picker; selecting a single-choice option updates the main
 preview, falling back to the item's image or description when the option has none. This provides
-option-level content, not separate variation SKUs, stock counts or combination-specific prices.
+option-level content. For independently stocked flavours or brands, use linked menu
+items instead of ordinary text options as described below.
+
+## Linked products and grouped listings
+
+After upgrades through 050, apply
+[051_linked_menu_items.sql](../supabase/sql/051_linked_menu_items.sql).
+Create each real drink or sweet brand as a product menu item with its own price,
+allergens and stock. It may be shown standalone, used only in linked choices, or
+both. Do not unpublish a product just to hide its standalone card.
+
+In **Admin > Modifier Options**, select a **Linked menu item** to inherit its
+customer-facing details. Choose whether to charge its catalogue price or include
+it with a fixed surcharge, and set the units consumed per choice.
+Only products without modifier groups can be linked.
+
+For a **Cans of Pop** selector, make the parent a **Grouped listing**, attach a
+required single-choice drink group, and link its options to the real drink items.
+Grouped listings have zero base price and no stock of their own. A normal meal
+can instead consume its own portions plus the selected drink's stock. These
+choices share stock with every other listing using the same product.
+
+See [Stock setup](STOCK_SETUP.md#drinks-sweets-and-linked-menu-items) for the
+step-by-step admin workflow, pricing examples, event allocations and conversion
+of existing flavour modifiers. Existing data is not automatically converted.
 
 ## Automatic URL Slugs
 

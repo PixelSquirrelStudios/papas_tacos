@@ -19,6 +19,10 @@ test.beforeAll(async () => {
         import { Dashboard } from '@/components/admin/dashboard';
         import { AdminRefresh, OrderControls } from '@/components/admin/order-controls';
         import { SiteMenu } from '@/components/site-menu';
+        import { SiteUpdates } from '@/components/site-updates';
+        import { AdminSidebar } from '@/components/admin/admin-sidebar';
+        import { SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar';
+        import { TooltipProvider } from '@/components/ui/tooltip';
         import { OrderList } from '@/components/account/order-views';
         import AccountPage from '@/app/(public)/account/page';
         function OrdersFixture() {
@@ -47,11 +51,13 @@ test.beforeAll(async () => {
         const settingsRow = { business_name: "Papa's Tacos", ordering_status: 'closed', ordering_message: null, cash_enabled: true, card_enabled: false, service_fee_pence: 0, packaging_fee_pence: 0, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null, about_eyebrow: 'Our story', about_heading: 'A little about Papa’s', about_page_heading: 'About Papa’s Tacos', about_content: 'Original About copy.', about_full_story: '<p><strong>Original full story.</strong></p>', about_image_path: null, about_image_alt: 'Fresh tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Papa’s Tacos street food', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos at an event', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck', updated_at: '2026-09-22T12:00:00Z' };
         function DashboardFixture() {
           const [status, setStatus] = React.useState(kind === 'dashboard-paused' ? 'paused' : 'open');
+          const [publicMenu, setPublicMenu] = React.useState(true);
+          window.__updatePublicMenu = setPublicMenu;
           window.__updateOrdering = setStatus;
-          return <DashboardOverview fullName="Sam" orders={[{...order, customer_name: 'Alex Taylor'}, {...order, id: ids[1], order_number: 1043, status: 'preparing', customer_name: 'Morgan Jones'}]} menu={rows} events={[{id: ids[0], title: 'Friday Street Food Market', venue_name: 'Town Square', starts_at: '2026-09-25T17:00:00Z'}]} settings={kind === 'dashboard-unavailable' ? undefined : {ordering_status: status, maintenance_enabled: false, updated_at: '2026-09-22T12:00:00Z'}} />;
+          return <DashboardOverview fullName="Sam" orders={[{...order, customer_name: 'Alex Taylor'}, {...order, id: ids[1], order_number: 1043, status: 'preparing', customer_name: 'Morgan Jones'}]} menu={rows} events={[{id: ids[0], title: 'Friday Street Food Market', venue_name: 'Town Square', address_line_1: '12 Market Street', address_line_2: 'Riverside Quarter', town: 'Cardiff', postcode: 'CF10 1AA', starts_at: '2026-09-25T17:00:00Z'}]} settings={kind === 'dashboard-unavailable' ? undefined : {ordering_status: status, public_menu_enabled: publicMenu, maintenance_enabled: false, updated_at: '2026-09-22T12:00:00Z'}} />;
         }
         function LiveDashboardFixture() {
-          const initialData = {orders: [{...order, customer_name: 'Alex Taylor'}], menu: rows, events: [], settings: {...settingsRow, maintenance_enabled: false}};
+          const initialData = {orders: [{...order, customer_name: 'Alex Taylor'}], menu: rows, events: [], settings: {...settingsRow, public_menu_enabled: true, maintenance_enabled: false}};
           return <Dashboard fullName="Sam" initialData={kind === 'dashboard-initial-error' ? undefined : initialData} initialError={kind === 'dashboard-initial-error' ? 'Initial dashboard load failed.' : ''} />;
         }
         function ServiceOrderFixture() {
@@ -67,7 +73,7 @@ test.beforeAll(async () => {
           const [slots,setSlots] = React.useState(['available','taken','locked'].map((status,index)=>({id:ids[index],event_id:ids[0],event_title:'Friday Market',venue_name:'Town Square',starts_at:'2099-09-25T17:'+String(index*20).padStart(2,'0')+':00Z',ends_at:index===2?'2099-09-25T18:00:00Z':'2099-09-25T17:'+String((index+1)*20)+':00Z',updated_at:'2026-09-27T12:00:00Z',status})));
           window.__lockSlot = (id,locked) => setSlots(current=>current.map(slot=>slot.id===id?{...slot,status:locked?'locked':'available'}:slot));
           window.__saveSchedule = (values) => setSchedules(current=>current.map(schedule=>({...schedule,...values})));
-          return <PickupManager events={events} schedules={schedules} slots={slots} />;
+          return <PickupManager events={kind === 'pickup-empty' ? [] : events} schedules={schedules} slots={slots} />;
         }
         function MenuFixture() {
           const [items, setItems] = React.useState(rows);
@@ -76,13 +82,14 @@ test.beforeAll(async () => {
         }
         if (kind === 'account-page') AccountPage({searchParams: Promise.resolve({})}).then(element => root.render(element));
         else root.render(
-          <><AdminRefresh />{['dashboard-live', 'dashboard-initial-error'].includes(kind) ? <LiveDashboardFixture /> : kind.startsWith('dashboard') ? <DashboardFixture /> :
-          kind === 'service-order' ? <ServiceOrderFixture /> : kind === 'pickup' ? <PickupFixture /> :
+          <>{['dashboard-realtime', 'realtime-menu'].includes(kind) && <SiteUpdates />}<AdminRefresh />{['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(kind) ? <LiveDashboardFixture /> : kind.startsWith('dashboard') ? <DashboardFixture /> :
+          kind === 'sidebar' ? <TooltipProvider><SidebarProvider><AdminSidebar /><main className="min-w-0 flex-1"><SidebarTrigger /><h1>Sidebar Fixture</h1></main></SidebarProvider></TooltipProvider> :
+          kind === 'service-order' ? <ServiceOrderFixture /> : kind.startsWith('pickup') ? <PickupFixture /> :
           kind === 'option-media' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Mexican Cola', description: '<p>Original cola description.</p>', image_path: 'images/menu/fixture.jpg', image_alt: 'Cola bottle', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Flavour'}]}} /> :
           kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : {}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
           kind === 'order-filters' ? <OrdersFixture /> :
-          ['menu', 'menu-rich', 'menu-modifiers', 'archived', 'grouped'].includes(kind) ? <MenuFixture /> :
+          ['menu', 'menu-rich', 'menu-modifiers', 'archived', 'grouped', 'realtime-menu'].includes(kind) ? <MenuFixture /> :
           kind === 'customer' ? <main className="mx-auto max-w-5xl p-5"><h1 className="mb-6 text-3xl font-semibold">Your Orders</h1><OrderList orders={[order, {...order, id: ids[1], order_number: 1039, status: 'collected'}]} /></main> :
           <SiteMenu signedIn admin={false} />}</>
         );
@@ -94,13 +101,27 @@ test.beforeAll(async () => {
       builder.onResolve({ filter: /^(next\/(navigation|image|link)|@\/app\/.*actions|@\/lib\/supabase\/(config|client)|@\/lib\/auth\/session|@\/lib\/account\/data)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => {
         let contents = '';
-        if (args.path === 'next/navigation') contents = `export const useRouter = () => ({ refresh() { window.__refreshes = (window.__refreshes || 0) + 1; }, push(url) { window.__navigation = url; }, replace(url) { window.__navigation = url; window.__onNavigate?.(url); } }); export const usePathname = () => ['dashboard-live', 'dashboard-initial-error'].includes(new URLSearchParams(location.search).get('kind')) ? '/admin' : location.pathname; export const notFound = () => { throw new Error('Not found'); };`;
+        if (args.path === 'next/navigation') contents = `export const useRouter = () => ({ refresh() { window.__refreshes = (window.__refreshes || 0) + 1; }, push(url) { window.__navigation = url; }, replace(url) { window.__navigation = url; window.__onNavigate?.(url); } }); export const usePathname = () => ['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(new URLSearchParams(location.search).get('kind')) ? '/admin' : '/admin/menu'; export const notFound = () => { throw new Error('Not found'); };`;
         else if (args.path === '@/lib/auth/session') contents = `export const requireAccount = async () => ({user: {email: 'alexander.customer.with.a.long.email@example.com'}, profile: {full_name: 'Alex Taylor', phone: '', role: 'admin'}});`;
         else if (args.path === '@/lib/account/data') contents = `export const getCustomerOrders = async () => ({orders: [], total: 0}); export const getCustomerOrder = async () => null;`;
         else if (args.path === 'next/link') contents = `import React from 'react'; export default function Link({children, ...props}) { return <a {...props}>{children}</a>; }`;
         else if (args.path === 'next/image') contents = `import React from 'react'; export default function Image({fill, unoptimized, priority, ...props}) { return <img {...props} style={fill ? {position:'absolute',width:'100%',height:'100%',inset:0} : undefined} />; }`;
         else if (args.path.endsWith('/config')) contents = `export const supabaseConfig = () => ({url: location.origin, key: 'fixture'});`;
-        else if (args.path.endsWith('/client')) contents = `export const createBrowserSupabase = () => ({});`;
+        else if (args.path.endsWith('/client')) contents = `export const createBrowserSupabase = () => ({
+          channel() {
+            const handlers = new Map();
+            const channel = {
+              on(event, filter, callback) { handlers.set(filter.table,callback); return channel; },
+              subscribe(callback) {
+                window.__realtimeTables = [...handlers.keys()];
+                window.__realtimeChange = table => handlers.get(table)?.();
+                window.__realtimeStatus = status => callback(status);
+                callback('SUBSCRIBED'); return channel;
+              }
+            };
+            return channel;
+          }, async removeChannel() {}
+        });`;
         else contents = `
           export async function reorderRecords(key, ids, previous, scope) {
             window.__savedRequest = {key, ids, previous, scope};
@@ -122,6 +143,12 @@ test.beforeAll(async () => {
           export async function lockPickupSlot(id,version,locked) { window.__slotLock = {id,version,locked}; window.__lockSlot(id,locked); return {ok:true}; }
           export async function updateOrder(id,status) { if (window.__failOrder) return {ok:false,error:'Order update failed.'}; window.__updateServiceStatus?.(status); return {ok:true}; }
           export async function setMaintenanceMode() { return {ok:true}; }
+          export async function setPublicMenuEnabled(enabled, version) {
+            window.__publicMenuRequest = {enabled, version};
+            if (window.__failPublicMenu) return {ok:false,error:'Site settings changed. Please try again.'};
+            window.__updatePublicMenu?.(enabled);
+            return {ok:true};
+          }
           export async function setOrderingStatus(status, version) {
             window.__orderingRequest = {status, version};
             if (window.__holdOrdering) await new Promise(resolve => { window.__releaseOrdering = resolve; });
@@ -169,7 +196,7 @@ test('account sidebar has room for navigation and long email addresses', async (
       await expect(sidebar.getByRole('button', { name: 'Sign Out' })).toBeVisible();
       await expect(sidebar.getByRole('link', { name: 'Admin Dashboard' })).toBeVisible();
     }
-    for (const link of await page.getByRole('navigation', { name: 'Customer dashboard' }).getByRole('link').all()) {
+    for (const link of await page.getByRole('navigation', { name: 'Customer Dashboard' }).getByRole('link').all()) {
       await expect(link).toBeVisible();
       expect(await link.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
     }
@@ -205,7 +232,7 @@ test('admin cards show media, statuses, filters, actions and reorder navigation'
   await page.getByRole('button', { name: 'Reset Filters' }).click();
   await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await expect(page.getByRole('dialog').getByRole('heading')).toBeFocused();
+  await expect(page.getByRole('dialog').getByRole('heading', { name: 'Edit Menu Item', exact: true })).toBeFocused();
   await expect(page.getByText('Cereals Containing Gluten', { exact: true })).toBeVisible();
   await expect(page.getByText('Gluten Free', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Cancel', exact: true }).click();
@@ -221,12 +248,16 @@ test('admin cards show media, statuses, filters, actions and reorder navigation'
 test('dashboard cards and ordering switch handle saving, failure and recovery', async ({ page }, testInfo) => {
   await fixture(page, 'dashboard');
   const toggle = page.getByRole('switch', { name: 'Online Ordering' });
+  const eventAddress = page.getByRole('region', { name: 'Upcoming Events' }).locator('address');
+  await expect(eventAddress.locator('span')).toHaveText(['Town Square', '12 Market Street', 'Riverside Quarter', 'Cardiff, CF10 1AA']);
   await expect(toggle).toBeChecked();
   await expect(page.getByText('Open for Orders', { exact: true })).toBeVisible();
   for (const label of ['Active Orders: 2', 'Ready for Pickup: 1', 'Published Dishes: 2', 'Upcoming Events: 1']) await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible();
   const shortcuts = page.getByRole('region', { name: 'Quick Shortcuts' });
   const expectedShortcuts = [
     ['Manage Menu', '/admin/menu'],
+    ['Manage Stock', '/admin/stock'],
+    ['Manage Menu Sets', '/admin/menu-sets'],
     ['Manage Categories', '/admin/categories'],
     ['Manage Orders', '/admin/orders'],
     ['Manage Events', '/admin/events'],
@@ -243,10 +274,17 @@ test('dashboard cards and ordering switch handle saving, failure and recovery', 
   ];
   await expect(shortcuts.getByRole('link')).toHaveText(expectedShortcuts.map(([label]) => label));
   for (const [label, href] of expectedShortcuts) await expect(shortcuts.getByRole('link', { name: label, exact: true })).toHaveAttribute('href', href);
+  const management = page.getByRole('region', { name: 'Menu & Stock Management' });
+  await expect(management.getByRole('link')).toHaveCount(3);
+  for (const [label, href] of [['Stock & Event Allocations', '/admin/stock'], ['Public & Event Menus', '/admin/menu-sets'], ['Products & Linked Choices', '/admin/menu']]) {
+    await expect(management.getByRole('link').filter({ has: page.getByRole('heading', { name: label, exact: true }) })).toHaveAttribute('href', href);
+  }
   await expect(page.getByRole('region', { name: 'Upcoming Events' }).getByRole('link', { name: 'Manage Menu' })).toHaveCount(0);
   const shortcutBounds = (await shortcuts.boundingBox())!;
+  const managementBounds = (await management.boundingBox())!;
   for (const label of ['Pickups & Deliveries', 'Upcoming Events']) {
     const sectionBounds = (await page.getByRole('region', { name: label }).boundingBox())!;
+    expect(managementBounds.y).toBeGreaterThanOrEqual(sectionBounds.y + sectionBounds.height);
     expect(shortcutBounds.y).toBeGreaterThanOrEqual(sectionBounds.y + sectionBounds.height);
   }
   await expect(page.getByRole('button', { name: /Refresh/ })).toHaveCount(0);
@@ -273,6 +311,103 @@ test('dashboard cards and ordering switch handle saving, failure and recovery', 
   await page.setViewportSize({ width: 320, height: 850 });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('dashboard-320.png'), fullPage: true });
+});
+
+test('desktop sidebar collapses to an accessible icon rail with tooltips and expands again', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 960 });
+  await fixture(page, 'sidebar');
+  const sidebar = page.locator('[data-slot="sidebar"][data-state]');
+  const expandedWidth = (await sidebar.boundingBox())!.width;
+  await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+  await expect(sidebar).toHaveAttribute('data-state', 'collapsed');
+  await expect(sidebar).toHaveAttribute('data-collapsible', 'icon');
+  await expect.poll(async () => (await sidebar.boundingBox())!.width).toBeLessThan(expandedWidth);
+  expect((await sidebar.boundingBox())!.width).toBeGreaterThan(0);
+  for (const name of ['Overview', 'Orders', 'Stock', 'Testimonials', 'Site Settings', 'Sign Out']) {
+    const control = name === 'Sign Out' ? sidebar.getByRole('button', { name, exact: true }) : sidebar.getByRole('link', { name, exact: true });
+    await expect(control).toBeVisible();
+    await control.hover();
+    await expect(page.getByRole('tooltip', { name, exact: true })).toBeVisible();
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('tooltip', { name, exact: true })).not.toBeVisible();
+  }
+  await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+  await expect(sidebar).toHaveAttribute('data-state', 'expanded');
+  await expect(sidebar.getByRole('link', { name: 'Stock', exact: true }).locator('span')).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
+
+test('mobile sidebar stays a drawer and closes when a navigation item is selected', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await fixture(page, 'sidebar');
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
+  const drawer = page.getByRole('dialog');
+  await expect(drawer).toBeVisible();
+  await expect(drawer.getByRole('link', { name: 'Stock', exact: true })).toBeVisible();
+  await drawer.getByRole('link', { name: 'Menu Items', exact: true }).click();
+  await expect(drawer).not.toBeVisible();
+});
+
+test('public menu switch sits between ordering and maintenance and recovers from failed saves', async ({ page }) => {
+  await fixture(page, 'dashboard');
+  const toggle = page.getByRole('switch', { name: 'Show Public Menu', exact: true });
+  const ordering = page.getByRole('region', { name: 'Online Ordering', exact: true });
+  const menu = page.getByRole('region', { name: 'Public Menu', exact: true });
+  const maintenance = page.getByRole('region', { name: 'Maintenance Mode', exact: true });
+  for (const width of [1440, 390]) {
+    await page.setViewportSize({ width, height: 960 });
+    const orderingBox = (await ordering.boundingBox())!;
+    const menuBox = (await menu.boundingBox())!;
+    const maintenanceBox = (await maintenance.boundingBox())!;
+    if (width >= 1024) {
+      expect(menuBox.y).toBe(orderingBox.y);
+      expect(maintenanceBox.y).toBe(menuBox.y);
+      expect(menuBox.x).toBeGreaterThan(orderingBox.x);
+      expect(maintenanceBox.x).toBeGreaterThan(menuBox.x);
+    } else {
+      expect(menuBox.y).toBeGreaterThan(orderingBox.y);
+      expect(maintenanceBox.y).toBeGreaterThan(menuBox.y);
+    }
+  }
+  await expect(menu).not.toContainText('Controls the public menu');
+  await expect(toggle).toBeChecked();
+  await toggle.click();
+  await expect(toggle).not.toBeChecked();
+  await expect(menu).toContainText('Public Menu Hidden');
+  await expect(menu.getByRole('alert')).toHaveCount(0);
+  expect(await page.evaluate(() => Reflect.get(window, '__publicMenuRequest'))).toEqual({ enabled: false, version: '2026-09-22T12:00:00Z' });
+  await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeChecked();
+  await page.evaluate(() => Reflect.set(window, '__failPublicMenu', true));
+  await toggle.click();
+  await expect(menu.getByRole('alert')).toContainText('Site settings changed');
+  await expect(toggle).not.toBeChecked();
+  await page.evaluate(() => Reflect.set(window, '__failPublicMenu', false));
+  await toggle.click();
+  await expect(toggle).toBeChecked();
+  await fixture(page, 'dashboard-unavailable');
+  await expect(page.getByRole('switch', { name: 'Show Public Menu', exact: true })).toBeDisabled();
+});
+
+test('dashboard background refresh keeps a disabled public menu valid without warnings', async ({ page }) => {
+  await page.clock.install();
+  let requests = 0;
+  await page.route('**/api/admin/dashboard', async (route) => {
+    requests++;
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+  });
+  await fixture(page, 'dashboard-live');
+  const menu = page.getByRole('region', { name: 'Public Menu', exact: true });
+  for (let i = 0; i < 2; i++) {
+    const before = requests;
+    await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
+    await expect.poll(() => requests).toBeGreaterThan(before);
+    await expect(menu).toContainText('Public Menu Hidden');
+    const toggle = menu.getByRole('switch', { name: 'Show Public Menu', exact: true });
+    await expect(toggle).not.toBeChecked();
+    await expect(toggle).toBeEnabled();
+    await expect(menu.getByRole('alert')).toHaveCount(0);
+  }
 });
 
 test('dashboard distinguishes paused ordering and disables unavailable settings', async ({ page }) => {
@@ -389,7 +524,7 @@ test('pickup schedules filter events and show lockable slot badges beside event 
   await expect(page.getByRole('button',{name:'Lock 18:00, Available',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Edit Schedule',exact:true}).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('spinbutton',{name:'Preparation Time (minutes)'})).toHaveValue('20');
+  await expect(dialog.getByRole('spinbutton',{name:'Preparation Time (Minutes)'})).toHaveValue('20');
   await expect(dialog.getByText(/Capacity|Lead Time/)).toHaveCount(0);
   await dialog.getByRole('combobox',{name:'Event'}).click();
   await expect(page.getByRole('option')).toHaveText(['Friday Market','Saturday Market']);
@@ -409,13 +544,27 @@ test('pickup schedules filter events and show lockable slot badges beside event 
   await expect(page.getByRole('button',{name:'Set Schedule',exact:true})).toBeDisabled();
 });
 
+test('pickup empty state explains service types and links to event management', async ({ page }) => {
+  await fixture(page, 'pickup-empty');
+  await expect(page.getByRole('heading', { name: 'No Pickup Events', exact: true })).toBeVisible();
+  await expect(page.getByText('No events yet.', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('region', { name: 'No Pickup Events' })).toContainText('Table and car service events do not appear here');
+  await expect(page.getByRole('link', { name: 'Manage Events', exact: true })).toHaveAttribute('href', '/admin/events');
+  await expect(page.getByRole('heading', { name: 'Plan Collection Times', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Set Schedule', exact: true })).toHaveCount(0);
+  for (const width of [320, 768, 1440]) {
+    await page.setViewportSize({ width, height: 960 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+});
+
 test('related admin fields share desktop rows and stack together on mobile', async ({ page }, testInfo) => {
   const cases: { kind: string; button: string; pairs: string[][] }[] = [
     { kind: 'edit-events', button: 'Add Event', pairs: [['title', 'slug'], ['starts_at', 'ends_at'], ['address_line_1', 'address_line_2'], ['town', 'postcode'], ['pickup_enabled', 'ordering_status']] },
     { kind: 'pickup', button: 'Edit Schedule', pairs: [['starts_at', 'ends_at']] },
     { kind: 'edit-modifiers', button: 'Add Modifier Group', pairs: [['min_selections', 'max_selections']] },
     { kind: 'menu', button: 'Add Menu Item', pairs: [['name', 'slug'], ['category_id', 'price_pence'], ['is_published', 'is_available'], ['is_featured', 'is_crowd_favourite']] },
-    { kind: 'option-media', button: 'Add Modifier Option', pairs: [['modifier_group_id', 'name'], ['price_pence', 'is_available']] },
+    { kind: 'option-media', button: 'Add Modifier Option', pairs: [['price_pence', 'is_available']] },
     { kind: 'edit-testimonials', button: 'Add Testimonial', pairs: [['rating', 'review_date'], ['source_name', 'source_url'], ['is_published', 'is_featured']] },
     { kind: 'edit-settings', button: 'Edit Site Settings', pairs: [['ordering_status', 'maintenance_enabled'], ['cash_enabled', 'card_enabled'], ['service_fee_pence', 'packaging_fee_pence'], ['contact_email', 'contact_phone'], ['instagram_url', 'facebook_url'], ['about_heading', 'about_page_heading']] },
   ];
@@ -439,7 +588,7 @@ test('related admin fields share desktop rows and stack together on mobile', asy
           expect(Math.abs(positions[0].left - positions[1].left)).toBeLessThan(1);
         }
       }
-      expect(await dialog.locator('[data-admin-form-scroll]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+      expect(await dialog.locator('[data-admin-form-scroll]').evaluate((element) => element.scrollWidth <= element.clientWidth), `${kind}: form fits ${width}px`).toBe(true);
       if (kind === 'edit-events' || kind === 'pickup') {
         await dialog.locator('[data-admin-field="starts_at"]').scrollIntoViewIfNeeded();
         await page.screenshot({ path: testInfo.outputPath(`${kind}-grouped-${width}.png`) });
@@ -458,8 +607,8 @@ test('events retain dates and expose optional ordering windows without preparati
   const ends = dialog.getByLabel('Event Ends (Europe/London) *', { exact: true });
   await starts.fill('2026-09-28T12:00');
   await ends.fill('2026-09-28T18:00');
-  await expect(dialog.getByLabel('Orders Open (blank uses event start) (Europe/London)', { exact: true })).toBeVisible();
-  await expect(dialog.getByLabel('Orders Close (blank uses event end) (Europe/London)', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Orders Open (Blank Uses Event Start) (Europe/London)', { exact: true })).toBeVisible();
+  await expect(dialog.getByLabel('Orders Close (Blank Uses Event End) (Europe/London)', { exact: true })).toBeVisible();
   await expect(dialog.getByText(/Lead Time|Preparation Time/)).toHaveCount(0);
   await expect(dialog.getByRole('combobox',{name:'Ordering',exact:true})).toBeVisible();
   await dialog.getByRole('switch',{name:'Event Ordering Enabled',exact:true}).uncheck();
@@ -708,7 +857,7 @@ test('event management exposes a printable QR code and the event ordering link',
   await expect.poll(() => dialog.getByRole('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
 });
 
-test('idle dashboard retains its last successful data through failed updates and recovers without route refreshes', async ({ page }) => {
+test('dashboard retains its last successful data through failed realtime updates and recovers without route refreshes', async ({ page }) => {
   await page.clock.install();
   let mode = 'unavailable';
   let requests = 0;
@@ -716,24 +865,27 @@ test('idle dashboard retains its last successful data through failed updates and
     requests++;
     if (mode === 'network') return route.abort('failed');
     if (mode === 'malformed') return route.fulfill({ json: { orders: [] } });
+    if (mode === 'missing-setting') return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
     if (mode === 'unauthorized') return route.fulfill({ status: 401, json: { error: 'Unable to verify your session.' } });
     if (mode === 'unavailable') return route.fulfill({ status: 503, json: { error: 'Temporary database outage.' } });
-    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: true, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
   });
   await fixture(page, 'dashboard-live');
   await expect(page.getByRole('link', { name: 'Active Orders: 1', exact: true })).toBeVisible();
-  for (const failure of ['unavailable', 'network', 'malformed', 'unauthorized']) {
+  for (const failure of ['unavailable', 'network', 'malformed', 'missing-setting', 'unauthorized']) {
     mode = failure;
     const before = requests;
-    await page.clock.fastForward(15000);
+    await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
     await expect.poll(() => requests).toBeGreaterThan(before);
     await expect(page.getByRole('status').filter({ hasText: 'Showing the last successful update' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Active Orders: 1', exact: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Show Public Menu', exact: true })).toBeChecked();
+    await expect(page.getByRole('region', { name: 'Public Menu', exact: true }).getByRole('alert')).toHaveCount(0);
     await expect(page.getByText('Alex Taylor', { exact: true })).toBeVisible();
   }
   mode = 'success';
-  await page.clock.fastForward(15000);
+  await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
   await expect(page.getByRole('link', { name: 'Active Orders: 0', exact: true })).toBeVisible();
   await expect(page.getByText('Showing the last successful update', { exact: false })).toHaveCount(0);
   await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeChecked();
@@ -745,7 +897,7 @@ test('dashboard retries a failed initial load without navigating away', async ({
   await page.route('**/api/admin/dashboard', (route) => route.fulfill({ json: { orders: [], menu: [], events: [] } }));
   await fixture(page, 'dashboard-initial-error');
   await expect(page.getByRole('alert')).toHaveText('Initial dashboard load failed.');
-  await page.clock.fastForward(15000);
+  await page.evaluate(() => window.dispatchEvent(new Event('online')));
   await expect(page.getByRole('link', { name: 'Active Orders: 0', exact: true })).toBeVisible();
   await expect(page.getByText('Initial dashboard load failed.')).toHaveCount(0);
 });
@@ -761,7 +913,7 @@ test('dashboard background requests never overlap and pause offline', async ({ p
     await route.fulfill({ json: { orders: [], menu: [], events: [] } });
   });
   await fixture(page, 'dashboard-live');
-  await page.clock.fastForward(15000);
+  await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
   await expect.poll(() => requests).toBe(1);
   await page.evaluate(() => {
     window.dispatchEvent(new Event('focus'));
@@ -780,12 +932,62 @@ test('dashboard background requests never overlap and pause offline', async ({ p
   await expect.poll(() => requests).toBeGreaterThan(beforeOffline);
 });
 
+test('supabase realtime updates dashboard, catches up after reconnect and reports disconnects', async ({ page }) => {
+  await page.clock.install();
+  let requests = 0;
+  await page.route('**/api/admin/dashboard', (route) => {
+    requests++;
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+  });
+  await fixture(page, 'dashboard-realtime');
+  await page.clock.fastForward(250);
+  await expect.poll(() => requests).toBe(1);
+  await expect(page.getByRole('link', { name: 'Active Orders: 0', exact: true })).toBeVisible();
+  const tables = await page.evaluate(() => Reflect.get(window, '__realtimeTables'));
+  expect(tables).toEqual(expect.arrayContaining(['orders', 'payments', 'inventory_items', 'inventory_allocations', 'inventory_order_stock', 'menu_set_items']));
+  await page.clock.fastForward(45000);
+  expect(requests).toBe(1);
+  await page.evaluate(() => {
+    Reflect.get(window, '__realtimeChange')('orders');
+    Reflect.get(window, '__realtimeChange')('payments');
+    Reflect.get(window, '__realtimeChange')('inventory_items');
+  });
+  await page.clock.fastForward(250);
+  await expect.poll(() => requests).toBe(2);
+  await page.evaluate(() => Reflect.get(window, '__realtimeStatus')('CHANNEL_ERROR'));
+  await expect(page.getByRole('status').filter({ hasText: 'Live updates are disconnected' })).toBeVisible();
+  await page.evaluate(() => Reflect.get(window, '__realtimeStatus')('SUBSCRIBED'));
+  await page.clock.fastForward(250);
+  await expect.poll(() => requests).toBe(3);
+  await expect(page.getByText('Live updates are disconnected', { exact: false })).toHaveCount(0);
+});
+
+test('admin realtime stock and order changes defer refreshes until an open edit closes', async ({ page }) => {
+  await page.clock.install();
+  await fixture(page, 'realtime-menu');
+  await page.clock.fastForward(250);
+  const count = () => page.evaluate(() => Reflect.get(window, '__refreshes') ?? 0);
+  await expect.poll(count).toBeGreaterThan(0);
+  await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
+  const before = await count();
+  await page.evaluate(() => {
+    Reflect.get(window, '__realtimeChange')('inventory_allocations');
+    Reflect.get(window, '__realtimeChange')('orders');
+  });
+  await page.clock.fastForward(250);
+  expect(await count()).toBe(before);
+  await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await expect.poll(count).toBeGreaterThan(before);
+});
+
 test('admin refreshes automatically while leaving open edits undisturbed', async ({ page }) => {
   await page.clock.install();
   await fixture(page, 'menu');
   const count = () => page.evaluate(() => (window as unknown as { __refreshes?: number }).__refreshes ?? 0);
   const initial = await count();
-  await page.clock.fastForward(15000);
+  await page.clock.fastForward(45000);
+  expect(await count()).toBe(initial);
+  await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
   await expect.poll(count).toBeGreaterThan(initial);
   await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
   const duringEdit = await count();
@@ -965,7 +1167,7 @@ test('customer order cards fit and signed-in navigation includes working Sign Ou
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('customer-orders.png'), fullPage: true });
   await page.goto('/__dashboard_test?kind=navigation');
-  await page.getByRole('button', { name: 'Open navigation' }).click();
+  await page.getByRole('button', { name: 'Open Navigation' }).click();
   await expect(page.getByRole('link', { name: 'Your Account', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Sign Out', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __signedOut: boolean }).__signedOut)).toBe(true);
@@ -987,7 +1189,8 @@ test('menu editor preserves descriptions when its CDN is unavailable', async ({ 
 test('site settings card summarizes operations and form saves all About content', async ({ page }, testInfo) => {
   await fixture(page, 'edit-settings');
   const settingsCard = page.getByRole('article');
-  for (const name of ['Ordering Overview', 'Payments and Charges', 'Contact and Social', 'About Content']) await expect(settingsCard.getByRole('region', { name })).toBeVisible();
+  for (const name of ['Ordering Overview', 'Public Menu Visibility', 'Payments and Charges', 'Contact and Social', 'About Content']) await expect(settingsCard.getByRole('region', { name })).toBeVisible();
+  await expect(settingsCard.getByRole('region', { name: 'Public Menu Visibility' })).toContainText('Visible');
   const orderingOverview = settingsCard.getByRole('region', { name: 'Ordering Overview' });
   await expect(orderingOverview).toContainText('Closed');
   await expect(orderingOverview).toHaveCSS('border-left-color', 'rgb(241, 91, 80)');
@@ -1008,6 +1211,9 @@ test('site settings card summarizes operations and form saves all About content'
   await cardEdit.click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByLabel('Allowed Maintenance Emails')).toHaveCount(0);
+  const publicMenu = dialog.getByRole('switch', { name: 'Show Public Menu', exact: true });
+  await expect(publicMenu).toBeChecked();
+  await publicMenu.click();
   await dialog.getByLabel('About Eyebrow').fill('Meet Papa');
   await dialog.getByLabel('About Heading').fill('Our flavour, our story');
   await dialog.getByLabel('About Page Heading').fill('The Full Papa’s Story');
@@ -1040,5 +1246,6 @@ test('site settings card summarizes operations and form saves all About content'
   expect(saved[0]).toBe('settings');
   expect(saved[1]).toBeNull();
   expect(saved[3]).not.toHaveProperty('maintenance_allowed_emails');
+  expect(saved[3].public_menu_enabled).toBe(false);
   expect(saved[3]).toMatchObject({ about_eyebrow: 'Meet Papa', about_heading: 'Our flavour, our story', about_page_heading: 'The Full Papa’s Story', about_content: 'Fresh ingredients and bold flavours.\n\nMade for South Wales events.', about_full_story: '<h2><strong>A longer story for the About page.</strong></h2>', about_image_path: null, about_image_alt: 'Papa serving freshly made tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Tacos being prepared for an event', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos serving at a festival', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck at a market' });
 });

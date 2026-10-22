@@ -493,7 +493,15 @@ test('pickup schedules generate one-order windows and protect bookings, locks an
 test('realtime publication is repeatable and retains table access policies', async () => {
   const database = await createDatabase();
   try {
-    const expected = [...publicUpdateTables, ...adminUpdateTables].sort();
+    const laterPublicationTables = new Set([
+      'menu_sets', 'menu_set_sections', 'menu_set_items',
+      'inventory_items', 'inventory_allocations', 'inventory_movements', 'inventory_order_stock',
+      'order_items', 'order_item_modifiers', 'payments', 'order_status_history',
+    ]);
+    const expected = [
+      ...publicUpdateTables.filter((table) => !laterPublicationTables.has(table)),
+      ...adminUpdateTables.filter((table) => !laterPublicationTables.has(table)),
+    ].sort();
     const published = () => database.query("select tablename from pg_publication_tables where pubname = 'supabase_realtime' and schemaname = 'public' order by tablename");
     assert.deepEqual((await published()).rows.map((row) => row.tablename), expected);
     const permissions = (await database.query("select table_name, grantee, privilege_type from information_schema.role_table_grants where table_schema = 'public' order by table_name, grantee, privilege_type")).rows;
@@ -920,8 +928,8 @@ async function createDatabase({ profileEmailUpgrade = true } = {}) {
   `);
   const files = (await readdir(sqlDirectory)).filter((file) => file.endsWith('.sql')).sort();
   for (const file of files) {
-    // Historical upgrade tests retain their original schema; menu-set tests apply 048 after seeding a pre-upgrade catalogue.
-    if (file === '048_menu_sets.sql' || file === '049_repair_customer_profiles.sql') continue;
+    // Historical upgrade tests stop at 047; inventory and linked-item suites apply every prerequisite in order.
+    if (file >= '048_menu_sets.sql') continue;
     if (!profileEmailUpgrade && file === '027_profiles_email.sql') continue;
     await database.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }
@@ -1131,7 +1139,7 @@ test('global and per-event controls block checkout at the database boundary', as
       ["update public.pickup_slots set is_enabled = false", /slot unavailable/, "update public.pickup_slots set is_enabled = true"],
       ["update public.events set pickup_lead_minutes = 180", /preparation lead time/, "update public.events set pickup_lead_minutes = 20"],
       ["update public.business_settings set cash_enabled = false", /Cash checkout unavailable/, "update public.business_settings set cash_enabled = true"],
-      ["update public.business_settings set minimum_order_pence = 1000", /Minimum order/, "update public.business_settings set minimum_order_pence = 0"],
+      ["update public.business_settings set minimum_order_pence = 1000", /Minimum food order/, "update public.business_settings set minimum_order_pence = 0"],
       ["update public.business_settings set service_fee_pence = 50", /fees do not match/, "update public.business_settings set service_fee_pence = 0"],
     ];
     for (const [disable, expected, restore] of cases) {
@@ -1254,7 +1262,7 @@ test('item snapshots preserve prices and nested order details respect ownership'
       await assert.rejects(database.exec('delete from public.stripe_webhook_events'), /permission denied/);
     });
     const { rows: tables } = await database.query("select relname, relrowsecurity from pg_class join pg_namespace on pg_namespace.oid = relnamespace where nspname = 'public' and relkind = 'r'");
-    assert.equal(tables.length, 18);
+    assert.equal(tables.length, 19);
     assert.ok(tables.every((table) => table.relrowsecurity));
   } finally {
     await database.close();

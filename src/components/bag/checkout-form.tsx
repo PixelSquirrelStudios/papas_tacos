@@ -15,11 +15,12 @@ import { pickupChoicesSchema, type PickupChoice } from '@/lib/pickup';
 import { catalogueUpdateEvent, siteUpdateEvent } from '@/lib/site-updates';
 import { EventSelection } from './event-selection';
 import { Skeleton } from '@/components/ui/skeleton';
+import { bagStockIssue } from '@/lib/inventory';
 
 export type CheckoutSlot = PickupChoice;
 
 export function CheckoutForm({ slots, name, phone, email, initialSlotError = false }: { slots: CheckoutSlot[]; name: string; phone: string; email: string; initialSlotError?: boolean }) {
-  const { lines, ready, catalogue, settings, orderingOpen, selectedEvent, selectedEventId, selectEvent } = useBag();
+  const { lines, ready, catalogue, stockAvailable, settings, orderingOpen, selectedEvent, selectedEventId, selectEvent } = useBag();
   const service = selectedEvent?.service_mode === 'car' || selectedEvent?.service_mode === 'table';
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
@@ -59,9 +60,11 @@ export function CheckoutForm({ slots, name, phone, email, initialSlotError = fal
   const subtotal = quotes.reduce((total, { quote }) => total + quote.total, 0);
   const total = subtotal + (settings?.service_fee_pence ?? 0) + (settings?.packaging_fee_pence ?? 0);
   const blockedReason = !catalogue.available || !settings ? 'We cannot check checkout availability right now. Please try again.'
+    : !stockAvailable ? 'Stock availability is being checked or is temporarily unavailable. Please refresh before paying.'
     : !lines.length ? 'Your bag is empty.'
     : lines.length > 50 ? 'Checkout supports up to 50 different items. Remove some items from your bag.'
     : quotes.some(({ quote }) => quote.issue) ? 'Some items need attention. Edit your bag to review unavailable items and required choices.'
+    : bagStockIssue(lines, catalogue) ? bagStockIssue(lines, catalogue)
     : selectedEvent?.is_private && !selectedEvent.ordering_access ? 'Scan the QR code provided at this event before ordering.'
     : !orderingOpen ? 'Ordering is currently unavailable. Check the current event ordering window.'
     : !settings.card_enabled ? 'Card payments are currently unavailable.'
@@ -102,13 +105,13 @@ export function CheckoutForm({ slots, name, phone, email, initialSlotError = fal
     }} className="min-w-0 space-y-6">
       <EventSelection disabled={pending} />
       <p className="text-sm text-muted-foreground">Fields marked (required) must be completed before payment.</p>
-      <div><Label htmlFor="checkout-name">{service ? 'Customer Name' : 'Collection Name'} <span aria-hidden="true" className="text-xs text-muted-foreground">(required)</span></Label><Input id="checkout-name" name="name" autoComplete="name" placeholder="Enter your full name" defaultValue={name} required maxLength={120} className="mt-2" disabled={pending} /></div>
-      <div><Label htmlFor="checkout-phone">Phone Number <span aria-hidden="true" className="text-xs text-muted-foreground">(required)</span></Label><Input id="checkout-phone" name="phone" type="tel" autoComplete="tel" placeholder="e.g. 07700 900123" defaultValue={phone} required minLength={3} maxLength={30} className="mt-2" disabled={pending} /></div>
+      <div><Label htmlFor="checkout-name">{service ? 'Customer Name' : 'Collection Name'} <span aria-hidden="true" className="text-xs text-muted-foreground">(Required)</span></Label><Input id="checkout-name" name="name" autoComplete="name" placeholder="Enter Your Full Name" defaultValue={name} required maxLength={120} className="mt-2" disabled={pending} /></div>
+      <div><Label htmlFor="checkout-phone">Phone Number <span aria-hidden="true" className="text-xs text-muted-foreground">(Required)</span></Label><Input id="checkout-phone" name="phone" type="tel" autoComplete="tel" placeholder="e.g. 07700 900123" defaultValue={phone} required minLength={3} maxLength={30} className="mt-2" disabled={pending} /></div>
       <div><Label htmlFor="checkout-email">Account Email</Label><Input id="checkout-email" type="email" value={email} readOnly className="mt-2" aria-describedby="checkout-email-help" /><p id="checkout-email-help" className="mt-2 text-xs text-muted-foreground">Your order details will be sent to this account email address.</p></div>
-      {service ? <fieldset disabled={pending} className="space-y-4"><legend className="mb-3 text-sm font-medium">Delivery to your {selectedEvent?.service_mode === 'car' ? 'car' : 'table'}</legend>
-        <div><Label htmlFor="checkout-location">{selectedEvent?.service_mode === 'car' ? 'Assigned Car Number' : 'Table Number'} <span aria-hidden="true" className="text-xs text-muted-foreground">(required)</span></Label><Input key={selectedEventId} id="checkout-location" name="locationNumber" placeholder={selectedEvent?.service_mode === 'car' ? 'e.g. 27 - use the number assigned by staff' : 'e.g. 12 - use the number on your table'} required maxLength={40} pattern="[a-zA-Z0-9 \\/\\-]+" className="mt-2" /></div>
-        {selectedEvent?.service_mode === 'car' && <div><Label htmlFor="checkout-plate">Number Plate (optional)</Label><Input key={selectedEventId} id="checkout-plate" name="numberPlate" placeholder="e.g. AB12 CDE" maxLength={20} pattern="[A-Z0-9 \\-]*" autoCapitalize="characters" className="mt-2 uppercase" onChange={(event) => { event.target.value = event.target.value.toUpperCase(); }} /></div>}
-      </fieldset> : <fieldset disabled={pending} className="min-w-0"><legend className="mb-3 text-sm font-medium">Pickup Time <span aria-hidden="true" className="text-xs text-muted-foreground">(required)</span></legend>
+      {service ? <fieldset disabled={pending} className="space-y-4"><legend className="mb-3 text-sm font-medium">Delivery to Your {selectedEvent?.service_mode === 'car' ? 'Car' : 'Table'}</legend>
+        <div><Label htmlFor="checkout-location">{selectedEvent?.service_mode === 'car' ? 'Assigned Car Number' : 'Table Number'} <span aria-hidden="true" className="text-xs text-muted-foreground">(Required)</span></Label><Input key={selectedEventId} id="checkout-location" name="locationNumber" placeholder={selectedEvent?.service_mode === 'car' ? 'e.g. 27 - use the number assigned by staff' : 'e.g. 12 - use the number on your table'} required maxLength={40} pattern="[a-zA-Z0-9 \\/\\-]+" className="mt-2" /></div>
+        {selectedEvent?.service_mode === 'car' && <div><Label htmlFor="checkout-plate">Number Plate (Optional)</Label><Input key={selectedEventId} id="checkout-plate" name="numberPlate" placeholder="e.g. AB12 CDE" maxLength={20} pattern="[A-Z0-9 \\-]*" autoCapitalize="characters" className="mt-2 uppercase" onChange={(event) => { event.target.value = event.target.value.toUpperCase(); }} /></div>}
+      </fieldset> : <fieldset disabled={pending} className="min-w-0"><legend className="mb-3 text-sm font-medium">Pickup Time <span aria-hidden="true" className="text-xs text-muted-foreground">(Required)</span></legend>
         {availableSlots.length > 0 && <p className="mb-4 text-sm text-muted-foreground">Choose a pickup time before continuing to payment.</p>}
         {!availableSlots.length && <p className="text-sm text-muted-foreground">No pickup times are currently available.</p>}
         {[...new Set(availableSlots.map((slot) => `${slot.event_id}:${eventDate(slot.starts_at)}`))].map((key) => {
@@ -121,7 +124,7 @@ export function CheckoutForm({ slots, name, phone, email, initialSlotError = fal
           </div>;
         })}
       </fieldset>}
-      <div><Label htmlFor="checkout-note">Order Note (optional)</Label><Textarea id="checkout-note" name="note" placeholder="Anything else our team needs to know about your order?" maxLength={1000} className="mt-2" disabled={pending} /></div>
+      <div><Label htmlFor="checkout-note">Order Note (Optional)</Label><Textarea id="checkout-note" name="note" placeholder="Anything else our team needs to know about your order?" maxLength={1000} className="mt-2" disabled={pending} /></div>
       {blockedReason && ready && <p role="status" className="border-l-2 border-primary pl-4 text-sm text-muted-foreground">{blockedReason}</p>}
       {error && <p role="alert" className="border-l-2 border-destructive pl-4 text-sm text-destructive">{error}</p>}
       <Button type="submit" className="h-12 w-full sm:w-auto" disabled={!canPay || pending}>{pending ? <LoaderCircle className="animate-spin" /> : <CreditCard />}{pending ? 'Opening Payment...' : `Pay ${money(total)}`}</Button>

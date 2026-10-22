@@ -12,13 +12,15 @@ import { FoodBadges } from '@/components/catalogue/food-badges';
 import { Badge } from '@/components/ui/badge';
 import { ExpandableDescription, RichDescription } from '@/components/catalogue/rich-description';
 import { OrderingNotice } from '@/components/catalogue/ordering-notice';
+import { maximumLineQuantity } from '@/lib/inventory';
 
-export function QuantityControl({ value, onChange, label }: { value: number; onChange: (value: number) => void; label: string }) {
-  return <div className="inline-flex h-11 shrink-0 items-center rounded-md border border-border bg-muted/50"><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value <= 1} onClick={() => onChange(value - 1)} aria-label={`Decrease ${label}`}><Minus /></Button><output className="w-8 text-center text-sm font-semibold tabular-nums" aria-label={`${label} quantity`}>{value}</output><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value >= 99} onClick={() => onChange(value + 1)} aria-label={`Increase ${label}`}><Plus /></Button></div>;
+export function QuantityControl({ value, onChange, label, max = 99 }: { value: number; onChange: (value: number) => void; label: string; max?: number }) {
+  return <div className="inline-flex h-11 shrink-0 items-center rounded-md border border-border bg-muted/50"><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value <= 1} onClick={() => onChange(value - 1)} aria-label={`Decrease ${label}`}><Minus /></Button><output className="w-8 text-center text-sm font-semibold tabular-nums" aria-label={`${label} quantity`}>{value}</output><Button size="icon" className="size-10 bg-brand-yellow/10 text-brand-yellow hover:bg-brand-yellow/25" disabled={value >= max} onClick={() => onChange(value + 1)} aria-label={`Increase ${label}`}><Plus /></Button></div>;
 }
 
-function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: BagLine; onDone: () => void }) {
-  const { add, ready, lines, orderingOpen } = useBag();
+function PickerForm({ item: originalItem, initial, onDone }: { item: CatalogueItem; initial?: BagLine; onDone: () => void }) {
+  const { add, ready, lines, orderingOpen, catalogue, stockAvailable } = useBag();
+  const item = catalogue.items.find((candidate) => candidate.id === originalItem.id) ?? originalItem;
   const [quantity, setQuantity] = useState(initial?.quantity || 1);
   const [optionIds, setOptionIds] = useState<string[]>(() => (initial?.optionIds || []).filter((id) => item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available))));
   const availableOptionIds = optionIds.filter((id) => item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available)));
@@ -30,6 +32,9 @@ function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: 
   const imageUrl = preview?.imageUrl || item.imageUrl;
   const imageAlt = preview?.imageUrl ? preview.image_alt || preview.name : item.image_alt || item.name;
   const bagFull = !initial && lines.length >= 100 && !lines.some((existing) => lineKey(existing) === lineKey(line));
+  const otherLines = lines.filter((existing) => !initial || lineKey(existing) !== lineKey(initial));
+  const maximum = maximumLineQuantity(line, otherLines, catalogue);
+  const stockIssue = quantity > maximum ? `Only ${maximum} more available. Stock is shared across all choices of this item.` : '';
   const allergens = [...new Set([...item.allergens, ...quote.options.flatMap((option) => option.allergens)])];
   const allergenNotice = item.allergen_note?.trim() || (allergens.length ? 'Cross-contamination may occur. Speak to our team about any food allergy before ordering.' : 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.');
   return <div className="flex min-h-0 flex-1 flex-col">
@@ -49,18 +54,20 @@ function PickerForm({ item, initial, onDone }: { item: CatalogueItem; initial?: 
               return [...retained, option.id];
             })} />
             {option.imageUrl && <span className="relative size-14 shrink-0 overflow-hidden rounded-md"><Image src={option.imageUrl} alt="" fill unoptimized sizes="56px" className="object-contain" /></span>}
-            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2"><span className="min-w-0 wrap-anywhere">{option.name}</span>{!option.is_available && <Badge className="rounded-md border-red-700 bg-red-600 font-semibold text-white">Sold Out</Badge>}{option.price_pence > 0 && <span className="ml-auto shrink-0 tabular-nums">+{money(option.price_pence)}</span>}</span>
+            <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-2"><span className="min-w-0 wrap-anywhere">{option.name}{option.linked_menu_item_id && (option.linked_quantity ?? 1) > 1 ? ` (×${option.linked_quantity})` : ''}</span>{!option.is_available && <Badge className="rounded-md border-red-700 bg-red-600 font-semibold text-white">Sold Out</Badge>}{option.price_pence > 0 && <span className="ml-auto shrink-0 tabular-nums">{option.pricing_mode === 'item' ? '' : '+'}{money(option.price_pence)}</span>}{option.linked_menu_item_id && option.pricing_mode !== 'item' && option.price_pence === 0 && <span className="ml-auto text-xs text-muted-foreground">Included</span>}</span>
           </label>{option.description && <RichDescription content={option.description} className="px-3 pb-3 text-sm leading-relaxed text-muted-foreground" />}</div>;
         })}
       </fieldset>)}
-      <section className="border-t border-border pt-5"><h3 className="mb-3 text-sm font-semibold">Allergen Information</h3>{allergens.length > 0 && <FoodBadges allergens={allergens} />}<div role="note" aria-label="Allergy notice" className="mt-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm leading-relaxed"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" /><p>{allergenNotice}</p></div></section>
+      <section className="border-t border-border pt-5"><h3 className="mb-3 text-sm font-semibold">Allergen Information</h3>{allergens.length > 0 && <FoodBadges allergens={allergens} />}<div role="note" aria-label="Allergy Notice" className="mt-3 flex items-start gap-2 rounded-md border border-primary/25 bg-primary/5 p-3 text-sm leading-relaxed"><CircleAlert className="mt-0.5 size-4 shrink-0 text-primary" aria-hidden="true" /><p>{allergenNotice}</p></div></section>
     </div>
     <div className="space-y-3 border-t border-border bg-background p-6">
       {initial && initial.optionIds.some((id) => !item.groups.some((group) => group.options.some((option) => option.id === id && option.is_available))) && <p role="status" className="text-sm text-pink">Unavailable extras have been removed. Review your choices before updating.</p>}
       {quote.issue && <p role="status" className="text-sm text-pink">{quote.issue}</p>}
       {bagFull && <p role="status" className="text-sm text-pink">Your bag has reached its item limit. Remove an item before adding another.</p>}
-      <div className="flex flex-wrap items-center justify-between gap-3"><QuantityControl value={quantity} onChange={setQuantity} label={item.name} /><strong className="text-xl tabular-nums">{money(quote.total)}</strong></div>
-      {orderingOpen ? <Button className="h-12 w-full" disabled={Boolean(quote.issue) || !ready || bagFull} onClick={() => { add(line, initial ? lineKey(initial) : undefined); onDone(); }}><ShoppingBag className="size-4" />{initial ? 'Update Bag' : 'Add to Bag'}</Button> : <OrderingNotice fullWidth />}
+      {stockIssue && <p role="status" className="text-sm text-pink">{stockIssue}</p>}
+      {!stockAvailable && <p role="status" className="text-sm text-muted-foreground">Checking stock availability. If this persists, refresh the page.</p>}
+      <div className="flex flex-wrap items-center justify-between gap-3"><QuantityControl value={quantity} onChange={setQuantity} label={item.name} max={maximum} /><strong className="text-xl tabular-nums">{money(quote.total)}</strong></div>
+      {orderingOpen ? <Button className="h-12 w-full" disabled={Boolean(quote.issue) || Boolean(stockIssue) || !ready || bagFull} onClick={() => { if (add(line, initial ? lineKey(initial) : undefined)) onDone(); }}><ShoppingBag className="size-4" />{initial ? 'Update Bag' : 'Add to Bag'}</Button> : <OrderingNotice fullWidth />}
     </div>
   </div>;
 }

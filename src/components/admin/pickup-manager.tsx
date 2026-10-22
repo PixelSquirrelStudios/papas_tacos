@@ -2,6 +2,7 @@
 
 import { useId, useState, useTransition } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { ArrowRight, CalendarDays, ChevronDown, CircleCheck, CircleSlash, Clock3, LockKeyhole, MapPin, Pause, Pencil, Plus, TicketCheck, Timer } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { RecordEditor } from './record-editor';
@@ -33,7 +34,18 @@ export function PickupManager({ events, schedules, slots }: { events: AdminRow[]
   const canEdit = eligible.some((entry) => entry.id === event?.id);
   return <main className="min-w-0 p-4 sm:p-8">
     <h1 className="mb-6 text-2xl font-semibold">Pickup Slots</h1>
-    <div className="grid min-w-0 gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
+    {!events.length ? <section aria-labelledby="no-pickup-events" className="overflow-hidden rounded-xl border border-turquoise/25 bg-card">
+      <div className="flex flex-col items-start gap-5 bg-gradient-to-br from-turquoise/10 via-transparent to-brand-yellow/5 p-6 sm:flex-row sm:p-8">
+        <div className="grid size-16 shrink-0 place-items-center rounded-2xl border border-turquoise/25 bg-turquoise/10"><CalendarDays className="size-8 text-turquoise" aria-hidden="true" /></div>
+        <div className="min-w-0 max-w-2xl"><h2 id="no-pickup-events" className="text-xl font-semibold">No Pickup Events</h2><p className="mt-3 text-sm leading-relaxed text-muted-foreground">Pickup slots organise collection times for events with pickup service. Table and car service events do not appear here because they use delivery numbers instead.</p>
+          <Button asChild className="mt-5 h-11"><Link href="/admin/events"><CalendarDays />Manage Events<ArrowRight /></Link></Button>
+        </div>
+      </div>
+      <div className="grid gap-5 border-t border-border p-6 sm:grid-cols-2 sm:p-8">
+        <div className="flex gap-3"><Clock3 className="mt-0.5 size-5 shrink-0 text-brand-yellow" aria-hidden="true" /><div><h3 className="font-semibold">Plan Collection Times</h3><p className="mt-2 text-sm leading-relaxed text-muted-foreground">Create an event with Pickup as its service type. Once ordering is enabled and open, return here to set its schedule and preparation time.</p></div></div>
+        <div className="flex gap-3"><TicketCheck className="mt-0.5 size-5 shrink-0 text-turquoise" aria-hidden="true" /><div><h3 className="font-semibold">Manage Availability</h3><p className="mt-2 text-sm leading-relaxed text-muted-foreground">Review available, taken and locked collection times, and lock individual slots when you need to control capacity.</p></div></div>
+      </div>
+    </section> : <div className="grid min-w-0 gap-6 lg:grid-cols-[280px_minmax(0,1fr)]">
       <nav aria-label="Pickup Events" className="flex min-w-0 flex-col gap-3">
         {events.map((entry) => {
           const selectedEvent = entry.id === event?.id;
@@ -51,7 +63,6 @@ export function PickupManager({ events, schedules, slots }: { events: AdminRow[]
             <span className="mt-4 flex flex-wrap items-center justify-between gap-2 border-t border-border/70 pt-3 text-xs font-medium"><span className={`inline-flex items-center gap-1.5 ${open ? 'text-turquoise' : paused ? 'text-brand-yellow' : 'text-muted-foreground'}`}><StatusIcon aria-hidden="true" className="size-3.5" />{open ? 'Open' : paused ? 'Paused' : entry.pickup_enabled ? 'Closed' : 'Pickup Disabled'}</span><span className="text-muted-foreground">{eventSchedule ? `${slots.filter((slot) => slot.event_id === entry.id).length} slots` : 'Not Scheduled'}</span></span>
           </button>;
         })}
-        {!events.length && <p className="text-sm text-muted-foreground">No events yet.</p>}
       </nav>
       {event && <section aria-label="Pickup Times" className="min-w-0 lg:border-l lg:pl-6">
         <div className="mb-5 flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-xl font-semibold">Collection Times</h2>{schedule && <p className="mt-2 flex items-center gap-2 text-sm text-muted-foreground"><Timer aria-hidden="true" className="size-4 text-brand-yellow" />{String(schedule.preparation_minutes)} min preparation</p>}</div>
@@ -88,7 +99,7 @@ export function PickupManager({ events, schedules, slots }: { events: AdminRow[]
         </div>;
         })}
       </section>}
-    </div>
+    </div>}
     {editing && <RecordEditor resourceKey="slots" row={schedule ?? null} initialValues={{ event_id: event?.id }} references={{ events: eligible }} onClose={() => setEditing(false)} onSaved={() => { setEditing(false); notifySiteUpdated(); router.refresh(); }} />}
   </main>;
 }

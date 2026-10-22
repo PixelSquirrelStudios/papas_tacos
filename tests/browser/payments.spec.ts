@@ -27,7 +27,7 @@ test('pickup confirmation email displays branding and a clear staff reference', 
   await expect(page.getByRole('heading', { name: 'Your pickup order is confirmed.' })).toBeVisible();
   await expect(page.getByText('Order #1234', { exact: true })).toBeVisible();
   await expect(page.getByText('Show this order number to our staff when collecting.')).toBeVisible();
-  await expect(page.getByRole('link', { name: 'View order and receipt' })).toHaveAttribute('href', `https://tacos.example/account?view=orders&order=${itemId}`);
+  await expect(page.getByRole('link', { name: 'View Order and Receipt' })).toHaveAttribute('href', `https://tacos.example/account?view=orders&order=${itemId}`);
   await expect.poll(() => page.getByRole('img', { name: "Papa's Tacos" }).evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('pickup-email.png'), fullPage: true });
@@ -84,6 +84,7 @@ test.beforeAll(async () => {
 });
 
 async function fixture(page: Page, kind: string, admin = false, fees = { service: 50, packaging: 25 }) {
+  await page.route('**/api/stock*', (route) => route.fulfill({ json: { stock: [{ menu_item_id: itemId, tracking_mode: 'none', available_quantity: null }] } }));
   const choices = kind === 'checkout-empty' ? [] : structuredClone(pickupChoices);
   await page.goto('/sign-in');
   const styles = await page.locator('link[rel="stylesheet"]').evaluateAll((links) => links.map((link) => (link as HTMLLinkElement).href));
@@ -174,12 +175,12 @@ test('table and car checkout require delivery numbers without pickup slots', asy
     await expect(location).toBeVisible();
     await expect(location).toHaveAttribute('required', '');
     await expect(location).toHaveAttribute('placeholder', mode === 'car' ? 'e.g. 27 - use the number assigned by staff' : 'e.g. 12 - use the number on your table');
-    await expect(page.getByRole('textbox', { name: 'Customer Name', exact: true })).toHaveAttribute('placeholder', 'Enter your full name');
+    await expect(page.getByRole('textbox', { name: 'Customer Name', exact: true })).toHaveAttribute('placeholder', 'Enter Your Full Name');
     await expect(page.getByRole('textbox', { name: 'Phone Number', exact: true })).toHaveAttribute('required', '');
-    await expect(page.getByLabel('Order Note (optional)', { exact: true })).not.toHaveAttribute('required');
-    await expect(page.locator('label[for="checkout-location"]')).toContainText('(required)');
+    await expect(page.getByLabel('Order Note (Optional)', { exact: true })).not.toHaveAttribute('required');
+    await expect(page.locator('label[for="checkout-location"]')).toContainText('(Required)');
     await expect(page.getByRole('radio')).toHaveCount(0);
-    await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Ordering For' })).toHaveCount(0);
     await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Ordering Information' })).toContainText('Delivery times may be longer during busy periods.');
     await expect(page.getByText(/pickup slot/i)).toHaveCount(0);
@@ -189,8 +190,8 @@ test('table and car checkout require delivery numbers without pickup slots', asy
     expect(await page.evaluate(() => (window as unknown as { __checkoutInput?: unknown }).__checkoutInput)).toBeUndefined();
     await location.fill('27');
     if (mode === 'car') {
-      await page.getByRole('textbox', { name: 'Number Plate (optional)' }).fill('ab12 cde');
-      await expect(page.getByRole('textbox', { name: 'Number Plate (optional)' })).toHaveValue('AB12 CDE');
+      await page.getByRole('textbox', { name: 'Number Plate (Optional)' }).fill('ab12 cde');
+      await expect(page.getByRole('textbox', { name: 'Number Plate (Optional)' })).toHaveValue('AB12 CDE');
     }
     await pay.click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __checkoutInput?: { locationNumber: string } }).__checkoutInput?.locationNumber)).toBe('27');
@@ -273,8 +274,8 @@ test('service customer orders show delivery and two progress steps with completi
   await fixture(page, 'service-complete');
   await expect(page.getByRole('heading', { name: 'Delivery', exact: true })).toBeVisible();
   await expect(page.getByText('Car 27 / AB12 CDE - delivery as soon as possible')).toBeVisible();
-  await expect(page.getByRole('list', { name: 'Order progress' }).getByRole('listitem')).toHaveCount(2);
-  await expect(page.getByRole('list', { name: 'Order progress' })).toContainText('Complete');
+  await expect(page.getByRole('list', { name: 'Order Progress' }).getByRole('listitem')).toHaveCount(2);
+  await expect(page.getByRole('list', { name: 'Order Progress' })).toContainText('Complete');
   await expect(page.getByText('Ready for Pickup', { exact: true })).toHaveCount(0);
 });
 
@@ -292,7 +293,7 @@ test('checkout distinguishes empty schedules and permits an authorized maintenan
 
 test('checkout shows only available times and removes a selected time when booked', async ({ page }, testInfo) => {
   const choices = await fixture(page, 'checkout');
-  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(1);
+  await expect(page.getByRole('combobox', { name: 'Ordering For' })).toHaveCount(1);
   await expect(page.getByRole('radio')).toHaveCount(1);
   await expect(page.getByRole('group', { name: 'Pickup Time' }).getByText(/Available|Taken|Locked|Unavailable/, { exact: true })).toHaveCount(0);
   await page.getByRole('radio', { name: '18:00 - 18:20', exact: true }).check();

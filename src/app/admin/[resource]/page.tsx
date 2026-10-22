@@ -31,8 +31,9 @@ export default async function ResourcePage({ params }: { params: Promise<{ resou
     [rows, references, associations] = await Promise.all([
       adminRows(resource.table, { order: resource.order }),
       Promise.all(tables.map(async (table) => [table, await adminRows(table, { order: ['menu_categories', 'modifier_groups'].includes(table) ? 'sort_order.asc,id.asc' : 'id.asc' })] as const)).then(Object.fromEntries),
-      key === 'menu' ? adminRows('menu_item_modifier_groups', { order: 'sort_order.asc,modifier_group_id.asc' }) : Promise.resolve([]),
+      ['menu', 'options'].includes(key) ? adminRows('menu_item_modifier_groups', { order: 'sort_order.asc,modifier_group_id.asc' }) : Promise.resolve([]),
     ]);
+    if (key === 'options') references.menu_items = (references.menu_items ?? []).filter((item) => !item.archived_at && item.item_kind !== 'group' && !associations.some((link) => link.menu_item_id === item.id));
   } catch (failure) { error = adminError(failure); }
   if (error) return <main className="p-8"><h1 className="text-2xl font-semibold">{resource.title}</h1><p role="alert" className="mt-5 text-destructive">{error}</p></main>;
   return <ResourceManager resourceKey={key} rows={rows} references={references} associations={associations} />;

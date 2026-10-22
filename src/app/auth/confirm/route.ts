@@ -27,7 +27,7 @@ a{color:#6ed8cc}small{display:block;margin-top:24px;color:#c8ceca}
 <p>Tap below to finish signing in and return to where you left off. Simply opening this page does not use your sign-in link.</p>
 <form method="post"><button type="submit">Continue Signing In</button></form>
 <small>Only continue if you requested this link. Otherwise, you can safely close this page.</small>
-<p><a href="/sign-in?next=${encodeURIComponent(safeReturnPath(params.get('next')))}">Request a new sign-in link</a></p>
+<p><a href="/sign-in?next=${encodeURIComponent(safeReturnPath(params.get('next')))}">Request a New Sign-in Link</a></p>
 </main></body></html>`, {
     headers: {
       'Content-Type': 'text/html; charset=utf-8',

@@ -2,9 +2,9 @@
 
 import { useEffect, useEffectEvent, useOptimistic, useRef, useState, useTransition } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
-import { Check, LoaderCircle, Power, Wrench } from 'lucide-react';
+import { Check, LoaderCircle, Power, UtensilsCrossed, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
-import { setMaintenanceMode, setOrderingStatus, updateOrder } from '@/app/admin/actions';
+import { setMaintenanceMode, setOrderingStatus, setPublicMenuEnabled, updateOrder } from '@/app/admin/actions';
 import { orderOperations } from '@/lib/admin/orders';
 import type { AdminRow } from '@/lib/admin/resources';
 import { notifySiteUpdated, siteUpdateEvent } from '@/lib/site-updates';
@@ -39,12 +39,11 @@ export function AdminRefresh({ onRefresh }: { onRefresh?: () => Promise<void> } 
     const update = (event?: Event) => { if (!(event instanceof CustomEvent && event.detail?.localSave)) refresh(); };
     const observer = new MutationObserver(() => { if (queued.current) refresh(); });
     observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-admin-editing'] });
-    const timer = setInterval(update, 15000);
     window.addEventListener('focus', update);
     window.addEventListener('online', update);
     window.addEventListener(siteUpdateEvent, update);
     document.addEventListener('visibilitychange', update);
-    return () => { observer.disconnect(); clearInterval(timer); window.removeEventListener('focus', update); window.removeEventListener('online', update); window.removeEventListener(siteUpdateEvent, update); document.removeEventListener('visibilitychange', update); };
+    return () => { observer.disconnect(); window.removeEventListener('focus', update); window.removeEventListener('online', update); window.removeEventListener(siteUpdateEvent, update); document.removeEventListener('visibilitychange', update); };
   }, []);
   return null;
 }
@@ -73,6 +72,33 @@ export function OnlineOrderingControl({ status, updatedAt }: { status: string; u
     </div>
     {!updatedAt && <p role="alert" className="mt-3 text-sm text-muted-foreground">Ordering settings are unavailable.</p>}
     {error && <p id="ordering-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+  </section>;
+}
+
+export function PublicMenuControl({ enabled, updatedAt }: { enabled?: boolean; updatedAt?: string }) {
+  const router = useRouter();
+  const [current, setCurrent] = useOptimistic(enabled ?? false);
+  const [pending, startTransition] = useTransition();
+  const [error, setError] = useState('');
+  const available = typeof enabled === 'boolean' && Boolean(updatedAt);
+  return <section aria-labelledby="public-menu-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${current ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
+    <div className="flex flex-wrap items-center justify-between gap-5">
+      <div className="flex min-w-0 items-center gap-4"><UtensilsCrossed className="size-7 shrink-0 text-turquoise" aria-hidden="true" /><div><h2 id="public-menu-title" className="text-sm font-medium text-muted-foreground">Public Menu</h2><p role="status" className="mt-1 text-2xl font-semibold">{!available ? 'Status Unavailable' : pending ? 'Updating...' : current ? 'Public Menu Visible' : 'Public Menu Hidden'}</p></div></div>
+      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{current ? 'Shown' : 'Hidden'}</span><Switch aria-label="Show Public Menu" checked={current} disabled={pending || !available} aria-describedby={error ? 'public-menu-error' : undefined} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
+        if (!updatedAt) return;
+        setError('');
+        startTransition(async () => {
+          setCurrent(checked);
+          try {
+            const result = await setPublicMenuEnabled(checked, updatedAt);
+            if (!result.ok) { setError(result.error ?? 'Unable to update public menu visibility.'); router.refresh(); }
+            else { toast.success(checked ? 'Public menu shown' : 'Public menu hidden'); notifySiteUpdated(); }
+          } catch { setError('Unable to update public menu visibility. Please try again.'); }
+        });
+      }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
+    </div>
+    {!available && <p role="alert" className="mt-3 text-sm text-muted-foreground">Unable to load the current public menu setting. Refresh the dashboard to retry.</p>}
+    {error && <p id="public-menu-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
   </section>;
 }
 

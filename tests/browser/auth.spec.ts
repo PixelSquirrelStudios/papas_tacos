@@ -15,7 +15,7 @@ test('home renders its image without horizontal overflow', async ({ page }, test
 
 test('navigation drawer closes on a link and returns focus on Escape', async ({ page }) => {
   await page.goto('/');
-  const trigger = page.getByRole('button', { name: 'Open navigation' });
+  const trigger = page.getByRole('button', { name: 'Open Navigation' });
   await trigger.click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.keyboard.press('Escape');
@@ -81,15 +81,15 @@ test('auth tabs preserve checkout return path and validate before sending', asyn
 test('password visibility toggles without changing its value or submitting either form', async ({ page }) => {
   for (const mode of ['signup', 'login']) {
     await page.goto(`/sign-in?mode=${mode}`);
-    if (mode === 'login') await page.getByRole('button', { name: 'Use a password instead', exact: true }).click();
+    if (mode === 'login') await page.getByRole('button', { name: 'Use a Password Instead', exact: true }).click();
     const password = page.getByLabel('Password', { exact: true });
     await password.fill('A-long-password-123');
     await expect(password).toHaveAttribute('type', 'password');
-    await page.getByRole('button', { name: 'Show password', exact: true }).click();
+    await page.getByRole('button', { name: 'Show Password', exact: true }).click();
     await expect(password).toHaveAttribute('type', 'text');
     await expect(password).toHaveValue('A-long-password-123');
-    await expect(page.getByRole('button', { name: 'Hide password', exact: true })).toHaveAttribute('aria-pressed', 'true');
-    await page.getByRole('button', { name: 'Hide password', exact: true }).click();
+    await expect(page.getByRole('button', { name: 'Hide Password', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await page.getByRole('button', { name: 'Hide Password', exact: true }).click();
     await expect(password).toHaveAttribute('type', 'password');
     await expect(password).toHaveValue('A-long-password-123');
     await expect(page.locator('main').getByRole('alert')).toHaveCount(0);
@@ -99,13 +99,13 @@ test('password visibility toggles without changing its value or submitting eithe
 test('password sign-in is optional and keeps the checkout return path', async ({ page }) => {
   await page.goto('/sign-in?next=%2Fcheckout%3Fevent%3Ddrive-in');
   await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
-  await expect(page.getByRole('button', { name: 'Use a password instead', exact: true })).toHaveAttribute('data-variant', 'outline');
-  await page.getByRole('button', { name: 'Use a password instead', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Use a Password Instead', exact: true })).toHaveAttribute('data-variant', 'outline');
+  await page.getByRole('button', { name: 'Use a Password Instead', exact: true }).click();
   await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('autocomplete', 'current-password');
   await expect(page.getByRole('button', { name: 'Sign In with Password', exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Use an email sign-in link instead', exact: true })).toHaveAttribute('data-variant', 'outline');
+  await expect(page.getByRole('button', { name: 'Use an Email Sign-In Link Instead', exact: true })).toHaveAttribute('data-variant', 'outline');
   await expect(page.locator('input[name="next"]').first()).toHaveValue('/checkout?event=drive-in');
-  await page.getByRole('button', { name: 'Use an email sign-in link instead', exact: true }).click();
+  await page.getByRole('button', { name: 'Use an Email Sign-In Link Instead', exact: true }).click();
   await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Email Me a Sign-In Link', exact: true })).toBeVisible();
 });
@@ -120,7 +120,7 @@ test('email link preview is repeatable without consuming the sign-in token', asy
   await page.goto(path);
   await expect(page.getByRole('button', { name: 'Continue Signing In' })).toBeVisible();
   await expect(page.locator('form')).toHaveAttribute('method', 'post');
-  await expect(page.getByRole('link', { name: 'Request a new sign-in link' })).toHaveAttribute('href', '/sign-in?next=%2Fcheckout');
+  await expect(page.getByRole('link', { name: 'Request a New Sign-in Link' })).toHaveAttribute('href', '/sign-in?next=%2Fcheckout');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   const submitted = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/auth/confirm');
   await page.getByRole('button', { name: 'Continue Signing In' }).click();
@@ -147,14 +147,14 @@ test('header actions fit and both auth tabs stay inside their holder', async ({ 
       expect(contained).toBe(true);
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     }
-    await expect(page.getByRole('navigation', { name: 'Account navigation' }).getByRole('link', { name: 'Sign In' })).toBeVisible();
-    await expect(page.getByRole('navigation', { name: 'Account navigation' }).getByRole('link', { name: 'The Menu', exact: true })).toBeVisible();
-    for (const control of [page.getByRole('link', { name: /Your bag,/ }), page.getByRole('button', { name: 'Open navigation' })]) {
+    await expect(page.getByRole('navigation', { name: 'Account Navigation' }).getByRole('link', { name: 'Sign In' })).toBeVisible();
+    await expect(page.getByRole('navigation', { name: 'Account Navigation' }).getByRole('link', { name: 'The Menu', exact: true })).toBeVisible();
+    for (const control of [page.getByRole('link', { name: /Your bag,/ }), page.getByRole('button', { name: 'Open Navigation' })]) {
       expect(await control.evaluate((element) => getComputedStyle(element).backgroundColor)).not.toBe('rgba(0, 0, 0, 0)');
     }
     await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
     await expect.poll(() => page.getByRole('banner').evaluate((element) => Math.round(element.getBoundingClientRect().top))).toBe(0);
-    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await page.getByRole('button', { name: 'Open Navigation' }).click();
     await expect(page.getByRole('dialog')).toBeVisible();
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).not.toBeVisible();

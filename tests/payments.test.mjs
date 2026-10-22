@@ -50,7 +50,7 @@ test('pickup email has prominent order reference, escaped content, pickup detail
   assert.match(email.text, /25 Sept 2026, 18:00 - 18:15/);
   assert.match(email.text, /Total paid: £12.75/);
   assert.match(email.text, /view=orders&order=00000000-0000-4000-8000-000000000001/);
-  assert.match(email.html, /View order and receipt/);
+  assert.match(email.html, /View Order and Receipt/);
   assert.match(email.html, /&lt;script&gt;Customer/);
   assert.match(email.html, /&lt;img src=x onerror=alert\(1\)&gt;/);
   assert.ok(!email.html.includes('<script>'));
@@ -423,6 +423,63 @@ test('catalogue API enforces maintenance access without changing saved ordering 
   } finally { delete globalThis.__catalogueAccess; }
 });
 
+test('admin QR bypass reaches catalogue, stock and checkout without exposing the key or bypassing stock checks', async () => {
+  const state = { role: 'admin', key: 'c'.repeat(64), payload: null, stockKey: null };
+  const originalFetch = globalThis.fetch;
+  globalThis.__adminOrderPreview = state;
+  globalThis.fetch = async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (String(url).endsWith('/check_event_ordering_access')) return Response.json(body.supplied_key === state.key);
+    assert.ok(String(url).endsWith('/get_event_stock'));
+    state.stockKey = body.supplied_key;
+    return Response.json([]);
+  };
+  const modules = {
+    'server-only': '',
+    'next/headers': 'export async function cookies() { return {get() { return undefined; }}; } export async function headers() { return new Headers({origin:"http://localhost:3000"}); }',
+    'next/navigation': 'export function redirect() {}',
+    'next/cache': 'export function revalidatePath() {}',
+    '@/lib/auth/session': `export async function getViewer() { return {user:{id:"${customerId}",email:"admin@example.test"},profile:{role:globalThis.__adminOrderPreview.role}}; }`,
+    '@/lib/admin/data': `export async function adminRequest(table) {
+      if (globalThis.__adminOrderPreview.role !== 'admin') throw new Error('Admin access required');
+      return table === 'events' ? [{is_private:true}] : [{access_key:globalThis.__adminOrderPreview.key}];
+    }`,
+    '@/lib/catalogue/data': `export async function getMaintenanceMode() { return false; }
+      export async function getCatalogue() { return {}; }
+      export async function getSettings() { return {}; }
+      export async function getEvents() { return {events:[{id:"${orderId}",is_private:true}]}; }`,
+    '@/lib/supabase/config': 'export function supabaseConfig() { return {url:"https://database.example",key:"public-test-key"}; }',
+    '@/lib/payments/server': `export function checkoutConfigured() { return true; }
+      export function stripeClient() { throw new Error('Must not bypass failed reservation'); }
+      export function paymentDatabase() { return {async rpc(name,args) {
+        globalThis.__adminOrderPreview.payload = args.payload;
+        return {error:{message:args.payload.eventAccess ? 'Stock changed. Review your bag before paying.' : 'Scan the QR code provided at this event before ordering'}};
+      }}; }`,
+  };
+  try {
+    const catalogue = await load('src/app/api/catalogue/route.ts', modules);
+    const stock = await load('src/app/api/stock/route.ts', modules);
+    const checkout = await load('src/app/(public)/checkout/actions.ts', modules);
+    const response = await catalogue.GET();
+    const data = await response.json();
+    assert.equal(data.events[0].ordering_access, true);
+    assert.equal(data.events[0].admin_qr_bypass, true);
+    assert.equal(JSON.stringify(data).includes(state.key), false);
+    assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
+    assert.equal((await stock.GET(new Request(`http://localhost/api/stock?eventId=${orderId}`))).status, 200);
+    assert.equal(state.stockKey, state.key);
+    const input = { key: orderId, eventId: orderId, locationNumber: '27', name: 'Admin', phone: '07000000000', note: '', expectedTotal: 800, lines: [{ itemId: orderId, optionIds: [], quantity: 1 }] };
+    assert.match((await checkout.startCheckout(input)).error, /Stock changed/);
+    assert.equal(state.payload.eventAccess, state.key);
+    state.role = 'customer';
+    const customer = await (await catalogue.GET()).json();
+    assert.equal(customer.events[0].ordering_access, false);
+    assert.equal(customer.events[0].admin_qr_bypass, false);
+    assert.match((await checkout.startCheckout(input)).error, /Scan the QR code/);
+    assert.equal('eventAccess' in state.payload, false);
+  } finally { globalThis.fetch = originalFetch; delete globalThis.__adminOrderPreview; }
+});
+
 test('private event QR validates access and sets a protected cookie before redirecting without the secret', async () => {
   const state = { allowed: true, fail: false, checked: [] };
   globalThis.__privateQr = state;
@@ -477,6 +534,8 @@ test('event access checks use the private cookie and fail explicitly when valida
   try {
     const { checkEventAccess, savedEventAccess } = await load('src/lib/event-access.ts', {
       'server-only': '', 'next/headers': 'export async function cookies() { return {get() { return {value:globalThis.__accessCookie.key}; }}; }',
+      '@/lib/auth/session': 'export async function getViewer() { return null; }',
+      '@/lib/admin/data': 'export async function adminRequest() { throw new Error("Anonymous access must not use admin RPCs"); }',
       '@/lib/supabase/config': 'export function supabaseConfig() { return {url:"https://database.example",key:"public-test-key"}; }',
     });
     assert.equal(await savedEventAccess(orderId), state.key);
@@ -494,6 +553,46 @@ test('event access checks use the private cookie and fail explicitly when valida
     state.result = { allowed: true };
     await assert.rejects(checkEventAccess(orderId, 'a'.repeat(64)));
   } finally { globalThis.fetch = originalFetch; delete globalThis.__accessCookie; }
+});
+
+test('admin event access resolves private keys on the server without granting customers a QR bypass', async () => {
+  const state = { role: 'admin', key: 'a'.repeat(64), cookie: undefined, private: true, calls: [], fail: false };
+  globalThis.__adminEventAccess = state;
+  try {
+    const { savedEventAccess } = await load('src/lib/event-access.ts', {
+      'server-only': '',
+      'next/headers': 'export async function cookies() { return {get() { return {value:globalThis.__adminEventAccess.cookie}; }}; }',
+      '@/lib/auth/session': 'export async function getViewer() { return {profile:{role:globalThis.__adminEventAccess.role}}; }',
+      '@/lib/admin/data': `export async function adminRequest(...args) {
+        const state = globalThis.__adminEventAccess;
+        state.calls.push(args);
+        if (state.fail) throw new Error('Admin event access unavailable');
+        return args[0] === 'events' ? [{is_private:state.private}] : [{access_key:state.key}];
+      }`,
+      '@/lib/supabase/config': 'export function supabaseConfig() { return null; }',
+    });
+    assert.equal(await savedEventAccess(orderId), state.key);
+    assert.deepEqual(state.calls, [
+      ['events', { id: `eq.${orderId}`, select: 'id,is_private' }],
+      ['rpc/admin_event_ordering_key', {}, 'POST', { event_uuid: orderId }],
+    ]);
+    assert.equal(state.cookie, undefined);
+    state.calls = [];
+    state.role = 'customer';
+    assert.equal(await savedEventAccess(orderId), undefined);
+    assert.deepEqual(state.calls, []);
+    state.cookie = 'b'.repeat(64);
+    assert.equal(await savedEventAccess(orderId), state.cookie);
+    state.role = 'admin';
+    state.private = false;
+    assert.equal(await savedEventAccess(orderId), state.cookie);
+    assert.equal(state.calls.filter(([table]) => table.startsWith('rpc/')).length, 0);
+    state.private = true;
+    state.key = 'invalid';
+    await assert.rejects(savedEventAccess(orderId));
+    state.fail = true;
+    await assert.rejects(savedEventAccess(orderId), /Admin event access unavailable/);
+  } finally { delete globalThis.__adminEventAccess; }
 });
 
 test('catalogue keeps events discoverable after event end when their ordering close is later', async () => {

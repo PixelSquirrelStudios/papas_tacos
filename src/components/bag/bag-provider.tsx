@@ -8,6 +8,9 @@ import { catalogueRequestEvent, catalogueUpdateEvent, siteUpdateEvent } from '@/
 import { EventOrderingInfo } from '@/components/catalogue/event-ordering-info';
 import { Button } from '@/components/ui/button';
 import { menuCatalogue } from '@/lib/catalogue/menu-sets';
+import { applyStock, bagStockIssue, type PublicStock } from '@/lib/inventory';
+import { useStock } from '@/hooks/use-stock';
+import { toast } from 'sonner';
 
 const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
@@ -16,7 +19,8 @@ type BagContextValue = {
   collectionEvents: TruckEvent[];
   events: TruckEvent[]; selectedEventId: string; selectedEvent?: TruckEvent;
   selectEvent: (id: string) => void;
-  add: (line: BagLine, replacing?: string, eventId?: string) => void; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
+  stockAvailable: boolean;
+  add: (line: BagLine, replacing?: string, eventId?: string, stock?: PublicStock) => boolean; setQuantity: (key: string, quantity: number) => void; remove: (key: string) => void;
   clearIfMatches: (purchased: BagLine[]) => void;
 };
 const BagContext = createContext<BagContextValue | null>(null);
@@ -29,10 +33,13 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
   const [now, setNow] = useState(0);
   const [selectedEventId, setSelectedEventId] = useState('');
+  const stock = useStock(selectedEventId);
+  const stockAvailable = stock?.available === true;
   const selectedEvent = data.events?.find((event) => event.id === selectedEventId);
-  const catalogue = menuCatalogue(data.catalogue, selectedEvent?.menu_set_id);
+  const baseCatalogue = menuCatalogue(data.catalogue, selectedEvent?.menu_set_id);
+  const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const eligibleEvents = selectedEventId ? (selectedEvent ? [selectedEvent] : []) : (data.events ?? []).filter(isPublicPickupEvent);
-  const orderingOpen = catalogue.available && canOrder(eligibleEvents, data.settings, now);
+  const orderingOpen = stockAvailable && catalogue.available && canOrder(eligibleEvents, data.settings, now);
   const collectionEvents = (data.events ?? []).filter((event) => canOrder([event], data.settings, now));
 
   useEffect(() => {
@@ -114,17 +121,32 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     try { localStorage.setItem(storageKey, JSON.stringify({ version: 1, lines: next })); setStorageError(false); }
     catch { setStorageError(true); }
   }
-  function add(line: BagLine, replacing?: string, eventId = selectedEventId) {
+  function add(line: BagLine, replacing?: string, eventId = selectedEventId, contextStock?: PublicStock) {
     const events = eventId ? (data.events ?? []).filter((event) => event.id === eventId) : (data.events ?? []).filter(isPublicPickupEvent);
     const target = (data.events ?? []).find((event) => event.id === eventId);
-    const menu = menuCatalogue(data.catalogue, target?.menu_set_id);
-    if (!menu.available || !canOrder(events, data.settings, Date.now()) || !menu.items.some((item) => item.id === line.itemId && item.is_available)) return;
+    const availableStock = contextStock ?? (stockAvailable && eventId === selectedEventId ? stock?.stock : undefined);
+    const menu = applyStock(menuCatalogue(data.catalogue, target?.menu_set_id), availableStock ?? []);
+    if (!availableStock || !menu.available || !canOrder(events, data.settings, Date.now()) || !menu.items.some((item) => item.id === line.itemId && item.is_available)) {
+      toast.error('Availability has changed. Refresh the menu and review your item.');
+      return false;
+    }
+    const next = mergeLine(replacing ? lines.filter((candidate) => lineKey(candidate) !== replacing) : lines, line);
+    const issue = bagStockIssue(next, menu);
+    if (issue) { toast.error(issue); return false; }
     if (eventId !== selectedEventId) selectEvent(eventId);
-    save(mergeLine(replacing ? lines.filter((candidate) => lineKey(candidate) !== replacing) : lines, line));
+    save(next);
+    return true;
   }
   function setQuantity(key: string, quantity: number) {
     if (quantity < 1 || quantity > 99 || !Number.isInteger(quantity)) return;
-    save(lines.map((line) => lineKey(line) === key ? { ...line, quantity } : line));
+    const next = lines.map((line) => lineKey(line) === key ? { ...line, quantity } : line);
+    const previous = lines.find((line) => lineKey(line) === key);
+    if (previous && quantity > previous.quantity) {
+      if (!stockAvailable) { toast.error('Stock availability could not be checked. Please refresh before increasing quantities.'); return; }
+      const issue = bagStockIssue(next, catalogue);
+      if (issue) { toast.error(issue); return; }
+    }
+    save(next);
   }
   function clearIfMatches(purchased: BagLine[]) {
     if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) {
@@ -136,7 +158,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     setSelectedEventId(id);
     try { localStorage.setItem('papas-tacos:event', id); } catch { setStorageError(true); }
   }
-  return <BagContext.Provider value={{ lines, ready: ready && catalogueLoaded, storageError, ...data, catalogue, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  return <BagContext.Provider value={{ lines, ready: ready && catalogueLoaded, storageError, ...data, catalogue, stockAvailable, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
 }
 
 function isPublicPickupEvent(event: TruckEvent) {
@@ -147,25 +169,29 @@ export function MenuOrderingProvider({ eventId = '', children }: { eventId?: str
   const bag = useBag();
   const [pending, setPending] = useState<{ line: BagLine; replacing?: string } | null>(null);
   const [error, setError] = useState('');
+  const stock = useStock(eventId);
+  const stockAvailable = stock?.available === true;
   const selectedEvent = bag.events.find((event) => event.id === eventId);
-  const catalogue = menuCatalogue(bag.sourceCatalogue, selectedEvent?.menu_set_id);
+  const baseCatalogue = menuCatalogue(bag.sourceCatalogue, selectedEvent?.menu_set_id);
+  const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const events = eventId ? (selectedEvent ? [selectedEvent] : []) : bag.events.filter(isPublicPickupEvent);
-  const orderingOpen = catalogue.available && canOrder(events, bag.settings);
+  const orderingOpen = stockAvailable && catalogue.available && canOrder(events, bag.settings);
   function commit(line: BagLine, replacing?: string) {
-    if (!catalogue.available || !canOrder(events, bag.settings) || !catalogue.items.some((item) => item.id === line.itemId && item.is_available)) {
+    if (!stockAvailable || !catalogue.available || !canOrder(events, bag.settings) || !catalogue.items.some((item) => item.id === line.itemId && item.is_available)) {
       setError('Ordering availability has changed. Please review the current ordering information before trying again.');
-      return;
+      return false;
     }
     setError('');
-    bag.add(line, replacing, eventId);
+    if (!bag.add(line, replacing, eventId, stock?.stock)) return false;
     setPending(null);
+    return true;
   }
   const value: BagContextValue = {
-    ...bag, catalogue, selectedEventId: eventId, selectedEvent, orderingOpen,
+    ...bag, catalogue, stockAvailable, selectedEventId: eventId, selectedEvent, orderingOpen,
     collectionEvents: events.filter((event) => canOrder([event], bag.settings)),
     add(line, replacing) {
-      if (bag.lines.length && bag.selectedEventId !== eventId) setPending({ line, replacing });
-      else commit(line, replacing);
+      if (bag.lines.length && bag.selectedEventId !== eventId) { setPending({ line, replacing }); return true; }
+      return commit(line, replacing);
     },
   };
   return <BagContext.Provider value={value}>

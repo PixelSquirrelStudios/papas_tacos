@@ -31,23 +31,23 @@ export function servingWindow(event: Pick<TruckEvent, 'starts_at' | 'ends_at' | 
 
 export function pickupState(event: TruckEvent, settings: Settings | null, now = Date.now()) {
   if (event.service_mode && event.service_mode !== 'pickup') {
-    const label = event.service_mode === 'table' ? 'Table service' : 'Car service';
-    if (canOrder([event], settings, now)) return `${label} orders open`;
-    if (!event.pickup_enabled) return `${label} ordering unavailable`;
-    if (!settings || settings.ordering_status === 'closed' || event.ordering_status === 'closed') return `${label} orders closed`;
-    if (settings?.ordering_status === 'paused' || event.ordering_status === 'paused') return `${label} orders paused`;
+    const label = event.service_mode === 'table' ? 'Table Service' : 'Car Service';
+    if (canOrder([event], settings, now)) return `${label} Orders Open`;
+    if (!event.pickup_enabled) return `${label} Ordering Unavailable`;
+    if (!settings || settings.ordering_status === 'closed' || event.ordering_status === 'closed') return `${label} Orders Closed`;
+    if (settings?.ordering_status === 'paused' || event.ordering_status === 'paused') return `${label} Orders Paused`;
     const opens = event.orders_open_at || event.starts_at;
     if (now < Date.parse(opens)) return `Ordering is not open yet. You can place ${event.service_mode === 'car' ? 'car' : 'table'} delivery orders from ${eventTime(opens)} on ${eventDate(opens)}.`;
-    return `${label} orders closed`;
+    return `${label} Orders Closed`;
   }
-  if (!settings || settings.ordering_status === 'closed') return 'Pickup orders closed';
-  if (settings.ordering_status === 'paused') return 'Pickup orders paused';
-  if (!event.pickup_enabled) return 'No pickup orders at this event';
-  if (event.ordering_status === 'closed') return 'Pickup orders closed';
-  if (event.ordering_status === 'paused') return 'Pickup orders paused';
-  if (event.orders_open_at && now < Date.parse(event.orders_open_at)) return 'Pickup orders open later';
-  if (now >= Date.parse(event.orders_close_at || event.ends_at)) return 'Pickup orders ended';
-  return 'Pickup enabled for this event';
+  if (!settings || settings.ordering_status === 'closed') return 'Pickup Orders Closed';
+  if (settings.ordering_status === 'paused') return 'Pickup Orders Paused';
+  if (!event.pickup_enabled) return 'No Pickup Orders at This Event';
+  if (event.ordering_status === 'closed') return 'Pickup Orders Closed';
+  if (event.ordering_status === 'paused') return 'Pickup Orders Paused';
+  if (event.orders_open_at && now < Date.parse(event.orders_open_at)) return 'Pickup Orders Open Later';
+  if (now >= Date.parse(event.orders_close_at || event.ends_at)) return 'Pickup Orders Ended';
+  return 'Pickup Enabled for This Event';
 }
 
 export function canOrder(events: TruckEvent[], settings: Settings | null, now = Date.now()) {

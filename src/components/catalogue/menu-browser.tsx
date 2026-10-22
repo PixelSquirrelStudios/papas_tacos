@@ -19,6 +19,7 @@ import { ExpandableDescription, RichDescription } from './rich-description';
 import { descriptionText } from '@/lib/catalogue/rich-text';
 import { OrderingNotice } from './ordering-notice';
 import { menuCatalogue } from '@/lib/catalogue/menu-sets';
+import { minimumItemPrice } from '@/lib/catalogue/linked-items';
 
 export function MenuBrowser({ initial, featured = false }: { initial: Catalogue; featured?: boolean | 'papas-choice' | 'crowd-favourites' }) {
   return featured ? <MenuOrderingProvider><MenuBrowserContent initial={initial} featured={featured} /></MenuOrderingProvider> : <MenuBrowserContent initial={initial} featured={featured} />;
@@ -54,7 +55,7 @@ function MenuBrowserContent({ initial, featured }: { initial: Catalogue; feature
       {visible.map((item, index) => <Fragment key={item.id}>
         {!featured && category.length !== 1 && (index === 0 || visible[index - 1].category_id !== item.category_id) && <h2 className="col-span-full border-b border-border pb-3 text-2xl font-semibold">{categories.find((entry) => entry.id === item.category_id)?.name ?? 'Other'}</h2>}
         <article className="group flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card transition-colors hover:border-turquoise/50">
-          <div className="relative aspect-[4/3] overflow-hidden bg-muted">{item.imageUrl ? <Image src={item.imageUrl} alt={item.image_alt || item.name} fill unoptimized sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" className="object-cover transition-transform duration-500 motion-safe:group-hover:scale-105" /> : <div className="grid h-full place-items-center text-turquoise/60"><UtensilsCrossed className="size-14" strokeWidth={1} aria-label="Dish image unavailable" /></div>}
+          <div className="relative aspect-[4/3] overflow-hidden bg-muted">{item.imageUrl ? <Image src={item.imageUrl} alt={item.image_alt || item.name} fill unoptimized sizes="(max-width: 640px) 100vw, (max-width: 1024px) 50vw, 33vw" className="object-cover transition-transform duration-500 motion-safe:group-hover:scale-105" /> : <div className="grid h-full place-items-center text-turquoise/60"><UtensilsCrossed className="size-14" strokeWidth={1} aria-label="Dish Image Unavailable" /></div>}
             {!item.is_available && <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-black/40 px-3 pt-16"><p className="text-center font-display text-4xl uppercase text-white/85 sm:text-5xl">Sold Out</p></div>}
             <div className="absolute inset-x-3 top-3 flex items-start justify-between gap-2">
               <div className="flex min-w-0 flex-1 flex-col items-start gap-2">
@@ -69,7 +70,7 @@ function MenuBrowserContent({ initial, featured }: { initial: Catalogue; feature
             {featured ? <ExpandableDescription description={item.description} name={item.name} className="mb-4 mt-2" previewLines={4} equalHeight /> : <RichDescription content={item.description} className="mb-4 mt-2 text-sm leading-relaxed text-muted-foreground" />}
             <div className="border-t border-border pt-4"><FoodBadges dietary={item.dietary_tags} allergens={item.allergens} /></div>
             {item.groups.length > 0 && <p className="mt-4 flex items-center gap-1.5 text-xs text-muted-foreground"><SlidersHorizontal className="size-3.5" aria-hidden="true" />Customisable</p>}
-            <div className="mt-auto pt-5"><div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><div><p className="text-xs text-muted-foreground">{item.groups.length ? 'From' : 'Price'}</p><p className="text-xl font-semibold tabular-nums">{money(item.price_pence)}</p></div>{orderingOpen && <Button className="h-11 gap-2" aria-label={`Add ${item.name} to Bag`} disabled={!item.is_available || !ready} onClick={() => setSelected(item)}><Plus className="size-4" />Add to Bag</Button>}{!orderingOpen && <OrderingNotice />}</div></div>
+            <div className="mt-auto pt-5"><div className="flex flex-wrap items-center justify-between gap-3 border-t border-border pt-4"><div><p className="text-xs text-muted-foreground">{item.groups.length ? 'From' : 'Price'}</p><p className="text-xl font-semibold tabular-nums">{money(minimumItemPrice(item))}</p></div>{orderingOpen && <Button className="h-11 gap-2" aria-label={`Add ${item.name} to Bag`} disabled={!item.is_available || !ready} onClick={() => setSelected(item)}><Plus className="size-4" />Add to Bag</Button>}{!orderingOpen && <OrderingNotice />}</div></div>
           </div>
       </article></Fragment>)}
     </div>}

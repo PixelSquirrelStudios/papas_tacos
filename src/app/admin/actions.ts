@@ -35,6 +35,7 @@ export async function saveRecord(key: string, id: string | null, updatedAt: stri
       : await adminRequest(resource.table, query, editing ? 'PATCH' : 'POST', payload);
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This record changed or was removed. Refresh before editing again.');
     refresh(key);
+    if (key === 'settings') revalidatePath('/', 'layout');
     return { ok: true, id: result[0].id };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
@@ -114,6 +115,18 @@ export async function setMaintenanceMode(enabled: boolean, updatedAt: string): P
     const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { maintenance_enabled: enabled });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Site settings changed. The latest status will be loaded; try again.');
     refresh('settings');
+    return { ok: true };
+  } catch (error) { return { ok: false, error: adminError(error) }; }
+}
+
+export async function setPublicMenuEnabled(enabled: boolean, updatedAt: string): Promise<AdminResult> {
+  await requireAdmin();
+  if (!z.boolean().safeParse(enabled).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid public menu settings.' };
+  try {
+    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { public_menu_enabled: enabled });
+    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Site settings changed. The latest status will be loaded; try again.');
+    refresh('settings');
+    revalidatePath('/', 'layout');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }

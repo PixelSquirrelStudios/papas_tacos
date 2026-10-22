@@ -21,7 +21,7 @@ export default async function LoginPage({ searchParams }: { searchParams: Promis
   if (viewer) redirect(signedInPath(returnTo, viewer.profile?.role));
   return <main id="main-content" className="auth-surface px-5 py-12 sm:py-16">
     <div className="mx-auto w-full max-w-[420px]">
-      <div className="mb-9"><Flower2 className="mb-5 size-9 text-pink" strokeWidth={1.4} aria-hidden="true" /><p className="mb-3 text-xs font-bold uppercase text-turquoise">The Papa&apos;s familia</p><h1 className="font-display text-5xl leading-tight sm:text-6xl">HOLA, HUNGRY?</h1><p className="mt-3 text-sm leading-relaxed text-muted-foreground">Good to have you here.</p></div>
+      <div className="mb-9"><Flower2 className="mb-5 size-9 text-pink" strokeWidth={1.4} aria-hidden="true" /><p className="mb-3 text-xs font-bold uppercase text-turquoise">The Papa&apos;s Familia</p><h1 className="font-display text-5xl leading-tight sm:text-6xl">HOLA, HUNGRY?</h1><p className="mt-3 text-sm leading-relaxed text-muted-foreground">Good to have you here.</p></div>
       {params.error && errors[params.error] && <p role="alert" className="mb-6 border-l-2 border-pink pl-4 text-sm leading-relaxed">{errors[params.error]}</p>}
       <LoginForm initialMode={params.mode === 'signup' ? 'signup' : 'login'} returnTo={returnTo} configured={Boolean(supabaseConfig())} />
     </div>

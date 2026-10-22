@@ -3,8 +3,9 @@ import { getViewer } from '@/lib/auth/session';
 import { checkEventAccess, savedEventAccess } from '@/lib/event-access';
 
 export async function GET() {
+  const viewer = await getViewer();
   const maintenance = await getMaintenanceMode();
-  if (maintenance !== false && !(maintenance === true && (await getViewer())?.profile?.role === 'admin')) {
+  if (maintenance !== false && !(maintenance === true && viewer?.profile?.role === 'admin')) {
     return Response.json({ error: 'The site is temporarily unavailable.' }, { status: 503, headers: { 'Cache-Control': 'private, no-store' } });
   }
   const [catalogue, settings, events] = await Promise.all([getCatalogue(), getSettings(), getEvents()]);
@@ -12,7 +13,8 @@ export async function GET() {
     const accessibleEvents = await Promise.all(events.events.map(async (event) => {
       if (!event.is_private) return event;
       const key = await savedEventAccess(event.id);
-      return { ...event, ordering_access: Boolean(key && await checkEventAccess(event.id, key)) };
+      const ordering_access = Boolean(key && await checkEventAccess(event.id, key));
+      return { ...event, ordering_access, admin_qr_bypass: ordering_access && viewer?.profile?.role === 'admin' };
     }));
     return Response.json({ catalogue, settings, events: accessibleEvents }, { headers: { 'Cache-Control': 'private, no-store' } });
   } catch {
