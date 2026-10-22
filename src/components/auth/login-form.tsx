@@ -13,6 +13,7 @@ import { SubmitButton } from './submit-button';
 function EmailForm({ mode, returnTo, configured }: { mode: 'login' | 'signup'; returnTo: string; configured: boolean }) {
   const [state, action, pending] = useActionState(requestMagicLink, initialAuthState);
   const [retry, setRetry] = useState(false);
+  const [usePassword, setUsePassword] = useState(false);
   if (state.status === 'success' && !retry) return <div className="space-y-4 border-t border-border py-6" role="status">
     <MailCheck className="size-9 text-turquoise" aria-hidden="true" />
     <h2 className="text-xl font-semibold">Check Your Inbox</h2>
@@ -21,10 +22,13 @@ function EmailForm({ mode, returnTo, configured }: { mode: 'login' | 'signup'; r
   </div>;
   return <form action={(formData) => { setRetry(false); action(formData); }} className="space-y-5">
     <input type="hidden" name="mode" value={mode} /><input type="hidden" name="next" value={returnTo} />
+    <input type="hidden" name="loginMethod" value={usePassword ? 'password' : 'email'} />
     {mode === 'signup' && <div className="space-y-2"><Label htmlFor="fullName">Your Name</Label><Input id="fullName" name="fullName" autoComplete="name" placeholder="Your Name" maxLength={120} required disabled={pending} className="h-12" /></div>}
     <div className="space-y-2"><Label htmlFor="email">Email Address</Label><Input id="email" name="email" type="email" autoComplete="email" autoCapitalize="none" spellCheck={false} placeholder="you@example.com" maxLength={254} required disabled={pending} className="h-12" aria-describedby={state.status === 'error' ? 'email-error' : undefined} /></div>
+    {(mode === 'signup' || usePassword) && <div className="space-y-2"><Label htmlFor="password">Password</Label><Input id="password" name="password" type="password" autoComplete={mode === 'signup' ? 'new-password' : 'current-password'} minLength={mode === 'signup' ? 12 : undefined} maxLength={128} required disabled={pending} className="h-12" aria-describedby={mode === 'signup' ? 'password-help' : undefined} />{mode === 'signup' && <p id="password-help" className="text-xs text-muted-foreground">Use at least 12 characters. Check your email address carefully: this is where we send your order details.</p>}</div>}
     {state.status === 'error' && <p id="email-error" role="alert" className="text-sm text-destructive">{state.message}</p>}
-    <SubmitButton className="h-12 w-full" pendingText="Sending Your Link..." disabled={!configured}><Mail className="size-4" aria-hidden="true" />Email Me a Sign-In Link</SubmitButton>
+    <SubmitButton className="h-12 w-full" pendingText={mode === 'signup' ? 'Creating Your Account...' : usePassword ? 'Signing In...' : 'Sending Your Link...'} disabled={!configured}><Mail className="size-4" aria-hidden="true" />{mode === 'signup' ? 'Create Account and Continue' : usePassword ? 'Sign In with Password' : 'Email Me a Sign-In Link'}</SubmitButton>
+    {mode === 'login' && <Button type="button" variant="outline" className="h-12 w-full" disabled={pending} onClick={() => setUsePassword(!usePassword)}>{usePassword ? 'Use an email sign-in link instead' : 'Use a password instead'}</Button>}
   </form>;
 }
 

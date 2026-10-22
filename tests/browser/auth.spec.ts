@@ -70,11 +70,40 @@ test('auth tabs preserve checkout return path and validate before sending', asyn
   await expect(page.getByLabel('Your Name')).toBeVisible();
   await expect(page.locator('input[name="next"]').first()).toHaveValue('/checkout?event=123');
   await page.getByLabel('Your Name').fill('Test Customer');
+  await page.getByLabel('Password', { exact: true }).fill('A-long-password-123');
   await page.getByLabel('Email Address').fill('not-an-email');
-  await page.getByRole('button', { name: 'Email Me a Sign-In Link' }).click();
+  await page.getByRole('button', { name: 'Create Account and Continue' }).click();
   expect(await page.getByLabel('Email Address').evaluate((input: HTMLInputElement) => input.validity.valid)).toBe(false);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('signup.png'), fullPage: true });
+});
+
+test('password sign-in is optional and keeps the checkout return path', async ({ page }) => {
+  await page.goto('/sign-in?next=%2Fcheckout%3Fevent%3Ddrive-in');
+  await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Use a password instead', exact: true })).toHaveAttribute('data-variant', 'outline');
+  await page.getByRole('button', { name: 'Use a password instead', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toHaveAttribute('autocomplete', 'current-password');
+  await expect(page.getByRole('button', { name: 'Sign In with Password', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Use an email sign-in link instead', exact: true })).toHaveAttribute('data-variant', 'outline');
+  await expect(page.locator('input[name="next"]').first()).toHaveValue('/checkout?event=drive-in');
+  await page.getByRole('button', { name: 'Use an email sign-in link instead', exact: true }).click();
+  await expect(page.getByLabel('Password', { exact: true })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Email Me a Sign-In Link', exact: true })).toBeVisible();
+});
+
+test('email link preview is repeatable without consuming the sign-in token', async ({ page, request }) => {
+  const path = '/auth/confirm?token_hash=fixture-preview-only&type=email&next=%2Fcheckout';
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const response = await request.get(path, { maxRedirects: 0 });
+    expect(response.status()).toBe(200);
+    expect(response.headers()['cache-control']).toContain('no-store');
+  }
+  await page.goto(path);
+  await expect(page.getByRole('button', { name: 'Continue Signing In' })).toBeVisible();
+  await expect(page.locator('form')).toHaveAttribute('method', 'post');
+  await expect(page.getByRole('link', { name: 'Request a new sign-in link' })).toHaveAttribute('href', '/sign-in?next=%2Fcheckout');
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 
 test('header actions fit and both auth tabs stay inside their holder', async ({ page }, testInfo) => {
@@ -138,5 +167,5 @@ test('small mobile viewport keeps the hero and form usable', async ({ page }) =>
   await expect(page.getByRole('link', { name: 'Explore the Menu', exact: true })).toBeVisible();
   await page.goto('/sign-in?mode=signup');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
-  await expect(page.getByRole('button', { name: 'Email Me a Sign-In Link' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Create Account and Continue' })).toBeVisible();
 });

@@ -22,7 +22,7 @@ export function FilterSelect({ label, placeholder, options, value, onChange }: {
       placeholder={placeholder}
       unstyled
       classNames={{
-        control: () => 'h-11 min-h-11 cursor-pointer rounded-md border border-input bg-transparent px-2 dark:bg-input/30',
+        control: () => 'min-h-11 cursor-pointer rounded-md border border-input bg-transparent px-2 dark:bg-input/30',
         valueContainer: () => 'gap-1 py-1',
         input: () => 'min-w-8 cursor-pointer text-foreground [&_input]:cursor-pointer!',
         placeholder: () => 'truncate text-muted-foreground',
@@ -38,8 +38,8 @@ export function FilterSelect({ label, placeholder, options, value, onChange }: {
         noOptionsMessage: () => 'px-3 py-3 text-muted-foreground',
       }}
       styles={{
-        control: (base) => ({ ...base, cursor: 'pointer' }),
-        valueContainer: (base) => ({ ...base, flexWrap: 'wrap', overflow: 'hidden' }),
+        control: (base) => ({ ...base, cursor: 'pointer', minHeight: 44 }),
+        valueContainer: (base) => ({ ...base, minWidth: 0, flexWrap: 'wrap', overflow: 'hidden' }),
         multiValue: (base) => ({ ...base, maxWidth: '100%' }),
         multiValueRemove: (base) => ({ ...base, backgroundColor: 'rgba(0, 0, 0, 0.2)', ':hover': { backgroundColor: 'rgba(0, 0, 0, 0.3)' } }),
         input: (base) => ({ ...base, minWidth: 20 }),

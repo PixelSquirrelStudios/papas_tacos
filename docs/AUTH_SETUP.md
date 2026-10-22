@@ -5,7 +5,7 @@
 - Next.js App Router, TypeScript, Tailwind CSS, official shadcn/ui components, local fonts, and a responsive brand shell.
 - Supabase browser/server clients using the publishable key. The server client is marked `server-only`.
 - Proxy-based session refresh, private/no-store responses, verified server identity, and database-backed admin checks.
-- Google OAuth, passwordless email signup/sign-in, PKCE callback exchange, email-token verification, and expired-link recovery.
+- Google OAuth, password signup, password or magic-link sign-in, PKCE callback exchange, email-token verification, and expired-link recovery.
 - `/account`: protected profile editing and local-session sign-out.
 - `/admin`: protected administrator shell with the shadcn sidebar. Operational dashboard features are Stage 5.
 - Safe local return paths so later checkout can resume after login without requiring an account when adding items to the bag.
@@ -90,9 +90,25 @@ account on the first Google login; the database trigger still assigns only the c
 
 ### Magic links and email delivery
 
-The sign-in tab does not create unknown users. The create-account tab enables signup and
-passes only the customer's display name as metadata. Both use single-use email links.
-The success response intentionally avoids confirming whether an email address has an account.
+The create-account tab collects a name, email and password (12–128 characters). In
+**Authentication > Sign In / Providers > Email**, disable **Confirm email** to allow immediate
+signup and checkout. Keep email signup enabled. This setting is required: application code does
+not use an admin key to mark emails verified or to sign customers into existing accounts.
+Supabase's normal signup API creates the customer and the profile trigger still assigns only
+the customer role. If signup returns no session, the app shows an explicit recovery message
+rather than pretending the customer is signed in.
+
+Disabling confirmation means a new email address is not proof of mailbox ownership: customers
+can mistype it or register somebody else's address. Confirm the address before payment and
+do not treat new accounts as verified identities. Existing accounts cannot be accessed or
+overwritten by submitting the signup form. They must use a password, Google or a magic link.
+Consider retaining confirmation if verified mailbox ownership becomes a business requirement.
+
+The sign-in tab defaults to single-use magic links and does not create unknown users.
+Customers who registered with a password can select **Use a password instead**. Password
+sign-in failures offer magic-link recovery; no password-reset flow is required to order.
+Successful signup/password sign-in resumes the validated local `next` path, including checkout.
+The magic-link request success response intentionally avoids revealing whether an account exists.
 
 Default Supabase email templates work with the PKCE callback when the link is opened in
 the same browser where the request began. For links that also work across devices, update
@@ -106,8 +122,15 @@ both **Magic Link** and **Confirm Signup** templates to use the token-hash flow:
 
 The application always provides `RedirectTo` as `/auth/confirm?next=...`, so the extra
 parameters deliberately use `&amp;`. Do not replace the template with an unvalidated user URL.
-Avoid email click-tracking that rewrites authentication URLs. Some email scanners consume
-single-use links; a confirmation interstitial is an option if the chosen mail system does this.
+Avoid email click-tracking that rewrites authentication URLs. `/auth/confirm` now displays a
+**Continue Signing In** button on GET and verifies credentials only on a same-origin POST.
+Ordinary scanners/preview requests can open that page without consuming the token. Tokens
+are not rendered into the page and it is non-cacheable with a no-referrer policy.
+**The direct token-hash template above is essential for scanner protection:** a default
+`ConfirmationURL` can consume its one-time token at Supabase before reaching this page.
+Google continues using the GET callback; it does not use this email interstitial.
+Email hashes with types `email`, `signup` and `magiclink` are accepted; password recovery
+and email-change tokens are not accepted as ordinary sign-in tokens.
 
 Supabase's default email service has recipient and rate restrictions and is not suitable
 for general customer delivery. Configure **Authentication > Email > SMTP Settings** with
@@ -115,6 +138,24 @@ a verified sending domain/provider before testing delivery to customers or going
 Resend can be used as that SMTP provider, but having a `RESEND_API_KEY` in `.env.local`
 does not configure Supabase's email service automatically. Enter SMTP credentials directly
 in the Supabase dashboard, not in a browser form or chat.
+
+For spam diagnosis, inspect a delivered message's **original headers** and the corresponding
+Resend delivery event, rather than assuming rich HTML improves deliverability:
+
+- Verify the exact sending domain in Resend and publish its required SPF and DKIM DNS records.
+  Check `Authentication-Results` for SPF/DKIM passes and DMARC alignment with the visible From
+  domain. Publish an appropriate DMARC policy; do not create duplicate SPF records.
+- Confirm Supabase's custom SMTP is enabled and uses the verified Resend sender. Auth email
+  delivery is separate from the application's Resend order-email integration.
+- Disable open/click tracking for authentication emails, especially rewritten sign-in URLs.
+- Check sender reputation, bounces, complaints and whether the message arrived before a newer
+  requested link invalidated it. Use the newest link; never share the complete authentication URL.
+- Avoid repeatedly sending test links to spam. Mark legitimate messages as not spam and allow
+  time for a new sending domain to establish reputation. No provider guarantees inbox placement.
+
+The repository cannot establish the cause of a specific rejected link or spam placement without
+provider configuration and delivery evidence. Server logs record auth failure codes/statuses,
+not passwords, addresses or tokens, to distinguish exchange failures from callback outages.
 
 Review Supabase's auth rate limits. Enable its CAPTCHA protection before production if needed;
 the matching client CAPTCHA flow must be added before switching that requirement on.
@@ -158,8 +199,12 @@ Tests save screenshots/traces under ignored `test-results/`.
 
 Manually complete these live integration checks after configuring Supabase:
 
-1. Create a customer using an email link; verify the `profiles.id` equals the auth user ID and `role` is `customer`.
-2. Verify a used/expired link recovers to login, and test a cross-device link if using the token template.
+1. Disable Confirm email, create a customer with a password from checkout and verify immediate
+   checkout return, a matching `profiles.id` and `role = customer`. Test duplicate-email signup
+   does not sign into or modify the existing account.
+2. Verify password and magic-link sign-in, including a used/expired link and a cross-device
+   token-hash link. Preview/open the confirmation page twice before clicking Continue; it must
+   not use the token until the button is submitted.
 3. Sign in with Google, refresh `/account`, save profile details, and sign out.
 4. Confirm a customer cannot access `/admin`; promote only the owner and verify the admin sidebar.
 5. Test login started from `/sign-in?next=/account` and a refreshed/expired session.

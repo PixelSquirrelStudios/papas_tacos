@@ -846,7 +846,7 @@ test('order filters start empty, automatically apply choices and search, and res
   }
   await page.getByRole('textbox', { name: 'Search Orders' }).pressSequentially('Alex Smith');
   await expect(page.getByRole('textbox', { name: 'Search Orders' })).toBeFocused();
-  for (const control of await page.locator('.filter-select__control').all()) await expect(control).toHaveCSS('height', '44px');
+  for (const control of await page.locator('.filter-select__control').all()) await expect(control).toHaveCSS('min-height', '44px');
   const destination = new URL(await page.evaluate(() => (window as unknown as { __navigation: string }).__navigation), 'http://localhost');
   expect(destination.pathname).toBe('/admin/orders');
   expect(destination.searchParams.getAll('status')).toEqual(['ordered', 'collected']);
@@ -859,6 +859,30 @@ test('order filters start empty, automatically apply choices and search, and res
   expect(await page.evaluate(() => (window as unknown as { __navigation: string }).__navigation)).toBe('/admin/orders?status=all');
   await expect(page.getByRole('textbox', { name: 'Search Orders' })).toHaveValue('');
   await expect(page.getByRole('button', { name: /^Remove / })).toHaveCount(0);
+});
+
+test('multi-select filters grow around wrapped tags on narrow screens', async ({ page }) => {
+  await fixture(page, 'order-filters');
+  for (const option of ['Awaiting Payment', 'Preparing', 'Ready for Pickup', 'Collected / Complete']) {
+    await page.getByRole('combobox', { name: 'Order Status', exact: true }).click();
+    await page.getByRole('option', { name: option, exact: true }).click();
+  }
+  for (const width of [320, 390, 640, 768]) {
+    await page.setViewportSize({ width, height: 900 });
+    const control = page.locator('.filter-select__control').first();
+    const bounds = (await control.boundingBox())!;
+    for (const tag of await control.locator('.filter-select__multi-value').all()) {
+      const tagBounds = (await tag.boundingBox())!;
+      expect(tagBounds.y).toBeGreaterThanOrEqual(bounds.y);
+      expect(tagBounds.y + tagBounds.height).toBeLessThanOrEqual(bounds.y + bounds.height);
+      expect(tagBounds.x + tagBounds.width).toBeLessThanOrEqual(bounds.x + bounds.width);
+    }
+    const eventBounds = (await page.locator('.filter-select__control').nth(1).boundingBox())!;
+    if (width < 640) expect(eventBounds.y).toBeGreaterThanOrEqual(bounds.y + bounds.height);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  }
+  await page.getByRole('button', { name: 'Remove Collected / Complete' }).click();
+  await expect(page.getByRole('button', { name: 'Remove Collected / Complete' })).toHaveCount(0);
 });
 
 test('archived menu items offer a confirmed Unarchive action', async ({ page }) => {

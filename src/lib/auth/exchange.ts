@@ -10,13 +10,17 @@ export async function exchangeCredentials(auth: AuthExchange, params: URLSearchP
   try {
     if (code && code.length <= 4096) {
       const { error } = await auth.exchangeCodeForSession(code);
+      if (error) console.warn('[auth] Code exchange rejected', { code: error.code, status: error.status });
       return !error;
     }
-    if (tokenHash && tokenHash.length <= 4096 && params.get('type') === 'email') {
-      const { error } = await auth.verifyOtp({ token_hash: tokenHash, type: 'email' });
+    const type = params.get('type');
+    if (tokenHash && tokenHash.length <= 4096 && (type === 'email' || type === 'signup' || type === 'magiclink')) {
+      const { error } = await auth.verifyOtp({ token_hash: tokenHash, type });
+      if (error) console.warn('[auth] Email token rejected', { code: error.code, status: error.status });
       return !error;
     }
   } catch {
+    console.error('[auth] Credential exchange unavailable.');
     return false;
   }
   return false;

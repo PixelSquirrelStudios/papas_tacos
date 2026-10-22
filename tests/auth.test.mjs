@@ -57,6 +57,7 @@ test('maintenance rejects non-admin email and Google sign-ins and ends their ses
     for (const mode of ['login', 'signup']) {
       form.set('mode', mode);
       form.set('fullName', 'Customer');
+      form.set('password', 'A-long-password-123');
       const result = await modules.actions.requestMagicLink({}, form);
       assert.equal(result.status, 'error');
       assert.match(result.message, /restricted to administrators/);
@@ -280,10 +281,14 @@ test('callback exchanges PKCE codes and email hashes, but rejects ambiguous or f
   assert.equal(await exchangeCredentials(auth, new URLSearchParams('code=example-code')), true);
   assert.equal(await exchangeCredentials(auth, new URLSearchParams('token_hash=example-hash&type=email')), true);
   assert.deepEqual(calls, [['code', 'example-code'], ['otp', { token_hash: 'example-hash', type: 'email' }]]);
+  for (const type of ['signup', 'magiclink']) {
+    assert.equal(await exchangeCredentials(auth, new URLSearchParams(`token_hash=example-hash&type=${type}`)), true);
+    assert.deepEqual(calls.at(-1), ['otp', { token_hash: 'example-hash', type }]);
+  }
   for (const query of ['', 'error=access_denied', 'code=code&token_hash=hash&type=email', 'token_hash=hash&type=recovery', 'token_hash=hash']) {
     assert.equal(await exchangeCredentials(auth, new URLSearchParams(query)), false);
   }
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 4);
   assert.equal(await exchangeCredentials({ ...auth, verifyOtp: async () => ({ error: { message: 'expired' } }) }, new URLSearchParams('token_hash=expired&type=email')), false);
   assert.equal(await exchangeCredentials({ ...auth, exchangeCodeForSession: async () => { throw new Error('Offline'); } }, new URLSearchParams('code=example')), false);
 });
@@ -291,8 +296,100 @@ test('callback exchanges PKCE codes and email hashes, but rejects ambiguous or f
 test('signup and profile inputs enforce the database field limits', () => {
   assert.equal(loginSchema.safeParse({ email: 'not-an-email', mode: 'login', fullName: '' }).success, false);
   assert.equal(loginSchema.safeParse({ email: 'person@example.test', mode: 'signup', fullName: '' }).success, false);
-  assert.equal(loginSchema.parse({ email: 'PERSON@example.test', mode: 'signup', fullName: ' Person ' }).email, 'person@example.test');
+  assert.equal(loginSchema.parse({ email: 'PERSON@example.test', mode: 'signup', fullName: ' Person ', password: 'A-long-password-123' }).email, 'person@example.test');
+  assert.equal(loginSchema.safeParse({ email: 'person@example.test', mode: 'signup', fullName: 'Person', password: 'short' }).success, false);
+  assert.equal(loginSchema.safeParse({ email: 'person@example.test', mode: 'login', fullName: '' }).success, true);
   assert.equal(profileSchema.safeParse({ fullName: 'Person', phone: '+44 (0) 7700 900123' }).success, true);
   assert.equal(profileSchema.safeParse({ fullName: 'Person', phone: 'invalid' }).success, false);
   assert.equal(profileSchema.safeParse({ fullName: 'x'.repeat(121), phone: '' }).success, false);
+});
+
+test('signup creates a password account and resumes checkout only with a real session', async () => {
+  const state = { calls: [], error: null, session: { user: { id: 'new-customer' } }, permitted: true };
+  globalThis.__signup = state;
+  const originalOrigin = process.env.SITE_URL;
+  process.env.SITE_URL = 'https://tacos.example';
+  try {
+    const result = await build({ entryPoints: ['src/app/auth/actions.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'signup-boundaries', setup(builder) {
+      builder.onResolve({ filter: /^(server-only|next\/(headers|navigation|cache)|@\/lib\/supabase\/server|@\/lib\/auth\/maintenance-sign-in)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => {
+        let contents = '';
+        if (args.path === 'next/headers') contents = 'export async function headers() { return new Headers({origin:"https://tacos.example"}); }';
+        if (args.path === 'next/navigation') contents = 'export function redirect(path) { throw new Error("REDIRECT:" + path); }';
+        if (args.path === 'next/cache') contents = 'export function revalidatePath() {}';
+        if (args.path.endsWith('maintenance-sign-in')) contents = 'export async function canRequestMagicLink() { return globalThis.__signup.permitted; }';
+        if (args.path.endsWith('/server')) contents = `export async function createServerSupabase() {
+          const state = globalThis.__signup;
+          const operation = (method) => async (input) => { state.calls.push({method,input}); return {data:{session:state.session},error:state.error}; };
+          return {auth:{signUp:operation('signup'),signInWithOtp:operation('otp'),signInWithPassword:operation('password')},
+            from:()=>({select:()=>({eq:()=>({maybeSingle:async()=>({data:{role:'customer'},error:null})})})})};
+        }`;
+        return { contents };
+      });
+    } }] });
+    const { requestMagicLink } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
+    const form = new FormData();
+    for (const [key, value] of Object.entries({ mode: 'signup', email: 'CUSTOMER@example.test', fullName: 'Customer', password: 'A-long-password-123', next: '/checkout?event=drive-in' })) form.set(key, value);
+    await assert.rejects(() => requestMagicLink({}, form), /REDIRECT:\/checkout\?event=drive-in/);
+    assert.equal(state.calls[0].method, 'signup');
+    assert.equal(state.calls[0].input.email, 'customer@example.test');
+    assert.equal(state.calls[0].input.password, 'A-long-password-123');
+    assert.deepEqual(state.calls[0].input.options.data, { full_name: 'Customer' });
+    assert.equal(state.calls[0].input.options.emailRedirectTo, 'https://tacos.example/auth/confirm?next=%2Fcheckout%3Fevent%3Ddrive-in');
+    state.session = null;
+    assert.equal((await requestMagicLink({}, form)).status, 'error');
+    state.error = { code: 'user_already_exists', status: 422 };
+    assert.match((await requestMagicLink({}, form)).message, /already have an account/);
+    state.error = null;
+    form.set('mode', 'login');
+    assert.equal((await requestMagicLink({}, form)).status, 'success');
+    assert.equal(state.calls.at(-1).method, 'otp');
+    assert.equal(state.calls.at(-1).input.options.shouldCreateUser, false);
+    form.set('loginMethod', 'password');
+    assert.equal((await requestMagicLink({}, form)).status, 'error');
+    state.session = { user: { id: 'existing-customer' } };
+    await assert.rejects(() => requestMagicLink({}, form), /REDIRECT:\/checkout\?event=drive-in/);
+    assert.equal(state.calls.at(-1).method, 'password');
+    state.permitted = false;
+    const callCount = state.calls.length;
+    assert.match((await requestMagicLink({}, form)).message, /restricted/);
+    assert.equal(state.calls.length, callCount);
+  } finally {
+    if (originalOrigin === undefined) delete process.env.SITE_URL;
+    else process.env.SITE_URL = originalOrigin;
+    delete globalThis.__signup;
+  }
+});
+
+test('email confirmation GET does not consume links and POST requires the same origin', async () => {
+  const state = { calls: 0 };
+  globalThis.__confirmation = state;
+  try {
+    const result = await build({ entryPoints: ['src/app/auth/confirm/route.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'confirm-boundaries', setup(builder) {
+      builder.onResolve({ filter: /^(next\/server|@\/lib\/auth\/callback)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
+      builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ contents: args.path === 'next/server'
+        ? `export { NextResponse } from ${JSON.stringify(new URL('../node_modules/next/server.js', import.meta.url).href)};`
+        : 'export async function completeSignIn() { globalThis.__confirmation.calls++; return new Response(null,{status:303}); }' }));
+      builder.onResolve({ filter: /^file:/ }, (args) => ({ path: args.path, external: true }));
+    } }] });
+    const { GET, POST } = await import(`data:text/javascript;base64,${Buffer.from(result.outputFiles[0].text).toString('base64')}`);
+    for (const query of ['token_hash=private-token&type=email', 'token_hash=private-token&type=signup', 'token_hash=private-token&type=magiclink', 'code=private-code']) {
+      const url = `https://tacos.example/auth/confirm?${query}&next=%2Fcheckout`;
+      const response = await GET(new NextRequest(url));
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+      assert.match(response.headers.get('cache-control'), /no-store/);
+      const html = await response.text();
+      assert.match(html, /<form method="post">/);
+      assert.doesNotMatch(html, /private-token|private-code/);
+      assert.equal(state.calls, 0);
+    }
+    const url = 'https://tacos.example/auth/confirm?token_hash=private-token&type=email';
+    for (const origin of [undefined, 'https://untrusted.example']) {
+      assert.equal((await POST(new NextRequest(url, { method: 'POST', headers: origin ? { origin } : {} }))).status, 403);
+    }
+    assert.equal(state.calls, 0);
+    assert.equal((await POST(new NextRequest(url, { method: 'POST', headers: { origin: 'https://tacos.example' } }))).status, 303);
+    assert.equal(state.calls, 1);
+  } finally { delete globalThis.__confirmation; }
 });

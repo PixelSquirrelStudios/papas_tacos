@@ -4,9 +4,13 @@ export const loginSchema = z.object({
   email: z.email('Enter a valid email address.').max(254).transform((value) => value.toLowerCase()),
   mode: z.enum(['login', 'signup']),
   fullName: z.string().trim().max(120, 'Use 120 characters or fewer.'),
+  password: z.string().max(128, 'Use 128 characters or fewer.').default(''),
 }).refine((values) => values.mode !== 'signup' || values.fullName.length > 0, {
   message: 'Enter your name.',
   path: ['fullName'],
+}).refine((values) => values.mode !== 'signup' || values.password.length >= 12, {
+  message: 'Choose a password with at least 12 characters.',
+  path: ['password'],
 });
 
 export const profileSchema = z.object({

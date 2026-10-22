@@ -37,6 +37,7 @@ export async function completeSignIn(request: NextRequest) {
       }
     }
   } catch {
+    console.error('[auth] Sign-in callback unavailable.');
     success = false;
   }
   if (!success) destination = `/sign-in?error=${maintenanceDenied ? 'maintenance' : 'invalid_link'}&next=${encodeURIComponent(returnTo)}`;
