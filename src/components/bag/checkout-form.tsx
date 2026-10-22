@@ -14,6 +14,7 @@ import { eventDate, eventTime } from '@/lib/catalogue/format';
 import { pickupChoicesSchema, type PickupChoice } from '@/lib/pickup';
 import { catalogueUpdateEvent, siteUpdateEvent } from '@/lib/site-updates';
 import { EventSelection } from './event-selection';
+import { Skeleton } from '@/components/ui/skeleton';
 
 export type CheckoutSlot = PickupChoice;
 
@@ -71,6 +72,7 @@ export function CheckoutForm({ slots, name, phone, email, initialSlotError = fal
     : !service && !availableSlots.some((slot) => slot.id === selectedSlot) ? 'Choose an available pickup time.'
     : '';
   const canPay = ready && !blockedReason;
+  if (!ready) return <div role="status" aria-label="Loading Checkout" className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px]"><div className="space-y-6">{[0, 1, 2].map((index) => <Skeleton key={index} className="h-20 w-full rounded-lg" />)}</div><Skeleton className="h-64 w-full rounded-lg" /><span className="sr-only">Loading checkout...</span></div>;
   return <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_360px]">
     <form onSubmit={(event) => {
       event.preventDefault();
@@ -104,7 +106,7 @@ export function CheckoutForm({ slots, name, phone, email, initialSlotError = fal
       <div><Label htmlFor="checkout-email">Account Email</Label><Input id="checkout-email" type="email" value={email} readOnly className="mt-2" /></div>
       {service ? <fieldset disabled={pending} className="space-y-4"><legend className="mb-3 text-sm font-medium">Delivery to your {selectedEvent?.service_mode === 'car' ? 'car' : 'table'}</legend>
         <div><Label htmlFor="checkout-location">{selectedEvent?.service_mode === 'car' ? 'Assigned Car Number' : 'Table Number'}</Label><Input key={selectedEventId} id="checkout-location" name="locationNumber" required maxLength={40} pattern="[a-zA-Z0-9 \\/\\-]+" className="mt-2" /></div>
-        {selectedEvent?.service_mode === 'car' && <div><Label htmlFor="checkout-plate">Number Plate (optional)</Label><Input key={selectedEventId} id="checkout-plate" name="numberPlate" maxLength={20} pattern="[a-zA-Z0-9 \\-]*" autoCapitalize="characters" className="mt-2" /></div>}
+        {selectedEvent?.service_mode === 'car' && <div><Label htmlFor="checkout-plate">Number Plate (optional)</Label><Input key={selectedEventId} id="checkout-plate" name="numberPlate" maxLength={20} pattern="[A-Z0-9 \\-]*" autoCapitalize="characters" className="mt-2 uppercase" onChange={(event) => { event.target.value = event.target.value.toUpperCase(); }} /></div>}
       </fieldset> : <fieldset disabled={pending} className="min-w-0"><legend className="mb-3 text-sm font-medium">Pickup Time</legend>
         {!availableSlots.length && <p className="text-sm text-muted-foreground">No pickup times are currently available.</p>}
         {[...new Set(availableSlots.map((slot) => `${slot.event_id}:${eventDate(slot.starts_at)}`))].map((key) => {

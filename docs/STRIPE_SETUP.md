@@ -55,6 +55,14 @@ sign-in on the same browser. Cookie restrictions or another browser/device may r
 Download/print the QR again after enabling private ordering: a previously printed public QR will not unlock it.
 The **Open Event Menu** link in the admin QR dialog uses the same private access link as the printed code.
 An attendee can still forward the QR or its link: this is QR-link access, not proof of physical attendance.
+Event-specific bags retain their event when adding more items. Car/table, private and custom-set
+events are shown as fixed ordering details rather than a changeable event dropdown. Signed-in
+customers do not see the public header menu shortcut on an event menu, bag or checkout.
+After a confirmed paid order clears the matching bag, its saved event selection is cleared too:
+the empty bag's Explore the Menu link returns to the public menu. A different or edited bag is
+not cleared. Opening the event QR link again starts another event order; existing QR access
+cookies are not revoked by payment. Bag and checkout show loading placeholders until their
+initial catalogue request finishes, and car number plates are uppercased as they are entered.
 Keep printed codes on menus given to attendees rather than public social posts.
 
 Apply [047_independent_ordering_times.sql](../supabase/sql/047_independent_ordering_times.sql)

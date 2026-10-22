@@ -15,6 +15,44 @@ const eventId = '00000000-0000-4000-8000-000000000010';
 const slotId = '00000000-0000-4000-8000-000000000020';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
 
+test('missing customer profiles are backfilled and repaired atomically during drive-in checkout', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec("update public.business_settings set ordering_status='open',card_enabled=true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','repair-meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','repair-tacos',800,true,true) returning id", [category])).rows[0].id;
+    const event = (await database.query("insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode) values ('repair-cinema','Cinema','Cinema','Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',true,true,'open','car') returning id")).rows[0].id;
+    await database.exec(await readFile(new URL('048_menu_sets.sql', sqlDirectory), 'utf8'));
+    const migration = await readFile(new URL('049_repair_customer_profiles.sql', sqlDirectory), 'utf8');
+    const adminBefore = (await database.query('select * from public.profiles where id=$1', [adminId])).rows[0];
+    await database.query('delete from public.profiles where id=$1', [customerId]);
+    await database.exec('drop trigger on_auth_user_created on auth.users');
+    await database.exec(migration);
+    const repaired = (await database.query('select * from public.profiles where id=$1', [customerId])).rows[0];
+    assert.equal(repaired.role, 'customer');
+    assert.equal(repaired.email, 'customer@example.test');
+    await database.exec(migration);
+    assert.deepEqual((await database.query('select * from public.profiles where id=$1', [adminId])).rows[0], adminBefore);
+    const newId = crypto.randomUUID();
+    await database.query("insert into auth.users(id,email,raw_user_meta_data) values ($1,'new@example.test',$2)", [newId, { full_name: 'New Customer', role: 'admin' }]);
+    const created = (await database.query('select * from public.profiles where id=$1', [newId])).rows[0];
+    assert.equal(created.full_name, 'New Customer');
+    assert.equal(created.role, 'customer');
+    const body = { eventId: event, locationNumber: '27', name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+    await database.query('delete from public.profiles where id=$1', [customerId]);
+    const reserve = (id, key) => database.query('select * from public.reserve_card_order($1,$2,$3)', [id, key, body]);
+    const key = crypto.randomUUID();
+    const order = (await reserve(customerId, key)).rows[0];
+    assert.equal(order.customer_id, customerId);
+    assert.equal(order.pickup_location.location_number, '27');
+    assert.equal((await reserve(customerId, key)).rows[0].id, order.id);
+    await assert.rejects(reserve(crypto.randomUUID(), crypto.randomUUID()), /account is no longer available/);
+    await asRole(database, 'authenticated', otherCustomerId, async () => {
+      await assert.rejects(reserve(customerId, crypto.randomUUID()), /permission denied/);
+    });
+  } finally { await database.close(); }
+});
+
 test('menu sets seed existing menus and enforce event membership and price snapshots at checkout', async () => {
   const database = await createDatabase();
   try {
@@ -883,7 +921,7 @@ async function createDatabase({ profileEmailUpgrade = true } = {}) {
   const files = (await readdir(sqlDirectory)).filter((file) => file.endsWith('.sql')).sort();
   for (const file of files) {
     // Historical upgrade tests retain their original schema; menu-set tests apply 048 after seeding a pre-upgrade catalogue.
-    if (file === '048_menu_sets.sql') continue;
+    if (file === '048_menu_sets.sql' || file === '049_repair_customer_profiles.sql') continue;
     if (!profileEmailUpgrade && file === '027_profiles_email.sql') continue;
     await database.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }

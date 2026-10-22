@@ -24,6 +24,7 @@ const BagContext = createContext<BagContextValue | null>(null);
 export function BagProvider({ children }: { children: React.ReactNode }) {
   const [lines, setLines] = useState<BagLine[]>([]);
   const [ready, setReady] = useState(false);
+  const [catalogueLoaded, setCatalogueLoaded] = useState(false);
   const [storageError, setStorageError] = useState(false);
   const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
   const [now, setNow] = useState(0);
@@ -66,6 +67,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
       } catch {
         if (!controller.signal.aborted) setData((previous) => ({ catalogue: { ...previous.catalogue, available: false }, settings: null }));
       } finally {
+        if (!controller.signal.aborted) setCatalogueLoaded(true);
         window.clearTimeout(timeout);
         refreshing = false;
         if (refreshQueued && !controller.signal.aborted) { refreshQueued = false; void refresh(); }
@@ -125,13 +127,16 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     save(lines.map((line) => lineKey(line) === key ? { ...line, quantity } : line));
   }
   function clearIfMatches(purchased: BagLine[]) {
-    if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) save([]);
+    if (purchased.length === lines.length && lines.every((line) => purchased.some((saved) => lineKey(saved) === lineKey(line) && saved.quantity === line.quantity))) {
+      save([]);
+      selectEvent('');
+    }
   }
   function selectEvent(id: string) {
     setSelectedEventId(id);
     try { localStorage.setItem('papas-tacos:event', id); } catch { setStorageError(true); }
   }
-  return <BagContext.Provider value={{ lines, ready, storageError, ...data, catalogue, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  return <BagContext.Provider value={{ lines, ready: ready && catalogueLoaded, storageError, ...data, catalogue, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
 }
 
 function isPublicPickupEvent(event: TruckEvent) {

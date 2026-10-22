@@ -144,6 +144,26 @@ test('checkout and order summaries omit zero fees without changing totals', asyn
   await expect(page.getByText('Total', { exact: true })).toBeVisible();
 });
 
+test('checkout waits for event and menu data without flashing unavailable messages', async ({ page }) => {
+  await fixture(page, 'checkout-car');
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/catalogue', async (route) => {
+    await waiting;
+    await route.fulfill({ json: {
+      catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
+      settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },
+      events: [{ id: itemId, title: 'Drive-In Cinema', service_mode: 'car', pickup_enabled: true, ordering_status: 'open', starts_at: '2020-01-01T00:00:00Z', ends_at: '2099-01-01T00:00:00Z' }],
+    } });
+  });
+  await page.reload();
+  await expect(page.getByRole('status', { name: 'Loading Checkout' })).toBeVisible();
+  await expect(page.getByText(/Unavailable Item|No pickup times|cannot check checkout/)).toHaveCount(0);
+  release();
+  await expect(page.getByRole('textbox', { name: 'Assigned Car Number', exact: true })).toBeVisible();
+  await expect(page.getByRole('status', { name: 'Loading Checkout' })).toHaveCount(0);
+});
+
 test('table and car checkout require delivery numbers without pickup slots', async ({ page }) => {
   await page.clock.install();
   for (const mode of ['car', 'table']) {
@@ -153,6 +173,8 @@ test('table and car checkout require delivery numbers without pickup slots', asy
     const location = page.getByRole('textbox', { name: mode === 'car' ? 'Assigned Car Number' : 'Table Number', exact: true });
     await expect(location).toBeVisible();
     await expect(page.getByRole('radio')).toHaveCount(0);
+    await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(0);
+    await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: 'Ordering Information' })).toContainText('Delivery times may be longer during busy periods.');
     await expect(page.getByText(/pickup slot/i)).toHaveCount(0);
     const pay = page.getByRole('button', { name: 'Pay £8.75', exact: true });
@@ -160,7 +182,10 @@ test('table and car checkout require delivery numbers without pickup slots', asy
     expect(await location.evaluate((element: HTMLInputElement) => element.validity.valueMissing)).toBe(true);
     expect(await page.evaluate(() => (window as unknown as { __checkoutInput?: unknown }).__checkoutInput)).toBeUndefined();
     await location.fill('27');
-    if (mode === 'car') await page.getByRole('textbox', { name: 'Number Plate (optional)' }).fill('AB12 CDE');
+    if (mode === 'car') {
+      await page.getByRole('textbox', { name: 'Number Plate (optional)' }).fill('ab12 cde');
+      await expect(page.getByRole('textbox', { name: 'Number Plate (optional)' })).toHaveValue('AB12 CDE');
+    }
     await pay.click();
     await expect.poll(() => page.evaluate(() => (window as unknown as { __checkoutInput?: { locationNumber: string } }).__checkoutInput?.locationNumber)).toBe('27');
     const input = await page.evaluate(() => (window as unknown as { __checkoutInput: Record<string, unknown> }).__checkoutInput);
@@ -175,10 +200,10 @@ test('table and car checkout require delivery numbers without pickup slots', asy
 
 test('event link preselects the event and persists it through reload and checkout', async ({ page }) => {
   await fixture(page, 'menu-event');
-  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
   await expect.poll(() => page.evaluate(() => localStorage.getItem('papas-tacos:event'))).toBe(itemId);
   await page.reload();
-  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
   await page.goto('/__payments_test?kind=checkout-car');
   await expect(page.getByRole('textbox', { name: 'Assigned Car Number', exact: true })).toBeVisible();
 });
@@ -194,14 +219,14 @@ test('event link requires confirmation before switching an existing bag to anoth
   } }));
   await page.evaluate((id) => localStorage.setItem('papas-tacos:event', id), otherId);
   await page.reload();
-  const event = page.getByRole('combobox', { name: 'Ordering for' });
-  await expect(event).toHaveValue(otherId);
+  const event = page.getByRole('heading', { name: 'Ordering for Kitchen Tables', exact: true });
+  await expect(event).toBeVisible();
   await expect(page.getByRole('button', { name: 'Switch Event', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Keep Current Event', exact: true }).click();
-  await expect(event).toHaveValue(otherId);
+  await expect(event).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: 'Switch Event', exact: true }).click();
-  await expect(event).toHaveValue(itemId);
+  await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
   expect(await page.evaluate(() => localStorage.getItem('papas-tacos:bag:v1'))).toBe(bag);
   await page.goto('/__payments_test?kind=checkout-car');
   await expect(page.getByRole('textbox', { name: 'Assigned Car Number', exact: true })).toBeVisible();
@@ -209,7 +234,7 @@ test('event link requires confirmation before switching an existing bag to anoth
 
 test('expired event selection stays blocked instead of choosing another event', async ({ page }) => {
   await fixture(page, 'menu-event');
-  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveValue(itemId);
+  await expect(page.getByRole('heading', { name: 'Ordering for Drive-In Cinema', exact: true })).toBeVisible();
   await page.route('**/api/catalogue', (route) => route.fulfill({ json: {
     catalogue: { available: true, categories: [], items: [{ id: itemId, name: 'Test Taco', price_pence: 800, is_available: true, groups: [] }] },
     settings: { card_enabled: true, ordering_status: 'open', service_fee_pence: 50, packaging_fee_pence: 25, minimum_order_pence: 0 },

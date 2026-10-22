@@ -30,6 +30,11 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       customer_uuid: viewer.user.id, request_key: key, payload: { ...values, ...(eventAccess ? { eventAccess } : {}), email: viewer.user.email },
     });
     if (error) {
+      console.error('[checkout] Reservation rejected', { code: error.code, message: error.message });
+      if (error.message === 'Your account is no longer available. Sign in again before checking out.') return { error: error.message };
+      if (error.code === '23503' && error.message.includes('orders_customer_id_fkey')) {
+        return { error: 'Your customer account could not be prepared for checkout. Please contact us so we can restore it; your bag is still saved.' };
+      }
       if (error.message === 'An item is not on the menu for this event. Review your bag.') return { error: error.message };
       if (error.message === 'Scan the QR code provided at this event before ordering') return { error: error.message };
       const safeMessages = ['Card checkout is unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time', 'Enter a valid table or car number', 'The selected event does not match this order', 'Choose an event and an available pickup time if required'];

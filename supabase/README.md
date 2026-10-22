@@ -75,6 +75,17 @@ See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu it
 
 ## Admin Listing Upgrades
 
+### Missing customer profile repair
+
+Apply [049_repair_customer_profiles.sql](sql/049_repair_customer_profiles.sql) after 048.
+It repairs Auth users without a matching customer profile (the cause of
+`orders_customer_id_fkey` checkout failures), restores the signup profile trigger, and
+ensures a missing profile is recreated atomically when reserving checkout. Existing
+profiles, names, phone numbers and admin roles are never overwritten. Recreated profiles
+always receive the default customer role, never a role from signup metadata. The migration
+is repeatable and does not change saved bags, orders or event QR keys.
+Apply it again after rerunning a migration that replaces `reserve_card_order`.
+
 ### Table/car event ordering upgrade
 
 After upgrades through [044_order_status_emails.sql](sql/044_order_status_emails.sql), apply

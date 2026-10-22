@@ -30,17 +30,18 @@ async function isolateOptionPicker(page: Page) {
     stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
       import React from 'react';
       import { createRoot } from 'react-dom/client';
-      import { BagProvider, MenuOrderingProvider } from '@/components/bag/bag-provider';
+      import { BagProvider, MenuOrderingProvider, PaidOrderBagCleanup } from '@/components/bag/bag-provider';
+      import { HeaderMenuButton } from '@/components/bag/header-menu-button';
       import { SiteUpdates } from '@/components/site-updates';
       import { MenuBrowser } from '@/components/catalogue/menu-browser';
       import { BagView } from '@/components/bag/bag-view';
-      createRoot(document.getElementById('fixture')).render(<main className="page-width py-10"><BagProvider><SiteUpdates />{location.pathname === '/bag' ? <BagView /> : <MenuOrderingProvider eventId={new URLSearchParams(location.search).get('event') || ''}><MenuBrowser initial={{available:false,items:[],categories:[]}} /></MenuOrderingProvider>}</BagProvider></main>);
+      createRoot(document.getElementById('fixture')).render(<main className="page-width py-10"><BagProvider><HeaderMenuButton signedIn={new URLSearchParams(location.search).get('signedIn') !== 'false'} /><SiteUpdates />{new URLSearchParams(location.search).has('paid') && <PaidOrderBagCleanup orderId="paid-fixture" />}{location.pathname === '/bag' ? <BagView /> : <MenuOrderingProvider eventId={new URLSearchParams(location.search).get('event') || ''}><MenuBrowser initial={{available:false,items:[],categories:[]}} /></MenuOrderingProvider>}</BagProvider></main>);
     ` },
     bundle: true, write: false, format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"test"' },
     plugins: [{ name: 'option-picker-fixture', setup(builder) {
       builder.onResolve({ filter: /^(next\/navigation|@\/lib\/supabase\/(client|config))$/ }, (args) => ({ path: args.path, namespace: 'updates-fixture' }));
       builder.onLoad({ filter: /.*/, namespace: 'updates-fixture' }, (args) => ({ contents: args.path === 'next/navigation'
-        ? 'export const usePathname = () => location.pathname; export const useRouter = () => ({refresh() { window.__pageRefreshes = (window.__pageRefreshes || 0) + 1; }});'
+        ? 'export const usePathname = () => location.pathname; export const useSearchParams = () => new URLSearchParams(location.search); export const useRouter = () => ({refresh() { window.__pageRefreshes = (window.__pageRefreshes || 0) + 1; }});'
         : args.path.endsWith('/config') ? 'export const supabaseConfig = () => ({url: location.origin,key:"fixture"});'
         : 'export const createBrowserSupabase = () => ({ channel() { const channel = {on(event, filter, callback) { window.__siteChange = callback; return channel; }, subscribe() { return channel; }}; return channel; }, removeChannel() {} });' }));
       builder.onResolve({ filter: /^next\/(image|link)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
@@ -53,8 +54,52 @@ async function isolateOptionPicker(page: Page) {
   await page.goto('/sign-in');
   const styles = await page.locator('link[rel="stylesheet"]').evaluateAll((links) => links.map((link) => (link as HTMLLinkElement).href));
   await page.route('**/__option_picker_fixture.js', (route) => route.fulfill({ contentType: 'application/javascript', body: result.outputFiles[0].text }));
-  for (const routePath of ['/menu', '/menu?*', '/bag']) await page.route(`**${routePath}`, (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="dark"><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}</head><body><div id="fixture"></div><script src="/__option_picker_fixture.js"></script></body></html>` }));
+  for (const routePath of ['/menu', '/menu?*', '/bag', '/bag?*']) await page.route(`**${routePath}`, (route) => route.fulfill({ contentType: 'text/html', body: `<!doctype html><html class="dark"><head><meta name="viewport" content="width=device-width, initial-scale=1">${styles.map((href) => `<link rel="stylesheet" href="${href}">`).join('')}</head><body><div id="fixture"></div><script src="/__option_picker_fixture.js"></script></body></html>` }));
 }
+
+test('event bag navigation stays scoped and matching paid orders reset to the public menu', async ({ page }) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  Object.assign(data.events[0], { service_mode: 'car' });
+  await page.route('**/api/catalogue', (route) => route.fulfill({ json: data }));
+  await page.evaluate(({ itemId, mildId }) => {
+    const lines = [{ itemId, optionIds: [mildId], quantity: 1 }];
+    localStorage.setItem('papas-tacos:bag:v1', JSON.stringify({ version: 1, lines }));
+    localStorage.setItem('papas-tacos:event', 'market');
+    sessionStorage.setItem('papas-tacos:checkout', JSON.stringify({ orderId: 'paid-fixture', serialized: JSON.stringify({ lines }) }));
+  }, { itemId, mildId });
+  await page.goto('/bag');
+  await expect(page.getByRole('link', { name: 'Add More' })).toHaveAttribute('href', '/menu?event=market');
+  await expect(page.getByRole('link', { name: 'The Menu', exact: true })).toHaveCount(0);
+  await expect(page.getByRole('combobox', { name: 'Ordering for' })).toHaveCount(0);
+  await page.goto('/menu?event=market');
+  await expect(page.getByRole('link', { name: 'The Menu', exact: true })).toHaveCount(0);
+  await page.goto('/menu?event=market&signedIn=false');
+  await expect(page.getByRole('link', { name: 'The Menu', exact: true })).toBeVisible();
+  await page.goto('/bag?paid=1');
+  await expect(page.getByRole('link', { name: 'Explore the Menu' })).toHaveAttribute('href', '/menu');
+  expect(await page.evaluate(() => localStorage.getItem('papas-tacos:event'))).toBe('');
+  await expect(page.getByRole('link', { name: 'The Menu', exact: true })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('link', { name: 'Explore the Menu' })).toHaveAttribute('href', '/menu');
+});
+
+test('bag waits for its initial catalogue before displaying availability', async ({ page }) => {
+  await isolateOptionPicker(page);
+  await page.evaluate(({ itemId, mildId }) => {
+    localStorage.setItem('papas-tacos:bag:v1', JSON.stringify({ version: 1, lines: [{ itemId, optionIds: [mildId], quantity: 1 }] }));
+  }, { itemId, mildId });
+  let release!: () => void;
+  const waiting = new Promise<void>((resolve) => { release = resolve; });
+  await page.route('**/api/catalogue', async (route) => { await waiting; await route.fulfill({ json: fixture() }); });
+  await page.goto('/bag');
+  await expect(page.getByRole('status', { name: 'Loading Your Bag' })).toBeVisible();
+  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.getByText(/Unavailable Item|cannot check menu prices/)).toHaveCount(0);
+  release();
+  await expect(page.getByRole('status', { name: 'Loading Your Bag' })).toHaveCount(0);
+  await expect(page.getByText('£8.50 each before extras', { exact: true })).toBeVisible();
+});
 
 test('event menu sets control custom headings items and prices while the public menu stays separate', async ({ page }) => {
   await isolateOptionPicker(page);
