@@ -125,7 +125,11 @@ parameters deliberately use `&amp;`. Do not replace the template with an unvalid
 Avoid email click-tracking that rewrites authentication URLs. `/auth/confirm` now displays a
 **Continue Signing In** button on GET and verifies credentials only on a same-origin POST.
 Ordinary scanners/preview requests can open that page without consuming the token. Tokens
-are not rendered into the page and it is non-cacheable with a no-referrer policy.
+are not rendered into the page and it is non-cacheable. The confirmation page uses
+`Referrer-Policy: same-origin`: this preserves the Origin header for its same-origin form
+submission while preventing referrer leakage to other origins. Using `no-referrer` on that
+page makes browsers send `Origin: null` on POST, causing legitimate confirmations to fail.
+Rejected submissions return to the normal sign-in recovery screen, preserving checkout.
 **The direct token-hash template above is essential for scanner protection:** a default
 `ConfirmationURL` can consume its one-time token at Supabase before reaching this page.
 Google continues using the GET callback; it does not use this email interstitial.

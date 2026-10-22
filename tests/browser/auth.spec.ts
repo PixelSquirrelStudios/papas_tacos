@@ -104,6 +104,12 @@ test('email link preview is repeatable without consuming the sign-in token', asy
   await expect(page.locator('form')).toHaveAttribute('method', 'post');
   await expect(page.getByRole('link', { name: 'Request a new sign-in link' })).toHaveAttribute('href', '/sign-in?next=%2Fcheckout');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  const submitted = page.waitForRequest((request) => request.method() === 'POST' && new URL(request.url()).pathname === '/auth/confirm');
+  await page.getByRole('button', { name: 'Continue Signing In' }).click();
+  const confirmationRequest = await submitted;
+  expect(confirmationRequest.headers()['origin']).toBe(new URL(page.url()).origin);
+  await expect(page).toHaveURL(/\/sign-in\?error=invalid_link&next=%2Fcheckout$/);
+  await expect(page.getByRole('alert')).toContainText('expired');
 });
 
 test('header actions fit and both auth tabs stay inside their holder', async ({ page }, testInfo) => {

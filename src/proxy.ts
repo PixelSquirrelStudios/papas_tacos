@@ -64,7 +64,9 @@ export async function proxy(request: NextRequest) {
     }
   }
   response.headers.set('Cache-Control', 'private, no-store, max-age=0');
-  if (request.nextUrl.pathname.startsWith('/auth/')) response.headers.set('Referrer-Policy', 'no-referrer');
+  if (request.nextUrl.pathname.startsWith('/auth/')) {
+    response.headers.set('Referrer-Policy', pathname === '/auth/confirm' ? 'same-origin' : 'no-referrer');
+  }
   return response;
 }
 

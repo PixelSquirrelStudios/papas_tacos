@@ -32,7 +32,7 @@ a{color:#6ed8cc}small{display:block;margin-top:24px;color:#c8ceca}
     headers: {
       'Content-Type': 'text/html; charset=utf-8',
       'Cache-Control': 'private, no-store, max-age=0',
-      'Referrer-Policy': 'no-referrer',
+      'Referrer-Policy': 'same-origin',
       'X-Robots-Tag': 'noindex, nofollow',
       'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'",
     },
@@ -42,8 +42,11 @@ a{color:#6ed8cc}small{display:block;margin-top:24px;color:#c8ceca}
 export async function POST(request: NextRequest) {
   if (request.headers.get('origin') !== request.nextUrl.origin) {
     console.warn('[auth] Rejected cross-origin email confirmation.');
-    return new NextResponse('Please open your sign-in link again and use the Continue Signing In button.', {
-      status: 403, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
+    const destination = new URL('/sign-in', request.nextUrl.origin);
+    destination.searchParams.set('error', 'invalid_link');
+    destination.searchParams.set('next', safeReturnPath(request.nextUrl.searchParams.get('next')));
+    return NextResponse.redirect(destination, {
+      status: 303, headers: { 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' },
     });
   }
   return completeSignIn(request);

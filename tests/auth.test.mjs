@@ -377,7 +377,7 @@ test('email confirmation GET does not consume links and POST requires the same o
       const url = `https://tacos.example/auth/confirm?${query}&next=%2Fcheckout`;
       const response = await GET(new NextRequest(url));
       assert.equal(response.status, 200);
-      assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
+      assert.equal(response.headers.get('referrer-policy'), 'same-origin');
       assert.match(response.headers.get('cache-control'), /no-store/);
       const html = await response.text();
       assert.match(html, /<form method="post">/);
@@ -386,7 +386,9 @@ test('email confirmation GET does not consume links and POST requires the same o
     }
     const url = 'https://tacos.example/auth/confirm?token_hash=private-token&type=email';
     for (const origin of [undefined, 'https://untrusted.example']) {
-      assert.equal((await POST(new NextRequest(url, { method: 'POST', headers: origin ? { origin } : {} }))).status, 403);
+      const response = await POST(new NextRequest(url, { method: 'POST', headers: origin ? { origin } : {} }));
+      assert.equal(response.status, 303);
+      assert.equal(response.headers.get('location'), 'https://tacos.example/sign-in?error=invalid_link&next=%2Faccount');
     }
     assert.equal(state.calls, 0);
     assert.equal((await POST(new NextRequest(url, { method: 'POST', headers: { origin: 'https://tacos.example' } }))).status, 303);
