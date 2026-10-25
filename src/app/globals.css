@@ -67,6 +67,7 @@
   ::-webkit-scrollbar-thumb:hover { background: #ffd39f; }
   ::-webkit-scrollbar-button { display: none; width: 0; height: 0; }
   ::-webkit-scrollbar-corner { background: #222522; }
+  html { scroll-behavior: smooth; }
   body { @apply bg-background text-foreground font-sans antialiased; }
   button:not(:disabled), select:not(:disabled), [role='tab'], [role='combobox']:not(:disabled), [role='option']:not([aria-disabled='true']) { cursor: pointer; }
   h1, h2, h3 { text-wrap: balance; }
@@ -133,4 +134,3 @@
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }
-

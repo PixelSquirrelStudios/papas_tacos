@@ -52,7 +52,14 @@ test('public menu visibility covers homepage, header, navigation, footer and dir
       } }],
     });
     const ui = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
-    assert.match(await ui.home(), /papas-choice-title/);
+    const visibleHome = await ui.home();
+    const visibleHero = visibleHome.match(/<section class="hero\b[\s\S]*?<\/section>/)?.[0];
+    assert.ok(visibleHero);
+    assert.match(visibleHero, /href="\/menu"[^>]*>Explore the Menu/);
+    assert.match(visibleHero, /href="#contact"[^>]*>Book Us/);
+    assert.ok(visibleHero.indexOf('Find Us') < visibleHero.indexOf('Book Us'));
+    assert.doesNotMatch(visibleHero, /About Papa/);
+    assert.match(visibleHome, /papas-choice-title/);
     assert.match(await ui.home(), /crowd-favourites-title/);
     assert.match(await ui.header(), /href="\/menu"/);
     assert.match(await ui.footer(), /href="\/menu"/);
@@ -61,6 +68,13 @@ test('public menu visibility covers homepage, header, navigation, footer and dir
     state.enabled = false;
     state.catalogueReads = 0;
     const home = await ui.home();
+    const hiddenHero = home.match(/<section class="hero\b[\s\S]*?<\/section>/)?.[0];
+    assert.ok(hiddenHero);
+    assert.match(hiddenHero, /href="#about"[^>]*>About Papa&#x27;s/);
+    assert.match(hiddenHero, /href="\/events"[^>]*>Find Us/);
+    assert.ok(hiddenHero.indexOf('About Papa') < hiddenHero.indexOf('Find Us'));
+    assert.match(hiddenHero, /href="#contact"[^>]*>Book Us/);
+    assert.ok(hiddenHero.indexOf('Find Us') < hiddenHero.indexOf('Book Us'));
     assert.doesNotMatch(home, /papas-choice-title|crowd-favourites-title|href="\/menu"|data-menu-browser/);
     assert.match(home, /About Content/);
     assert.equal(state.catalogueReads, 0);

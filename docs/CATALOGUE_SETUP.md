@@ -44,6 +44,15 @@ Public reads use only the anonymous publishable key, even for a signed-in admin;
 is not exposed through the public menu. Failed queries render unavailable states, while a
 successful empty query renders an empty state. Do not use a privileged secret key to bypass RLS.
 
+**Show Public Menu** in Site Settings controls the public `/menu` page as well as
+its navigation links and homepage previews. Open menu pages update live when this
+setting changes, showing the unavailable message when hidden and restoring the
+menu when enabled. Event links and QR-code menus remain accessible independently.
+When hidden, the homepage hero replaces **Explore the Menu** with **About Papa's**,
+scrolling to the homepage About section while keeping **Find Us** alongside it.
+**Find Us** uses a green background. **Book Us** always follows it in a ghost style and scrolls to the
+homepage contact section.
+
 ## Menu Description Formatting
 
 Admin menu descriptions use TinyMCE 8.9.1 with `licenseKey="gpl"`, loaded from

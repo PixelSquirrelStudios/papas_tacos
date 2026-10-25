@@ -14,7 +14,7 @@ export function SiteUpdates() {
   const queued = useRef(false);
   const [disconnected, setDisconnected] = useState(false);
   const refreshPage = useEffectEvent(() => {
-    if (admin || document.visibilityState === 'hidden' || ['/menu', '/bag'].includes(pathname)) return;
+    if (admin || document.visibilityState === 'hidden' || pathname === '/bag') return;
     if (pending) { queued.current = true; return; }
     queued.current = false;
     startTransition(() => router.refresh());

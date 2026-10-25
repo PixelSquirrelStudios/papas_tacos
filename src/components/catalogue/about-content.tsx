@@ -16,7 +16,7 @@ export function AboutContent({ settings, fullPage = false }: { settings: Setting
     { src: publicImage(content.about_page_image_2_path), alt: content.about_page_image_2_alt },
     { src: publicImage(content.about_page_image_3_path), alt: content.about_page_image_3_alt },
   ].filter((image): image is { src: string; alt: string } => Boolean(image.src));
-  return <section aria-labelledby="about-title" className="border-b border-border bg-card">
+  return <section id="about" aria-labelledby="about-title" className="scroll-mt-28 border-b border-border bg-card">
     <div className={`page-width grid gap-10 py-16 sm:py-20 lg:gap-16 ${fullPage && storyImages.length === 0 ? 'items-start' : `lg:grid-cols-2 ${fullPage ? 'items-start' : 'items-center'}`}`}>
     {fullPage ? storyImages.length > 0 && <div data-about-media data-about-story-images className="space-y-6">
       {storyImages.map((image, index) => <div key={`${image.src}-${index}`} className={`relative aspect-4/3 overflow-hidden border-b-8 ${index === 0 ? 'border-turquoise' : 'border-brand-yellow'}`}><Image src={image.src} alt={image.alt} fill unoptimized sizes="(max-width: 1023px) 100vw, 50vw" className="object-cover" /><span className="sr-only">Story image {index + 1}</span></div>)}

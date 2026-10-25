@@ -11,5 +11,5 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
-  return <html lang="en-GB" className="dark"><body><TooltipProvider><BagProvider><SiteUpdates />{children}</BagProvider></TooltipProvider><Toaster theme="dark" closeButton /></body></html>;
+  return <html lang="en-GB" className="dark" data-scroll-behavior="smooth"><body><TooltipProvider><BagProvider><SiteUpdates />{children}</BagProvider></TooltipProvider><Toaster theme="dark" closeButton /></body></html>;
 }

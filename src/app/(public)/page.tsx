@@ -23,8 +23,9 @@ export default async function HomePage() {
           <h1 className="font-display text-[76px] leading-[0.98] sm:text-[112px] lg:text-[144px]">PAPA&apos;S<br /><span className="text-primary">TACOS.</span></h1>
           <p className="mt-7 max-w-120 text-lg leading-relaxed text-white/90">Mexican soul. Street food spirit. Made fresh.</p>
           <div className="mt-8 flex flex-wrap items-center gap-4">
-            {publicMenuEnabled && <Button asChild size="lg" className="h-12 px-5"><Link href="/menu">Explore the Menu<ArrowUpRight className="size-4" aria-hidden="true" /></Link></Button>}
-            <Button asChild variant="ghost" size="lg" className="h-12 border border-white/20 bg-white/8 px-5 text-white hover:bg-white/15 hover:text-white dark:hover:bg-white/15"><Link href="/events">Find Us<ArrowUpRight className="size-4" aria-hidden="true" /></Link></Button>
+            <Button asChild size="lg" className="h-12 px-5"><Link href={publicMenuEnabled ? '/menu' : '#about'}>{publicMenuEnabled ? 'Explore the Menu' : "About Papa's"}<ArrowUpRight className="size-4" aria-hidden="true" /></Link></Button>
+            <Button asChild variant="ghost" size="lg" className="h-12 border border-brand-green/50 bg-brand-green-deep/40 px-5 text-white hover:bg-brand-green-deep/60 hover:text-white dark:hover:bg-brand-green-deep/60"><Link href="/events">Find Us<ArrowUpRight className="size-4" aria-hidden="true" /></Link></Button>
+            <Button asChild variant="ghost" size="lg" className="h-12 border border-white/20 bg-white/8 px-5 text-white hover:bg-white/15 hover:text-white dark:hover:bg-white/15"><a href="#contact">Book Us<ArrowUpRight className="size-4" aria-hidden="true" /></a></Button>
           </div>
         </div>
       </div>

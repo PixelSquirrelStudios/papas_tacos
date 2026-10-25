@@ -71,6 +71,13 @@ npm run dev
 Open the local URL printed by Next.js, normally `http://localhost:3000`.
 Keep that origin consistent throughout login. Production requires an HTTPS `SITE_URL`.
 
+### iPhone home-screen shortcut
+
+The root [Apple touch icon](src/app/apple-icon.png) uses the branded logo on an
+opaque 180x180 background. Next.js automatically includes it on every route,
+including the admin dashboard. After deploying an icon change, remove an existing
+iPhone home-screen shortcut and add it again from Safari to refresh its cached icon.
+
 ## Local verification
 
 UI text uses Title Case for headings, labels, buttons, badges, statuses, table
