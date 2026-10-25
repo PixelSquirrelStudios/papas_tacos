@@ -33,9 +33,9 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const [data, setData] = useState<{ catalogue: Catalogue; settings: Settings | null; events?: TruckEvent[] }>({ catalogue: { items: [], categories: [], available: false }, settings: null });
   const [now, setNow] = useState(0);
   const [selectedEventId, setSelectedEventId] = useState('');
-  const stock = useStock(selectedEventId);
-  const stockAvailable = stock?.available === true;
   const selectedEvent = data.events?.find((event) => event.id === selectedEventId);
+  const stock = useStock(selectedEventId, data.catalogue.available && hasStockAccess(selectedEventId, selectedEvent));
+  const stockAvailable = stock?.available === true;
   const baseCatalogue = menuCatalogue(data.catalogue, selectedEvent?.menu_set_id);
   const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const eligibleEvents = selectedEventId ? (selectedEvent ? [selectedEvent] : []) : (data.events ?? []).filter(isPublicPickupEvent);
@@ -165,13 +165,17 @@ function isPublicPickupEvent(event: TruckEvent) {
   return !event.is_private && (!event.service_mode || event.service_mode === 'pickup');
 }
 
+function hasStockAccess(eventId: string, event: TruckEvent | undefined) {
+  return !eventId || Boolean(event && (!event.is_private || event.ordering_access === true));
+}
+
 export function MenuOrderingProvider({ eventId = '', children }: { eventId?: string; children: React.ReactNode }) {
   const bag = useBag();
   const [pending, setPending] = useState<{ line: BagLine; replacing?: string } | null>(null);
   const [error, setError] = useState('');
-  const stock = useStock(eventId);
-  const stockAvailable = stock?.available === true;
   const selectedEvent = bag.events.find((event) => event.id === eventId);
+  const stock = useStock(eventId, bag.sourceCatalogue.available && hasStockAccess(eventId, selectedEvent));
+  const stockAvailable = stock?.available === true;
   const baseCatalogue = menuCatalogue(bag.sourceCatalogue, selectedEvent?.menu_set_id);
   const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const events = eventId ? (selectedEvent ? [selectedEvent] : []) : bag.events.filter(isPublicPickupEvent);

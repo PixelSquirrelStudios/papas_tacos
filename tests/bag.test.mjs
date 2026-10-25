@@ -9,6 +9,27 @@ import { applyStock, bagStockIssue, heldQuantity, inventoryActionSchema, publicS
 import { resolveLinkedItems, minimumItemPrice } from '../src/lib/catalogue/linked-items.ts';
 import { menuCatalogue } from '../src/lib/catalogue/menu-sets.ts';
 
+test('removals preserve price, portion demand, allergens and distinct editable bag lines', () => {
+  const item = { id: 'nachos', name: 'Nachos', price_pence: 850, is_available: true, allergens: ['milk'], stock_quantity: 10,
+    groups: [{ id: 'remove', name: 'Nachos removals', group_type: 'removal', min_selections: 0, max_selections: 30,
+      options: ['No Cheese', 'Extra Onions'].map((name, index) => ({ id: `ingredient-${index}`, modifier_group_id: 'remove', name, price_pence: 0, allergens: [], is_available: true })) }] };
+  const regular = { itemId: item.id, optionIds: [], quantity: 1 };
+  const customised = { ...regular, optionIds: ['ingredient-0', 'ingredient-1'], quantity: 2 };
+  assert.equal(quoteLine(regular, [item]).total, 850);
+  const quote = quoteLine(customised, [item]);
+  assert.equal(quote.total, 1700);
+  assert.equal(quote.issue, '');
+  assert.deepEqual(item.allergens, ['milk']);
+  assert.deepEqual(quote.options.map(option => option.name), ['No Cheese', 'Extra Onions']);
+  assert.equal(mergeLine([regular], customised).length, 2);
+  assert.equal(mergeLine([customised], { ...customised, optionIds: [...customised.optionIds].reverse() })[0].quantity, 4);
+  const catalogue = { items: [item], available: true, categories: [] };
+  assert.equal(maximumLineQuantity(customised, [regular], catalogue), 9);
+  item.groups[0].options[0].is_available = false;
+  assert.match(quoteLine(customised, [item]).issue, /unavailable/);
+  assert.match(quoteLine({ ...regular, optionIds: ['removed-id'] }, [item]).issue, /unavailable/);
+});
+
 function linkedCatalogue() {
   const product = { id: 'fanta', name: 'Fanta Orange', price_pence: 200, is_available: true, show_standalone: false, item_kind: 'product', description: 'Orange drink', image_path: 'fanta.jpg', image_alt: 'Fanta', imageUrl: '/fanta.jpg', allergens: ['milk'], groups: [] };
   const parent = { id: 'pop', name: 'Cans of Pop', price_pence: 0, is_available: true, item_kind: 'group', groups: [{

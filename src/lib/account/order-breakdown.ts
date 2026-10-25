@@ -1,11 +1,11 @@
 import { money } from '../bag.ts';
 
-export type SavedChoice = { group_name: string; option_name: string; unit_price_pence?: number };
+export type SavedChoice = { group_name: string; group_type?: 'standard' | 'removal'; option_name: string; unit_price_pence?: number };
 
 export function groupOrderChoices<Choice extends SavedChoice>(modifiers: Choice[]) {
   const roots = new Map<string, Map<string, Choice[]>>();
   for (const modifier of modifiers) {
-    const [root, ...children] = modifier.group_name.split(' / ');
+    const [root, ...children] = (modifier.group_type === 'removal' ? 'Make It Yours' : modifier.group_name).split(' / ');
     const label = children.join(' / ') || (/ filling$/i.test(root) ? 'Filling' : 'Choices');
     if (!roots.has(root)) roots.set(root, new Map());
     const groups = roots.get(root)!;

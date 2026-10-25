@@ -59,6 +59,7 @@ export async function getDashboardData(): Promise<DashboardSnapshot> {
 
 export function adminError(error: unknown) {
   if (error instanceof AdminDataError) {
+    if (['42703', 'PGRST204'].includes(error.code) && /group_type/i.test(error.message)) return 'Ingredient removals require database upgrade 054_removal_modifiers.sql after 053. Apply it, then refresh.';
     if (['42703', 'PGRST204'].includes(error.code) && /public_menu_enabled/i.test(error.message)) return 'Public menu visibility requires database upgrade 052_public_menu_visibility.sql. Apply it, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /linked_menu_item|linked_quantity|pricing_mode|item_kind|show_standalone/i.test(error.message)) return 'Linked product choices require database upgrade 051_linked_menu_items.sql after 050. Apply it during an ordering maintenance window, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /inventory|event_stock|restock_order/i.test(error.message)) return 'Stock management requires database upgrade 050_inventory.sql after 049. Follow the stock deployment checklist before applying it, then refresh.';

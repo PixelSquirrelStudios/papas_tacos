@@ -76,7 +76,7 @@ export function RecordStatus({ row }: { row: AdminRow }) {
   </div>;
 }
 
-export function RecordCard({ resourceKey, row, references, children }: { resourceKey: string; row: AdminRow; references: Record<string, AdminRow[]>; children: React.ReactNode }) {
+export function RecordCard({ resourceKey, row, references, associations = [], children }: { resourceKey: string; row: AdminRow; references: Record<string, AdminRow[]>; associations?: AdminRow[]; children: React.ReactNode }) {
   const resource = resources[resourceKey];
   const Icon = icons[resourceKey as keyof typeof icons] ?? Package;
   const path = row.image_path ?? row.featured_image_path;
@@ -89,6 +89,8 @@ export function RecordCard({ resourceKey, row, references, children }: { resourc
   const dietary = Array.isArray(row.dietary_tags) ? row.dietary_tags.map(String) : [];
   const allergens = Array.isArray(row.allergens) ? row.allergens.map(String) : [];
   const linked = row.linked_menu_item_id ? references.menu_items?.find((item) => item.id === row.linked_menu_item_id) : undefined;
+  const optionCount = resourceKey === 'modifiers' ? (references.modifier_options ?? []).filter((option) => option.modifier_group_id === row.id).length : 0;
+  const menuItemCount = resourceKey === 'modifiers' ? new Set(associations.filter((link) => link.modifier_group_id === row.id).map((link) => link.menu_item_id)).size : 0;
   const price = row.item_kind === 'group' ? 'Priced by Choices'
     : row.linked_menu_item_id && row.pricing_mode === 'item'
       ? typeof linked?.price_pence === 'number' ? money(linked.price_pence * Number(row.linked_quantity ?? 1)) : 'Linked Price Unavailable'
@@ -103,7 +105,7 @@ export function RecordCard({ resourceKey, row, references, children }: { resourc
         {resourceKey === 'menu' && (dietary.length > 0 || allergens.length > 0) && <div className="border-t border-border pt-4"><FoodBadges dietary={dietary} allergens={allergens} /></div>}
         {resourceKey === 'events' && <><p className="flex items-start gap-2"><CalendarDays className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{adminDate(row.starts_at)}</p><p className="flex items-start gap-2"><MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{[row.venue_name, row.town].filter(Boolean).join(', ')}</p><p>{choiceLabel(String(row.service_mode || 'pickup'))} Service</p>{row.id && <><EventQr id={row.id} title={label} />        <Link className="block min-h-9 text-turquoise underline" href={`/admin/orders?event=${row.id}&status=ordered`}>Outstanding Event Orders</Link></>}</>}
         {resourceKey === 'slots' && <><p>Until {adminDate(row.ends_at)}</p><p className="font-medium text-foreground">Capacity: {String(row.capacity)} Orders</p></>}
-        {resourceKey === 'modifiers' && <p>{String(row.min_selections)} - {String(row.max_selections)} Choices</p>}
+        {resourceKey === 'modifiers' && (row.group_type === 'removal' ? <div className="flex items-center gap-3"><span>{optionCount} {optionCount === 1 ? 'Option' : 'Options'}</span><span aria-hidden="true" className="h-4 shrink-0 border-l border-border" /><span>Used by {menuItemCount} Menu {menuItemCount === 1 ? 'Item' : 'Items'}</span></div> : <p>{String(row.min_selections)} - {String(row.max_selections)} Choices</p>)}
         {resourceKey === 'options' && row.linked_menu_item_id ? <div className="space-y-1 rounded-md border border-turquoise/25 p-3 text-xs"><p className="font-medium text-foreground">{linked ? String(linked.name) : 'Linked Item Unavailable / No Longer Eligible'}</p><p>{String(row.linked_quantity ?? 1)} unit(s) per choice · {row.pricing_mode === 'item' ? 'Uses Linked Product Price' : 'Included / Fixed Surcharge'}</p><p>Details and stock come from the linked menu item.</p><Link href={`/admin/stock?item=${row.linked_menu_item_id}`} className="block text-brand-yellow underline">Manage Product Stock</Link></div> : null}
         {resourceKey === 'testimonials' && <div className="flex flex-wrap items-center justify-between gap-2">{row.rating ? <span className="flex items-center gap-1.5 font-medium text-brand-yellow"><Star className="size-4 fill-current" aria-hidden="true" />{String(row.rating)} / 5</span> : null}{row.source_name ? <span>{String(row.source_name)}</span> : null}</div>}
         {resourceKey === 'settings' && <SettingsSummary row={row} />}

@@ -27,6 +27,15 @@ export async function saveRecord(key: string, id: string | null, updatedAt: stri
   if ((id || resource.singleton) && !version.safeParse(updatedAt).success) return { ok: false, error: 'Refresh to load the current version.' };
   if (groupIds !== undefined && (key !== 'menu' || !z.array(identity).max(30).refine((ids) => new Set(ids).size === ids.length).safeParse(groupIds).success)) return { ok: false, error: 'Invalid modifier assignment.' };
   try {
+    if (key === 'options') {
+      const [group] = await adminRequest('modifier_groups', { id: `eq.${parsed.data.modifier_group_id}`, select: 'id,group_type' });
+      if (!group) return { ok: false, error: 'The modifier group no longer exists. Refresh and choose another group.' };
+      if (group.group_type === 'removal' && (parsed.data.price_pence !== 0 || parsed.data.linked_menu_item_id
+        || parsed.data.pricing_mode !== 'extra' || parsed.data.linked_quantity !== 1
+        || (Array.isArray(parsed.data.allergens) && parsed.data.allergens.length))) {
+        return { ok: false, error: 'Removal options must be free, unlinked ingredients with no added allergens.' };
+      }
+    }
     const editing = Boolean(id || resource.singleton);
     const query = editing ? { ...(resource.singleton ? { singleton: 'eq.true' } : { id: `eq.${id}` }), updated_at: `eq.${updatedAt}`, select: '*' } : { select: '*' };
     const payload = { ...parsed.data };

@@ -75,6 +75,25 @@ See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu it
 
 ## Admin Listing Upgrades
 
+### Ingredient removals
+
+Apply [055_exact_modifier_names.sql](sql/055_exact_modifier_names.sql) after 054
+before deploying the exact-name UI. It is repeatable and preserves existing orders
+and catalogue names. New order snapshots use option titles exactly as entered,
+without adding "No ". Rename existing options in admin where necessary (for
+example, Cheese to No Cheese); no automatic conversion is performed.
+
+Apply [054_removal_modifiers.sql](sql/054_removal_modifiers.sql) once after 053,
+before deploying the application changes. It adds removal-group types, configuration
+guards and immutable order-type snapshots, and extends the existing locked checkout
+without changing prices, portion stock accounting or historical order instructions.
+Existing groups and order snapshots remain standard choices. Do not rerun earlier
+checkout migrations after applying 054: they replace the updated functions.
+No hosted SQL is applied by the application.
+
+See [Ingredient removals](../docs/CATALOGUE_SETUP.md#ingredient-removals) for setup,
+customer behaviour and deployment checks.
+
 ### Admin Realtime updates
 
 Apply [053_admin_realtime.sql](sql/053_admin_realtime.sql) after 052. It ensures the

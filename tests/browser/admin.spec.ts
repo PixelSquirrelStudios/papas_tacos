@@ -85,6 +85,22 @@ test.beforeAll(async () => {
           <>{['dashboard-realtime', 'realtime-menu'].includes(kind) && <SiteUpdates />}<AdminRefresh />{['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(kind) ? <LiveDashboardFixture /> : kind.startsWith('dashboard') ? <DashboardFixture /> :
           kind === 'sidebar' ? <TooltipProvider><SidebarProvider><AdminSidebar /><main className="min-w-0 flex-1"><SidebarTrigger /><h1>Sidebar Fixture</h1></main></SidebarProvider></TooltipProvider> :
           kind === 'service-order' ? <ServiceOrderFixture /> : kind.startsWith('pickup') ? <PickupFixture /> :
+          kind === 'removal-counts' ? <ResourceManager resourceKey="modifiers" rows={[
+            {id: ids[0], name: 'Nachos Options', group_type: 'removal', is_published: true},
+            {id: ids[1], name: 'Taco Options', group_type: 'removal', is_published: false},
+            {id: ids[2], name: 'Unused Options', group_type: 'removal', is_published: false},
+          ]} references={{modifier_options: [
+            {id:'option-1',modifier_group_id:ids[0],is_available:true},
+            {id:'option-2',modifier_group_id:ids[0],is_available:false},
+            {id:'option-3',modifier_group_id:ids[0],is_available:true},
+            {id:'option-4',modifier_group_id:ids[1],is_available:true},
+          ]}} associations={[
+            {modifier_group_id:ids[0],menu_item_id:'nachos-beef'},
+            {modifier_group_id:ids[0],menu_item_id:'nachos-chicken'},
+            {modifier_group_id:ids[0],menu_item_id:'nachos-beef'},
+            {modifier_group_id:ids[1],menu_item_id:'tacos'},
+          ]} /> :
+          kind === 'removal-option' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Cheese', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Nachos Removals', group_type: 'removal'}]}} /> :
           kind === 'option-media' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Mexican Cola', description: '<p>Original cola description.</p>', image_path: 'images/menu/fixture.jpg', image_alt: 'Cola bottle', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Flavour'}]}} /> :
           kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : {}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
@@ -642,6 +658,48 @@ test('new slugs follow names and titles until customised while existing URLs sta
   await page.getByRole('button', { name: 'Edit Ember Chicken' }).click();
   await page.getByRole('dialog').getByRole('textbox', { name: 'Name *', exact: true }).fill('New Chicken Name');
   await expect(page.getByRole('textbox', { name: 'URL Slug' })).toHaveValue('ember-chicken');
+});
+
+test('removal group cards show configured options and distinct menu item usage', async ({ page }) => {
+  await fixture(page, 'removal-counts');
+  const card = (name: string) => page.getByRole('article').filter({ has: page.getByRole('heading', { name, exact: true }) });
+  await expect(card('Nachos Options').getByText('3 Options', { exact: true })).toBeVisible();
+  await expect(card('Nachos Options').getByText('Used by 2 Menu Items', { exact: true })).toBeVisible();
+  await expect(card('Nachos Options').locator('span[aria-hidden="true"].border-l')).toHaveCSS('border-left-width', '1px');
+  await expect(card('Taco Options').getByText('1 Option', { exact: true })).toBeVisible();
+  await expect(card('Taco Options').getByText('Used by 1 Menu Item', { exact: true })).toBeVisible();
+  await expect(card('Unused Options').getByText('0 Options', { exact: true })).toBeVisible();
+  await expect(card('Unused Options').getByText('Used by 0 Menu Items', { exact: true })).toBeVisible();
+  await expect(page.getByText(/Optional, No Price Change/)).toHaveCount(0);
+  await page.getByRole('textbox', { name: 'Search Modifier Groups' }).fill('Nachos');
+  await expect(card('Nachos Options').getByText('Used by 2 Menu Items', { exact: true })).toBeVisible();
+});
+
+test('removal group editor fixes optional limits and hides nesting controls', async ({ page }) => {
+  await fixture(page, 'edit-modifiers');
+  await page.getByRole('button', { name: 'Add Modifier Group' }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('textbox', { name: 'Name *', exact: true }).fill('Nachos Removals');
+  await dialog.getByRole('combobox', { name: 'Group Type' }).click();
+  await page.getByRole('option', { name: 'Removals and Other Options', exact: true }).click();
+  await expect(dialog.getByRole('combobox', { name: 'Selection Mode' })).toHaveCount(0);
+  await expect(dialog.getByRole('spinbutton')).toHaveCount(0);
+  await expect(dialog.getByRole('checkbox')).toHaveCount(0);
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, null, null, Record<string, unknown>] }).__savedRecord);
+  expect(saved[3]).toMatchObject({ name: 'Nachos Removals', group_type: 'removal', min_selections: 0, max_selections: 30, child_group_ids: [] });
+});
+
+test('removal option editor keeps ingredient names and hides prices product links and added allergens', async ({ page }) => {
+  await fixture(page, 'removal-option');
+  await page.getByRole('button', { name: 'Edit Cheese' }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(/Enter the exact option title/)).toBeVisible();
+  await expect(dialog.locator('[data-admin-field="price_pence"], [data-admin-field="linked_menu_item_id"], [data-admin-field="allergens"]')).toHaveCount(0);
+  await dialog.getByRole('textbox', { name: 'Name *', exact: true }).fill('Onions');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[3]).toMatchObject({ name: 'Onions', price_pence: 0, linked_menu_item_id: null, pricing_mode: 'extra', linked_quantity: 1, allergens: [] });
 });
 
 test('modifier editor saves ordered nested groups and single or multiple selection limits', async ({ page }, testInfo) => {

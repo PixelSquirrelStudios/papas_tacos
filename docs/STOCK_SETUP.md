@@ -50,6 +50,13 @@ No database upgrade is required for this admin bypass beyond the existing
 private-event upgrade 046. Event keys stay on the server: this does not issue an
 event-access cookie that would keep ordering unlocked after signing out.
 
+Stock polling waits for the catalogue's event-access check. A saved private event
+without current QR access (for example, after signing out as an admin) does not
+trigger unauthorized stock requests on the homepage or event menu. Its bag is
+preserved, but ordering stays disabled until access is restored. Expired or
+unavailable saved events are treated the same way. Public-menu stock checks and
+server-side checkout validation remain unchanged.
+
 ## Choose a tracking setting
 
 | Setting | Use for | Setup |

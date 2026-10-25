@@ -45,7 +45,7 @@ export const getCatalogue = cache(async (): Promise<Catalogue> => {
     publicRows('menu_set_items', menuEntrySchema, { order: 'menu_set_id.asc,menu_item_id.asc' }),
   ]);
   if (!categories || !items || !groups || !options || !associations || !sets || !sections || !entries || !sets.some((set) => set.is_default)) {
-    console.error('[catalogue] Menu data unavailable; verify database upgrades through 051_linked_menu_items.sql');
+    console.error('[catalogue] Menu data unavailable; verify database upgrades through 054_removal_modifiers.sql');
     return { categories: [], items: [], available: false };
   }
   const modifierGroups = groups.map((group) => ({ ...group, options: options.filter((option) => option.modifier_group_id === group.id).map((option) => ({ ...option, imageUrl: publicImage(option.image_path) })) }));

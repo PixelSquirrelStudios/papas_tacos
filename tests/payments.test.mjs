@@ -30,6 +30,34 @@ const fixtureOrder = {
   order_status_history: [], cancellation_reason: null, reservation_expires_at: null,
 };
 
+test('removal snapshots remain explicit in grouped order summaries, emails and receipts', async () => {
+  const choices = [
+    { id: orderId, group_name: 'Old Nachos Recipe', group_type: 'removal', option_name: 'No Cheese', unit_price_pence: 0 },
+    { id: customerId, group_name: 'Extras', group_type: 'standard', option_name: 'Extra Beef', unit_price_pence: 100 },
+  ];
+  assert.deepEqual(groupOrderChoices(choices).map(group => group.title), ['Extras', 'Make It Yours']);
+  assert.match(orderChoicesText(choices), /Make It Yours\n  Choices: No Cheese/);
+  assert.doesNotMatch(orderChoicesText(choices), /No Cheese.*[+£]/);
+  const order = { ...fixtureOrder, order_items: [{ ...fixtureOrder.order_items[0], order_item_modifiers: choices }] };
+  const email = orderConfirmationEmail(order, { siteUrl: 'https://tacos.example', logoUrl: '', instagramUrl: null, facebookUrl: null });
+  for (const output of [email.html, email.text]) {
+    assert.match(output, /Make It Yours/);
+    assert.match(output, /No Cheese/);
+    assert.match(output, /Extra Beef/);
+    assert.doesNotMatch(output, /Old Nachos Recipe/);
+  }
+  const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
+  const loading = getDocument({ data: await createReceipt(order, { paidAt: order.created_at, refunded: 0 }), useSystemFonts: true });
+  const pdf = await loading.promise;
+  try {
+    const text = (await (await pdf.getPage(1)).getTextContent()).items.map(item => item.str ?? '').join(' ');
+    assert.match(text, /Make It Yours/);
+    assert.match(text, /No Cheese/);
+    assert.match(text, /Extra Beef/);
+    assert.doesNotMatch(text, /Old Nachos Recipe/);
+  } finally { await loading.destroy(); }
+});
+
 async function load(entry, modules) {
   const bundle = await build({ entryPoints: [entry], bundle: true, write: false, platform: 'node', format: 'esm', banner: { js: "import { createRequire } from 'node:module'; const require = createRequire(process.cwd() + '/package.json');" }, plugins: [{ name: 'payments-fixture', setup(builder) {
     builder.onResolve({ filter: /^next\/server$/ }, () => ({ path: import.meta.resolve('next/server.js'), external: true }));

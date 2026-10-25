@@ -86,6 +86,62 @@ preview, falling back to the item's image or description when the option has non
 option-level content. For independently stocked flavours or brands, use linked menu
 items instead of ordinary text options as described below.
 
+## Ingredient removals
+
+Apply [054_removal_modifiers.sql](../supabase/sql/054_removal_modifiers.sql) once
+after all upgrades through 053, before deploying the updated app. It does not
+convert existing groups or change historical orders. SQL is applied manually in
+Supabase SQL Editor, not automatically by the app.
+
+Then apply [055_exact_modifier_names.sql](../supabase/sql/055_exact_modifier_names.sql)
+before deploying the exact-name UI. This repeatable upgrade stops adding "No " to new
+order instructions. Existing catalogue names and historical order snapshots are not
+rewritten. Review existing options and rename **Cheese** to **No Cheese**, for example,
+where removal is intended. Run this upgrade even if 054 was already applied.
+
+1. In **Admin > Modifier Groups**, create a group such as **Loaded Nachos Removals**,
+   select **Group Type > Removals and Other Options**, and publish it.
+   Its admin card shows the number of configured options (including unavailable
+   ones) and distinct menu items assigned to it, including drafts and archived items.
+2. In **Admin > Modifier Options**, choose that group and enter the exact option
+   titles, such as **No Cheese**, **No Onions** or **Extra Salsa**. Customers and
+   staff see the names as entered, with no automatic prefix. Extra options in this
+   group remain free; use standard modifier groups for priced or allergen-adding extras.
+3. In **Admin > Menu Items**, attach the group only to dishes that contain those
+   ingredients. Reuse it across dishes with the same removable ingredients;
+   use separate groups where recipes differ. Nothing is inferred from descriptions.
+
+Removal groups are always optional and flat, with up to 30 ingredient options.
+Customers can select none, some or all ingredients. Prices and ingredient/product
+links are unavailable for removal options; the server and database enforce zero
+price, no linked stock, and no added allergens. **Available** controls whether a
+removal can be requested, not whether the ingredient is in stock.
+Before converting an existing standard group, remove parent/child nesting links
+and clear option prices, product links and added allergens; invalid conversions
+are rejected rather than silently rewriting options.
+
+The picker shows a distinct warm yellow-tinted **Make It Yours** panel with a bold left accent border and unchecked
+**No Cheese**-style boxes and a short explanation. Internal group names and selection
+limits are not shown in this panel; standard sauce/extra choices keep their existing layout.
+The normal recipe is the default. There is no discount. Removals apply to every
+portion on that bag line; add separate lines for different preparations.
+Editing preserves selected requests. If a choice becomes unavailable, customers
+must explicitly deselect it; if deleted or unassigned, they must acknowledge
+clearing it before updating. Checkout independently rejects stale selections.
+
+Bag summaries, admin preparation details, customer order history, confirmation
+emails and PDF receipts show the exact option titles under **Make It Yours**. Orders snapshot both
+the instruction and group type, so later catalogue edits cannot reinterpret them.
+Base dish allergens and confirmed dietary labels remain unchanged: removing cheese
+does not guarantee a milk-free or vegan dish. Portion stock is deducted normally;
+this is not ingredient-level inventory tracking.
+
+Deployment checks: create a test removal group and attach it to a test dish;
+verify unchanged pricing, multiple/zero selections, separate regular/customised
+bag lines and saved edits. Complete a test-mode card checkout and check admin
+instructions, account order details, email and receipt. Disable a selected removal
+and confirm the bag blocks checkout until the customer explicitly reviews it.
+
 ## Linked products and grouped listings
 
 After upgrades through 050, apply

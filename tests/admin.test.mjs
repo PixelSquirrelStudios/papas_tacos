@@ -10,6 +10,53 @@ import path from 'node:path';
 import { deliveryLabel, serviceMode, eventMenuLink } from '../src/lib/service-ordering.ts';
 import { trackingLabels } from '../src/lib/inventory.ts';
 
+test('modifier listing loads option counts and composite-key item assignments for cards', async () => {
+  const state = { calls: [] };
+  globalThis.__modifierCountsTest = state;
+  try {
+    const bundle = await build({
+      stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
+        import Page from '@/app/admin/[resource]/page';
+        export async function render() { return Page({params:Promise.resolve({resource:'modifiers'})}); }
+      ` },
+      bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic',
+      plugins: [{ name: 'modifier-count-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^(next\/navigation|@\/lib\/auth\/session|@\/lib\/admin\/data|@\/components\/admin\/(resource-manager|pickup-manager))$/ }, args => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, args => ({ contents:
+          args.path === 'next/navigation' ? 'export function notFound() { throw new Error("Not found"); }'
+            : args.path.endsWith('/session') ? 'export async function requireAdmin() {}'
+              : args.path.endsWith('/resource-manager') ? 'export function ResourceManager() { return null; }'
+                : args.path.endsWith('/pickup-manager') ? 'export function PickupManager() { return null; }'
+                  : `export function adminError(error) { throw error; }
+                    export async function adminRequest() { return []; }
+                    export async function adminRows(table, query) {
+                      globalThis.__modifierCountsTest.calls.push([table, query]);
+                      if (table === 'modifier_options') return [{id:'option',modifier_group_id:'group'}];
+                      if (table === 'menu_item_modifier_groups') return [{menu_item_id:'item',modifier_group_id:'group'}];
+                      return [];
+                    }` }));
+        builder.onResolve({ filter: /^@\// }, args => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+      } }],
+    });
+    const { render } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const page = await render();
+    assert.deepEqual(page.props.references.modifier_options, [{ id: 'option', modifier_group_id: 'group' }]);
+    assert.deepEqual(page.props.associations, [{ menu_item_id: 'item', modifier_group_id: 'group' }]);
+    assert.deepEqual(state.calls.find(([table]) => table === 'modifier_options')[1], { order: 'id.asc', select: 'id,modifier_group_id' });
+    assert.equal(state.calls.find(([table]) => table === 'menu_item_modifier_groups')[1].order, 'sort_order.asc,modifier_group_id.asc');
+  } finally { delete globalThis.__modifierCountsTest; }
+});
+
+test('removal group forms default to standard and enforce optional flat unrestricted choices', () => {
+  const schema = resourceSchema(resources.modifiers);
+  const values = { name: 'Nachos Removals', min_selections: 0, max_selections: 30, child_group_ids: [], is_published: true };
+  assert.equal(schema.parse(values).group_type, 'standard');
+  assert.equal(schema.parse({ ...values, group_type: 'removal' }).group_type, 'removal');
+  for (const override of [{ min_selections: 1 }, { max_selections: 1 }, { child_group_ids: ['00000000-0000-4000-8000-000000000001'] }]) {
+    assert.equal(schema.safeParse({ ...values, group_type: 'removal', ...override }).success, false);
+  }
+});
+
 test('stock and linked-product labels use Title Case without changing internal option values', () => {
   assert.deepEqual(trackingLabels, {
     none: 'Not Tracked',

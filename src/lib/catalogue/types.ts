@@ -14,7 +14,7 @@ export const itemSchema = z.object({
   item_kind: z.enum(['product', 'group']).optional(),
   show_standalone: z.boolean().optional(),
 });
-export const groupSchema = z.object({ id, name: z.string(), min_selections: z.number().int(), max_selections: z.number().int(), child_group_ids: z.array(id).default([]) });
+export const groupSchema = z.object({ id, name: z.string(), group_type: z.enum(['standard', 'removal']).default('standard'), min_selections: z.number().int(), max_selections: z.number().int(), child_group_ids: z.array(id).default([]) });
 export const optionSchema = z.object({
   id, modifier_group_id: id, name: z.string(), description: z.string().default(''),
   image_path: z.string().nullable().default(null), image_alt: z.string().default(''),
@@ -58,7 +58,7 @@ export const testimonialSchema = z.object({ id, author_name: z.string(), body: z
 
 export type Category = z.infer<typeof categorySchema>;
 export type MenuItem = z.infer<typeof itemSchema>;
-export type ModifierGroup = Omit<z.infer<typeof groupSchema>, 'child_group_ids'> & { child_group_ids?: string[]; parentId?: string; label?: string; depth?: number; options: (z.infer<typeof optionSchema> & { imageUrl?: string | null; stock_quantity?: number | null })[] };
+export type ModifierGroup = Omit<z.infer<typeof groupSchema>, 'child_group_ids' | 'group_type'> & { group_type?: 'standard' | 'removal'; child_group_ids?: string[]; parentId?: string; label?: string; depth?: number; options: (z.infer<typeof optionSchema> & { imageUrl?: string | null; stock_quantity?: number | null })[] };
 export type CatalogueItem = MenuItem & { groups: ModifierGroup[]; imageUrl: string | null; stock_quantity?: number | null };
 export type Settings = z.infer<typeof settingsSchema>;
 export type TruckEvent = z.infer<typeof eventSchema> & { imageUrl: string | null; ordering_access?: boolean; admin_qr_bypass?: boolean };

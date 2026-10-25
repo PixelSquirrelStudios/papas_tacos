@@ -8,7 +8,7 @@ const admin = '00000000-0000-4000-8000-000000000001';
 const customer = '00000000-0000-4000-8000-000000000002';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
 
-async function database({ linked = true } = {}) {
+async function database({ linked = true, exactNames = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon nologin;
@@ -25,7 +25,8 @@ async function database({ linked = true } = {}) {
     alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
   `);
   for (const file of (await readdir(sqlDirectory)).filter(file => file.endsWith('.sql')).sort()) {
-    if (!linked && file === '051_linked_menu_items.sql') continue;
+    if (!linked && ['051_linked_menu_items.sql', '054_removal_modifiers.sql', '055_exact_modifier_names.sql'].includes(file)) continue;
+    if (!exactNames && file === '055_exact_modifier_names.sql') continue;
     await db.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }
   await db.query(`insert into auth.users(id,email) values($1,'admin@example.test'),($2,'customer@example.test')`, [admin, customer]);
@@ -133,6 +134,99 @@ async function fixture(db) {
 const line = (itemId, optionIds = [], quantity = 1) => ({ itemId, optionIds, quantity });
 const stocks = async (db, order) => (await db.query(
   'select menu_item_id,quantity,state from public.inventory_order_stock where order_id=$1 order by menu_item_id', [order.id])).rows;
+
+test('removals are optional free choices, preserve allergens and stock, and snapshot preparation instructions', async () => {
+  const db = await database();
+  try {
+    const f = await fixture(db);
+    const nachos = await f.item('Loaded Beef Nachos', 850);
+    await f.inventory(nachos, 10);
+    const removal = (await db.query(`insert into public.modifier_groups(name,group_type,min_selections,max_selections,is_published)
+      values('Nachos Removals','removal',0,30,true) returning id`)).rows[0].id;
+    await db.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values($1,$2)', [nachos, removal]);
+    const ingredients = (await db.query(`insert into public.modifier_options(modifier_group_id,name)
+      values($1,'No Cheese'),($1,'Extra Onions') returning id`, [removal])).rows.map(row => row.id);
+    const extras = await f.group(nachos, 0, 2);
+    const beef = await f.option(extras, null, 1, 'extra', 100);
+    const order = await f.reserve(f.body([line(nachos), line(nachos, ingredients, 2), line(nachos, [beef, ingredients[0]])], 3500));
+    assert.equal(order.subtotal_pence, 3500);
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: nachos, quantity: 4, state: 'held' }]);
+    const snapshots = (await db.query(`select m.* from public.order_item_modifiers m
+      join public.order_items i on i.id=m.order_item_id where i.order_id=$1`, [order.id])).rows;
+    const removed = snapshots.filter(row => row.group_type === 'removal');
+    assert.equal(removed.length, 3);
+    assert.deepEqual(removed.map(row => row.option_name).sort(), ['Extra Onions', 'No Cheese', 'No Cheese']);
+    assert.ok(removed.every(row => row.unit_price_pence === 0 && row.linked_menu_item_id === null && row.allergen_snapshot.length === 0));
+    assert.equal(snapshots.find(row => row.group_type === 'standard').unit_price_pence, 100);
+    const savedLines = (await db.query('select allergen_snapshot from public.order_items where order_id=$1', [order.id])).rows;
+    assert.ok(savedLines.every(row => row.allergen_snapshot.includes('milk')));
+    assert.equal(await f.pay(order), false);
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: nachos, quantity: 4, state: 'sold' }]);
+    await db.query("update public.modifier_options set name='Renamed ingredient',is_available=false where id=any($1)", [ingredients]);
+    await db.query("update public.modifier_groups set name='Renamed group' where id=$1", [removal]);
+    const saved = (await db.query("select option_name,group_type from public.order_item_modifiers where id=$1", [removed[0].id])).rows[0];
+    assert.equal(saved.option_name, removed[0].option_name);
+    assert.equal(saved.group_type, 'removal');
+    await assert.rejects(f.reserve(f.body([line(nachos, [ingredients[0]])], 850)), /no longer available/);
+    await db.query('delete from public.menu_item_modifier_groups where menu_item_id=$1 and modifier_group_id=$2', [nachos, removal]);
+    await assert.rejects(f.reserve(f.body([line(nachos, [ingredients[1]])], 850)), /no longer available/);
+    await assert.rejects(db.query("update public.order_item_modifiers set group_type='standard' where id=$1", [removed[0].id]), /snapshots are immutable/);
+    await role(db, 'authenticated', customer, async () => {
+      assert.equal((await db.query("update public.modifier_groups set name='Tampered' where id=$1 returning id", [removal])).rows.length, 0);
+    });
+  } finally { await db.close(); }
+});
+
+test('exact-name upgrade is repeatable, preserves historical instructions and saves non-removal options verbatim', async () => {
+  const db = await database({ exactNames: false });
+  try {
+    const f = await fixture(db);
+    const item = await f.item('Nachos', 850);
+    const group = await f.group(item, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [group]);
+    const option = (await db.query("insert into public.modifier_options(modifier_group_id,name) values($1,'Cheese') returning id", [group])).rows[0].id;
+    const legacy = await f.reserve(f.body([line(item, [option])], 850));
+    const upgrade = await readFile(new URL('055_exact_modifier_names.sql', sqlDirectory), 'utf8');
+    await db.exec(upgrade);
+    await db.exec(upgrade);
+    const names = async order => (await db.query(`select m.option_name from public.order_item_modifiers m
+      join public.order_items i on i.id=m.order_item_id where i.order_id=$1`, [order.id])).rows.map(row => row.option_name);
+    assert.deepEqual(await names(legacy), ['No Cheese']);
+    assert.equal((await db.query('select name from public.modifier_options where id=$1', [option])).rows[0].name, 'Cheese');
+    await db.query("update public.modifier_options set name='Extra Salsa' where id=$1", [option]);
+    const extra = await f.reserve(f.body([line(item, [option])], 850));
+    assert.deepEqual(await names(extra), ['Extra Salsa']);
+    await db.query("update public.modifier_options set name='No Cheese' where id=$1", [option]);
+    const removal = await f.reserve(f.body([line(item, [option])], 850));
+    assert.deepEqual(await names(removal), ['No Cheese']);
+    assert.deepEqual(await names(extra), ['Extra Salsa']);
+    assert.deepEqual(await names(legacy), ['No Cheese']);
+  } finally { await db.close(); }
+});
+
+test('database rejects paid, linked, nested, required and oversized removal configurations', async () => {
+  const db = await database();
+  try {
+    const f = await fixture(db);
+    const group = await f.group(null, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [group]);
+    const option = (await db.query("insert into public.modifier_options(modifier_group_id,name) values($1,'Cheese') returning id", [group])).rows[0].id;
+    const linked = await f.item('Linked', 100);
+    for (const statement of [
+      'price_pence=100', `linked_menu_item_id='${linked}'`, "allergens='{milk}'",
+    ]) await assert.rejects(db.query(`update public.modifier_options set ${statement} where id=$1`, [option]), /Removal options must be free/);
+    await assert.rejects(db.query('update public.modifier_groups set min_selections=1 where id=$1', [group]), /removal_group_limits/);
+    await assert.rejects(db.query('update public.modifier_groups set max_selections=1 where id=$1', [group]), /removal_group_limits/);
+    const parent = await f.group();
+    await assert.rejects(db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [group, [parent]]), /removal_group_limits/);
+    await assert.rejects(db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [parent, [group]]), /attached directly/);
+    await assert.rejects(db.query(`insert into public.modifier_options(modifier_group_id,name)
+      select $1,'Ingredient ' || n from generate_series(1,30) n`, [group]), /at most 30/);
+    const standard = await f.group(null, 0, 30);
+    await f.option(standard, null, 1, 'extra', 50);
+    await assert.rejects(db.query("update public.modifier_groups set group_type='removal' where id=$1", [standard]), /Removal options must be free/);
+  } finally { await db.close(); }
+});
 
 test('real checkout aggregates direct, two group parents, nested repeated paths and quantities into shared stock', async () => {
   const db = await database();

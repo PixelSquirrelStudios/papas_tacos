@@ -26,7 +26,7 @@ export const orderDetailSchema = orderSummarySchema.extend({
   order_items: z.array(z.object({
     id: z.guid(), item_name: z.string(), quantity: z.number().int().positive(), line_total_pence: amount,
     allergen_snapshot: z.array(z.string()),
-    order_item_modifiers: z.array(z.object({ id: z.guid(), group_name: z.string(), option_name: z.string(), unit_price_pence: amount })),
+    order_item_modifiers: z.array(z.object({ id: z.guid(), group_name: z.string(), group_type: z.enum(['standard', 'removal']).default('standard'), option_name: z.string(), unit_price_pence: amount })),
   })),
   order_status_history: z.array(z.object({ id: z.guid(), status: z.enum(orderStatuses), created_at: timestamp })),
 });
@@ -53,7 +53,7 @@ export function customerOrderQuery(customerId: string, options: { page?: number;
     query.set('id', `eq.${z.guid().parse(options.id)}`);
     query.set('limit', '1');
     query.set('offset', '0');
-    query.set('select', `${summarySelect},customer_name,customer_phone,customer_note,subtotal_pence,service_fee_pence,packaging_fee_pence,cancellation_reason,reservation_expires_at,order_items(id,item_name,quantity,line_total_pence,allergen_snapshot,order_item_modifiers(id,group_name,option_name,unit_price_pence)),order_status_history(id,status,created_at)`);
+    query.set('select', `${summarySelect},customer_name,customer_phone,customer_note,subtotal_pence,service_fee_pence,packaging_fee_pence,cancellation_reason,reservation_expires_at,order_items(id,item_name,quantity,line_total_pence,allergen_snapshot,order_item_modifiers(id,group_name,group_type,option_name,unit_price_pence)),order_status_history(id,status,created_at)`);
     query.set('order_items.order', 'created_at.asc,id.asc');
     query.set('order_status_history.order', 'created_at.asc,id.asc');
   }

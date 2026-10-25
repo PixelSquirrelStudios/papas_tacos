@@ -42,7 +42,7 @@ export function quoteLine(line: BagLine, items: CatalogueItem[]) {
   let issue = item.is_available ? '' : 'This item is sold out.';
   if (item.item_kind === 'group' && !item.groups.some((group) => group.min_selections > 0)) issue = 'This listing has no required product choices. Please choose another item.';
   if (item.item_kind === 'group' && !options.some((option) => option.linked_menu_item_id)) issue = 'Choose a linked product for this listing.';
-  if (options.length !== line.optionIds.length || options.some((option) => !option.is_available)) issue = 'One or more extras are unavailable. Please edit this item.';
+  if (options.length !== line.optionIds.length || options.some((option) => !option.is_available)) issue = 'One or more choices are unavailable. Please edit this item.';
   for (const group of item.groups) {
     const count = options.filter((option) => option.modifier_group_id === group.id).length;
     if (count < group.min_selections || count > group.max_selections) issue = `Please check your choices for ${group.name}.`;

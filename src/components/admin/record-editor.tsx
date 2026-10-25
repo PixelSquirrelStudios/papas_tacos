@@ -29,6 +29,10 @@ export function RecordEditor({ resourceKey, row, references, initialValues = {},
   const linkedId = useWatch({ control: form.control, name: 'linked_menu_item_id' });
   const pricingMode = useWatch({ control: form.control, name: 'pricing_mode' });
   const itemKind = useWatch({ control: form.control, name: 'item_kind' });
+  const groupType = useWatch({ control: form.control, name: 'group_type' });
+  const modifierGroupId = useWatch({ control: form.control, name: 'modifier_group_id' });
+  const removalGroup = resourceKey === 'modifiers' && groupType === 'removal';
+  const removalOption = resourceKey === 'options' && references.modifier_groups?.some((group) => group.id === modifierGroupId && group.group_type === 'removal');
   const linkedItem = references.menu_items?.find((item) => item.id === linkedId);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState('');
@@ -59,15 +63,18 @@ export function RecordEditor({ resourceKey, row, references, initialValues = {},
     <Form {...form}><form onSubmit={form.handleSubmit(submit)} className="grid min-h-0 grid-rows-[minmax(0,1fr)_auto]">
       <div data-admin-form-scroll className="min-h-0 overflow-y-auto px-6 pb-6">
         {resourceKey === 'menu' && <div className="mb-5 space-y-2 text-sm text-muted-foreground"><p>Products and meals can have their own stock. A grouped listing such as Cans of Pop has no base price or stock: attach a required choice group containing linked products instead.</p><p>Turn off standalone visibility for products sold only through other listings. Keep them published and allocate their own stock at each event.</p><Link href="/admin/options" className="inline-block text-brand-yellow underline">Manage Standard Modifiers and Linked Product Choices</Link></div>}
-        {resourceKey === 'options' && <div className="mb-5 space-y-2 rounded-lg border border-turquoise/25 bg-turquoise/5 p-4 text-sm"><p>Link a simple menu item to share its stock across drinks listings, meal deals and standalone sales. Its name, description, image and allergens are used automatically.</p><p className="text-muted-foreground">Only products without their own choice groups can be linked. Create the product in Menu Items first. Use a required single-choice group for drinks and sweets.</p>{linkedItem && <p className="font-medium">{String(linkedItem.name)} · {linkedItem.is_published ? 'Published' : 'Draft: unavailable to customers'} · {pricingMode === 'item' ? 'Uses the product price per unit; no extra surcharge' : 'Included in parent price, plus the fixed surcharge below'}</p>}</div>}
+        {resourceKey === 'options' && (removalOption ? <p className="mb-5 text-sm text-muted-foreground">Enter the exact option title customers and staff should see, such as No Cheese or Extra Salsa. No prefix is added. These choices are free and do not change stock, allergen warnings or dietary labels. Available controls whether this option can be requested.</p> : <div className="mb-5 space-y-2 rounded-lg border border-turquoise/25 bg-turquoise/5 p-4 text-sm"><p>Link a simple menu item to share its stock across drinks listings, meal deals and standalone sales. Its name, description, image and allergens are used automatically.</p><p className="text-muted-foreground">Only products without their own choice groups can be linked. Create the product in Menu Items first. Use a required single-choice group for drinks and sweets.</p>{linkedItem && <p className="font-medium">{String(linkedItem.name)} · {linkedItem.is_published ? 'Published' : 'Draft: unavailable to customers'} · {pricingMode === 'item' ? 'Uses the product price per unit; no extra surcharge' : 'Included in parent price, plus the fixed surcharge below'}</p>}</div>)}
+        {resourceKey === 'modifiers' && <p className="mb-5 text-sm text-muted-foreground">Removals let customers leave out configured ingredients at no discount. Attach removal groups directly to menu items, then add up to 30 ingredient options. To convert an existing group, first remove nested links and any option prices, product links or added allergens.</p>}
         {resourceKey === 'events' && <p className="mb-5 text-sm text-muted-foreground">Pickup uses scheduled slots. Table/car service aims to deliver as soon as possible, with no guaranteed time. Private events remain visible publicly, but ordering requires the secret QR code provided at the event. Download the QR again after changing privacy. Anyone given that QR link can order; it does not verify attendance. Service type cannot change after orders or a pickup schedule exist. Orders Open and Orders Close set your serving window independently of the event dates: accept orders before the event starts, and close earlier or later. Leave either blank to use the corresponding event time.</p>}
         {resourceKey === 'settings' && <p className="mb-5 text-sm text-muted-foreground">Show Public Menu controls the generic menu page, homepage menu sections and public navigation links. Switching it off does not disable event menus or QR ordering.</p>}
         <fieldset disabled={busy} className="grid min-w-0 gap-5 sm:grid-cols-2">
-        {resourceKey === 'modifiers' && <div className="space-y-2 sm:col-span-2"><label htmlFor="modifier-selection-mode" className="text-sm font-medium">Selection Mode</label><Select value={Number(maxSelections) === 1 ? 'single' : 'multiple'} disabled={busy} onValueChange={(mode) => {
+        {resourceKey === 'modifiers' && !removalGroup && <div className="space-y-2 sm:col-span-2"><label htmlFor="modifier-selection-mode" className="text-sm font-medium">Selection Mode</label><Select value={Number(maxSelections) === 1 ? 'single' : 'multiple'} disabled={busy} onValueChange={(mode) => {
           form.setValue('max_selections', mode === 'single' ? 1 : Math.max(2, Number(form.getValues('max_selections'))), { shouldDirty: true });
           if (mode === 'single') form.setValue('min_selections', Math.min(1, Number(form.getValues('min_selections'))), { shouldDirty: true });
         }}><SelectTrigger id="modifier-selection-mode" className="w-full"><SelectValue /></SelectTrigger><SelectContent><SelectItem value="single">Single Choice</SelectItem><SelectItem value="multiple">Multiple Choices</SelectItem></SelectContent></Select></div>}
         {resource.fields.filter((definition) => {
+          if (removalGroup && ['min_selections', 'max_selections', 'child_group_ids'].includes(definition.key)) return false;
+          if (removalOption && ['linked_menu_item_id', 'pricing_mode', 'linked_quantity', 'price_pence', 'allergens'].includes(definition.key)) return false;
           if (resourceKey === 'options') {
             if (linkedId && ['name', 'description', 'image_path', 'image_alt', 'allergens'].includes(definition.key)) return false;
             if (!linkedId && ['pricing_mode', 'linked_quantity'].includes(definition.key)) return false;
@@ -77,12 +84,24 @@ export function RecordEditor({ resourceKey, row, references, initialValues = {},
         }).map((definition) => <FormField key={definition.key} control={form.control} name={definition.key} render={({ field }) => <FormItem data-admin-field={definition.key} className={definition.layout === 'full' || ['textarea', 'richtext', 'image', 'tags', 'groups'].includes(definition.type ?? '') ? 'min-w-0 sm:col-span-2' : definition.layout === 'row-start' ? 'min-w-0 sm:col-start-1' : 'min-w-0'}>
           <FormLabel>{definition.label}{definition.required ? ' *' : ''}</FormLabel>
           {definition.type === 'boolean' ? <FormControl><Switch checked={Boolean(field.value)} onCheckedChange={field.onChange} disabled={busy} /></FormControl>
-            : definition.type === 'groups' ? <ModifierGroupSelection groups={(references.modifier_groups ?? []).filter((group) => group.id !== row?.id)} selected={(field.value as string[]) ?? []} onChange={field.onChange} disabled={busy} />
+            : definition.type === 'groups' ? <ModifierGroupSelection groups={(references.modifier_groups ?? []).filter((group) => group.id !== row?.id && group.group_type !== 'removal')} selected={(field.value as string[]) ?? []} onChange={field.onChange} disabled={busy} />
             : definition.type === 'tags' ? <div className="flex flex-wrap gap-x-5 gap-y-3">{definition.options?.map((option) => <label key={option} className="flex items-center gap-2 text-sm"><Checkbox checked={(field.value as string[]).includes(option)} disabled={busy} onCheckedChange={(checked) => field.onChange(checked ? [...field.value as string[], option] : (field.value as string[]).filter((value) => value !== option))} />{choiceLabel(option)}</label>)}</div>
             : definition.type === 'image' ? <ImageUpload folder={definition.folder!} value={String(field.value ?? '')} onChange={field.onChange} onBusy={setUploading} />
             : definition.type === 'select' ? <Select value={String(field.value || (definition.nullable ? '__default' : ''))} onValueChange={(value) => {
               const next = value === '__default' ? '' : value;
               field.onChange(next);
+              if (definition.key === 'group_type' && next === 'removal') {
+                form.setValue('min_selections', 0, { shouldDirty: true });
+                form.setValue('max_selections', 30, { shouldDirty: true });
+                form.setValue('child_group_ids', [], { shouldDirty: true });
+              }
+              if (definition.key === 'modifier_group_id' && references.modifier_groups?.some((group) => group.id === next && group.group_type === 'removal')) {
+                form.setValue('linked_menu_item_id', '');
+                form.setValue('pricing_mode', 'extra');
+                form.setValue('linked_quantity', 1);
+                form.setValue('price_pence', 0);
+                form.setValue('allergens', []);
+              }
               if (definition.key === 'item_kind' && next === 'group') form.setValue('price_pence', 0, { shouldDirty: true });
               if (definition.key === 'pricing_mode' && next === 'item') form.setValue('price_pence', 0, { shouldDirty: true });
               if (definition.key === 'linked_menu_item_id') {

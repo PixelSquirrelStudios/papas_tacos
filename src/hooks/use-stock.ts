@@ -4,9 +4,10 @@ import { useEffect, useState } from 'react';
 import { publicStockSchema, type PublicStock } from '@/lib/inventory';
 import { catalogueRequestEvent, siteUpdateEvent } from '@/lib/site-updates';
 
-export function useStock(eventId: string) {
+export function useStock(eventId: string, enabled: boolean) {
   const [snapshot, setSnapshot] = useState<{ eventId: string; stock: PublicStock; available: boolean } | null>(null);
   useEffect(() => {
+    if (!enabled) return;
     const controller = new AbortController();
     let refreshing = false;
     async function refresh() {
@@ -37,6 +38,6 @@ export function useStock(eventId: string) {
       document.removeEventListener('visibilitychange', refresh);
       window.clearInterval(timer);
     };
-  }, [eventId]);
-  return snapshot?.eventId === eventId ? snapshot : null;
+  }, [eventId, enabled]);
+  return enabled && snapshot?.eventId === eventId ? snapshot : null;
 }

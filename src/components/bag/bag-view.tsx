@@ -22,7 +22,7 @@ function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
     {groups.filter((group) => !group.parentId).map((root) => {
       const selectedGroups = groups.filter((group) => (group.id === root.id || group.id.startsWith(`${root.id}/`)) && quote.options.some((option) => option.modifier_group_id === group.id));
       if (!selectedGroups.length) return null;
-      const title = (root.label || root.name).replace(/ filling$/i, '');
+      const title = root.group_type === 'removal' ? 'Make It Yours' : (root.label || root.name).replace(/ filling$/i, '');
       return <section key={root.id} aria-label={title} className="min-w-0 overflow-hidden rounded-lg border border-brand-yellow/30">
         <h4 className="border-b border-brand-yellow/20 bg-brand-yellow/10 px-4 py-3 text-sm font-semibold text-brand-yellow wrap-break-word">{title}</h4>
         <dl className="grid min-w-0 gap-3 p-3 sm:grid-cols-2">
@@ -31,7 +31,7 @@ function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
             <dd className="flex min-w-0 flex-wrap gap-2">{quote.options.filter((option) => option.modifier_group_id === group.id).map((option) => <Badge key={option.id} variant="outline" className={`max-w-full flex-wrap justify-start gap-x-2 gap-y-1 rounded-md px-2.5 py-1.5 text-sm whitespace-normal ${option.is_available ? 'border-turquoise/25 bg-turquoise/5' : 'border-primary/30 bg-primary/5 text-muted-foreground'}`}>
               <span className="min-w-0 wrap-anywhere">{option.name}</span>
               {option.price_pence > 0 && <span className="tabular-nums text-muted-foreground">{quote.item?.item_kind === 'group' && option.linked_menu_item_id && option.pricing_mode === 'item' ? '' : '+'}{money(option.price_pence)}</span>}
-              {!option.is_available && <span className="font-semibold text-primary">Sold Out</span>}
+              {!option.is_available && <span className="font-semibold text-primary">{group.group_type === 'removal' ? 'Unavailable' : 'Sold Out'}</span>}
             </Badge>)}</dd>
           </div>)}
         </dl>
