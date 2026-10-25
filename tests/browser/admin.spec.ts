@@ -25,6 +25,7 @@ test.beforeAll(async () => {
         import { TooltipProvider } from '@/components/ui/tooltip';
         import { OrderList } from '@/components/account/order-views';
         import AccountPage from '@/app/(public)/account/page';
+        import AdminLayout from '@/app/admin/layout';
         function OrdersFixture() {
           const [query, setQuery] = React.useState('/admin/orders');
           window.__onNavigate = setQuery;
@@ -78,13 +79,16 @@ test.beforeAll(async () => {
         function MenuFixture() {
           const [items, setItems] = React.useState(rows);
           window.__updateAvailability = (id, available) => setItems(current => current.map(row => row.id === id ? {...row, is_available: available, updated_at: '2026-09-22T12:00:00Z'} : row));
-          return <ResourceManager resourceKey="menu" rows={items} references={{menu_categories: groups, modifier_groups: kind === 'menu-modifiers' ? [{id: ids[0], name: 'Flavour', is_published: true}, {id: ids[1], name: 'Extras', is_published: true}, {id: ids[2], name: 'Seasonal', is_published: false}] : []}} associations={kind === 'menu-modifiers' ? [{menu_item_id: ids[0], modifier_group_id: ids[0]}] : []} />;
+          return <ResourceManager resourceKey="menu" rows={items} references={{menu_categories: groups, modifier_groups: kind === 'menu-modifiers' ? [{id: ids[0], name: 'Flavour', is_published: true, child_group_ids:[ids[1]]}, {id: ids[1], name: 'Extras', is_published: true, child_group_ids:[ids[2]]}, {id: ids[2], name: 'Seasonal', is_published: false}] : []}} associations={kind === 'menu-modifiers' ? [{menu_item_id: ids[0], modifier_group_id: ids[0]}] : []} />;
         }
         if (kind === 'account-page') AccountPage({searchParams: Promise.resolve({})}).then(element => root.render(element));
+        else if (kind === 'admin-header') AdminLayout({children:<main className="min-h-[200vh] p-5"><ResourceManager resourceKey="events" rows={[eventRow]} references={{}} /></main>}).then(element => root.render(element));
         else root.render(
           <>{['dashboard-realtime', 'realtime-menu'].includes(kind) && <SiteUpdates />}<AdminRefresh />{['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(kind) ? <LiveDashboardFixture /> : kind.startsWith('dashboard') ? <DashboardFixture /> :
           kind === 'sidebar' ? <TooltipProvider><SidebarProvider><AdminSidebar /><main className="min-w-0 flex-1"><SidebarTrigger /><h1>Sidebar Fixture</h1></main></SidebarProvider></TooltipProvider> :
           kind === 'service-order' ? <ServiceOrderFixture /> : kind.startsWith('pickup') ? <PickupFixture /> :
+          kind === 'event-posters' ? <ResourceManager resourceKey="events" rows={['car','table','pickup'].map((mode,index) => ({...eventRow,id:ids[index],title:mode + ' Event',service_mode:mode,is_private:true,address_line_2:index === 0 ? 'Riverside Quarter' : null,featured_image_path:'images/events/poster.jpg',image_alt:'Event poster'}))} references={{}} /> :
+          kind === 'event-orders' ? <ResourceManager resourceKey="events" rows={[eventRow, {...eventRow,id:ids[1],title:'No Outstanding Orders'}]} references={{orders:[{id:ids[2],event_id:ids[0]}]}} /> :
           kind === 'removal-counts' ? <ResourceManager resourceKey="modifiers" rows={[
             {id: ids[0], name: 'Nachos Options', group_type: 'removal', is_published: true},
             {id: ids[1], name: 'Taco Options', group_type: 'removal', is_published: false},
@@ -100,7 +104,7 @@ test.beforeAll(async () => {
             {modifier_group_id:ids[0],menu_item_id:'nachos-beef'},
             {modifier_group_id:ids[1],menu_item_id:'tacos'},
           ]} /> :
-          kind === 'removal-option' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Cheese', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Nachos Removals', group_type: 'removal'}]}} /> :
+          kind === 'removal-option' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Cheese', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}, {id:ids[2],modifier_group_id:ids[1],name:'Extra Cheese',price_pence:125,allergens:[],is_available:true,updated_at:'2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Nachos Removals', group_type: 'removal'}]}} /> :
           kind === 'option-media' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Mexican Cola', description: '<p>Original cola description.</p>', image_path: 'images/menu/fixture.jpg', image_alt: 'Cola bottle', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Flavour'}]}} /> :
           kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : {}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
@@ -118,7 +122,7 @@ test.beforeAll(async () => {
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => {
         let contents = '';
         if (args.path === 'next/navigation') contents = `export const useRouter = () => ({ refresh() { window.__refreshes = (window.__refreshes || 0) + 1; }, push(url) { window.__navigation = url; }, replace(url) { window.__navigation = url; window.__onNavigate?.(url); } }); export const usePathname = () => ['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(new URLSearchParams(location.search).get('kind')) ? '/admin' : '/admin/menu'; export const notFound = () => { throw new Error('Not found'); };`;
-        else if (args.path === '@/lib/auth/session') contents = `export const requireAccount = async () => ({user: {email: 'alexander.customer.with.a.long.email@example.com'}, profile: {full_name: 'Alex Taylor', phone: '', role: 'admin'}});`;
+        else if (args.path === '@/lib/auth/session') contents = `export const requireAdmin = async () => ({}); export const requireAccount = async () => ({user: {email: 'alexander.customer.with.a.long.email@example.com'}, profile: {full_name: 'Alex Taylor', phone: '', role: 'admin'}});`;
         else if (args.path === '@/lib/account/data') contents = `export const getCustomerOrders = async () => ({orders: [], total: 0}); export const getCustomerOrder = async () => null;`;
         else if (args.path === 'next/link') contents = `import React from 'react'; export default function Link({children, ...props}) { return <a {...props}>{children}</a>; }`;
         else if (args.path === 'next/image') contents = `import React from 'react'; export default function Image({fill, unoptimized, priority, ...props}) { return <img {...props} style={fill ? {position:'absolute',width:'100%',height:'100%',inset:0} : undefined} />; }`;
@@ -171,7 +175,7 @@ test.beforeAll(async () => {
             if (window.__failOrdering) return {ok:false, error:'Ordering settings changed. Please try again.'};
             window.__updateOrdering?.(status); return {ok:true};
           }
-          export async function assignGroups() { return {ok:true}; }
+          export async function assignGroups(...args) { window.__assignedGroups = args; return {ok:true}; }
           export async function requestMagicLink() { return {status:'success', message:'Fixture'}; }
           export async function signInWithGoogle() {}
           export async function updateProfile() { return {status:'success', message:'Fixture'}; }
@@ -679,6 +683,7 @@ test('removal group editor fixes optional limits and hides nesting controls', as
   await fixture(page, 'edit-modifiers');
   await page.getByRole('button', { name: 'Add Modifier Group' }).click();
   const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText(/Removals and Other Options lets customers personalise/)).toContainText("nest under each taco's group for separate choices");
   await dialog.getByRole('textbox', { name: 'Name *', exact: true }).fill('Nachos Removals');
   await dialog.getByRole('combobox', { name: 'Group Type' }).click();
   await page.getByRole('option', { name: 'Removals and Other Options', exact: true }).click();
@@ -690,16 +695,24 @@ test('removal group editor fixes optional limits and hides nesting controls', as
   expect(saved[3]).toMatchObject({ name: 'Nachos Removals', group_type: 'removal', min_selections: 0, max_selections: 30, child_group_ids: [] });
 });
 
-test('removal option editor keeps ingredient names and hides prices product links and added allergens', async ({ page }) => {
+test('customisation option editor supports optional charges and cards hide zero prices', async ({ page }) => {
   await fixture(page, 'removal-option');
+  await expect(page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Cheese', exact: true }) })).not.toContainText('£0.00');
+  await expect(page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Extra Cheese', exact: true }) })).toContainText('£1.25');
   await page.getByRole('button', { name: 'Edit Cheese' }).click();
   const dialog = page.getByRole('dialog');
   await expect(dialog.getByText(/Enter the exact option title/)).toBeVisible();
-  await expect(dialog.locator('[data-admin-field="price_pence"], [data-admin-field="linked_menu_item_id"], [data-admin-field="allergens"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-admin-field="linked_menu_item_id"], [data-admin-field="allergens"]')).toHaveCount(0);
+  await expect(dialog.getByRole('spinbutton', { name: 'Extra Cost (GBP)' })).toHaveValue('');
   await dialog.getByRole('textbox', { name: 'Name *', exact: true }).fill('Onions');
   await dialog.getByRole('button', { name: 'Save Changes' }).click();
   const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
   expect(saved[3]).toMatchObject({ name: 'Onions', price_pence: 0, linked_menu_item_id: null, pricing_mode: 'extra', linked_quantity: 1, allergens: [] });
+  await page.getByRole('button', { name: 'Edit Extra Cheese', exact: true }).click();
+  await expect(dialog.getByRole('spinbutton', { name: 'Extra Cost (GBP)' })).toHaveValue('1.25');
+  await dialog.getByRole('spinbutton', { name: 'Extra Cost (GBP)' }).fill('1.50');
+  await dialog.getByRole('button', { name: 'Save Changes' }).click();
+  expect(await page.evaluate(() => (window as unknown as { __savedRecord: unknown[] }).__savedRecord[3])).toMatchObject({ name: 'Extra Cheese', price_pence: 1.5 });
 });
 
 test('modifier editor saves ordered nested groups and single or multiple selection limits', async ({ page }, testInfo) => {
@@ -727,6 +740,32 @@ test('modifier editor saves ordered nested groups and single or multiple selecti
   expect(saved[3].child_group_ids).toEqual(['00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000002']);
   expect(saved[3].max_selections).toBe(2);
   expect(saved[3].min_selections).toBe(1);
+});
+
+test('menu assignment surfaces show nested groups read-only and save only direct assignments', async ({ page }) => {
+  await fixture(page, 'menu-modifiers');
+  for (const action of ['Edit Ember Chicken', 'Modifier Groups for Ember Chicken']) {
+    await page.getByRole('button', { name: action, exact: true }).click();
+    const dialog = page.getByRole('dialog');
+    await expect(dialog.getByText('ExtrasNested', { exact: true })).toBeVisible();
+    await expect(dialog.getByText('SeasonalNested / Draft', { exact: true })).toBeVisible();
+    await expect(dialog.locator('ul ul')).toHaveCount(1);
+    await expect(dialog.locator('ul').getByRole('checkbox')).toHaveCount(0);
+    await expect(dialog.getByText(/Manage them in Modifier Groups; changes apply everywhere/)).toBeVisible();
+    await expect(dialog.getByRole('checkbox', { name: 'Flavour', exact: true })).toBeChecked();
+    await expect(dialog.getByRole('checkbox', { name: 'Extras', exact: true })).not.toBeChecked();
+    await dialog.getByRole('checkbox', { name: 'Flavour', exact: true }).uncheck();
+    await expect(dialog.getByText('ExtrasNested', { exact: true })).toHaveCount(0);
+    await dialog.getByRole('checkbox', { name: 'Flavour', exact: true }).check();
+    await expect(dialog.getByText('ExtrasNested', { exact: true })).toBeVisible();
+    expect(await dialog.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await dialog.getByRole('button', { name: action === 'Edit Ember Chicken' ? 'Save Changes' : 'Save Groups', exact: true }).click();
+    const saved = await page.evaluate(edit => edit
+      ? (window as unknown as { __savedRecord: unknown[] }).__savedRecord
+      : (window as unknown as { __assignedGroups: unknown[] }).__assignedGroups, action === 'Edit Ember Chicken');
+    expect(saved[action === 'Edit Ember Chicken' ? 4 : 1]).toEqual(['00000000-0000-0000-0000-000000000001']);
+    expect(saved).toHaveLength(action === 'Edit Ember Chicken' ? 5 : 3);
+  }
 });
 
 test('menu forms assign modifier groups on create and preserve or remove them on edit', async ({ page }, testInfo) => {
@@ -903,16 +942,111 @@ test('service orders complete and reopen with one action and explicit failures',
   await expect(page.getByRole('button', { name: 'Mark As Complete', exact: true })).toBeVisible();
 });
 
+test('admin header stays above scrolled filters but below dialogs and the mobile drawer', async ({ page }) => {
+  await fixture(page, 'admin-header');
+  const header = page.getByRole('banner');
+  const search = page.getByRole('textbox', { name: 'Search Events' });
+  const searchBox = (await search.boundingBox())!;
+  await page.evaluate(y => window.scrollTo(0, y), searchBox.y - 20);
+  await expect.poll(() => search.evaluate(element => element.getBoundingClientRect().top)).toBeLessThan(80);
+  const box = (await search.boundingBox())!;
+  expect(await page.evaluate(({ x, y }) => Boolean(document.elementFromPoint(x, y)?.closest('header')), { x: box.x + box.width / 2, y: box.y + box.height / 2 })).toBe(true);
+  await expect(header).toHaveCSS('z-index', '40');
+  await page.evaluate(() => window.scrollTo(0, 0));
+  await page.getByRole('button', { name: 'Ordering QR Code', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog).toBeVisible();
+  expect(await dialog.evaluate(element => {
+    const box = element.getBoundingClientRect();
+    return element.contains(document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2));
+  })).toBe(true);
+  await page.keyboard.press('Escape');
+  if (page.viewportSize()!.width < 768) {
+    await header.getByRole('button', { name: 'Toggle Sidebar' }).click();
+    const drawer = page.getByRole('dialog');
+    await expect(drawer).toBeVisible();
+    await expect(drawer.getByRole('link', { name: 'Overview', exact: true })).toBeVisible();
+    await expect.poll(() => drawer.evaluate(element => element.getAnimations().filter(animation => animation.playState === 'running').length)).toBe(0);
+    expect(await drawer.evaluate(element => element.contains(document.elementFromPoint(30, 40)))).toBe(true);
+  }
+});
+
 test('event management exposes a printable QR code and the event ordering link', async ({ page }) => {
   const id = '00000000-0000-0000-0000-000000000001';
   const svg = await QRCode.toString(`https://tacos.example/menu?event=${id}`, { type: 'svg' });
   await page.route(`**/api/admin/events/${id}/qr`, (route) => route.fulfill({ contentType: 'image/svg+xml', body: svg }));
   await fixture(page, 'edit-events');
+  const menu = page.getByRole('link', { name: 'View Event Menu', exact: true });
+  await expect(menu).toBeVisible();
+  await expect(menu).toHaveAttribute('href', `/api/admin/events/${id}/qr?open=1`);
+  await expect(menu).toHaveAttribute('target', '_blank');
+  const actions = page.getByRole('button', { name: 'Ordering QR Code', exact: true }).locator('..');
+  await expect(actions.getByRole('link', { name: 'View Event Menu', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Ordering QR Code', exact: true }).click();
   const dialog = page.getByRole('dialog');
-  await expect(dialog.getByRole('link', { name: 'Open Event Menu', exact: true })).toHaveAttribute('href', `/api/admin/events/${id}/qr?open=1`);
+  await expect(dialog.getByRole('link', { name: /Event Menu/ })).toHaveCount(0);
   await expect(dialog.getByRole('link', { name: 'Download QR (SVG)' })).toHaveAttribute('href', `/api/admin/events/${id}/qr?download=1`);
   await expect.poll(() => dialog.getByRole('img').evaluate((image: HTMLImageElement) => image.complete && image.naturalWidth > 0)).toBe(true);
+  const title = dialog.locator('[data-slot="dialog-title"]');
+  const message = dialog.locator('[data-slot="dialog-description"]');
+  await expect(title).toHaveClass(/leading-snug/);
+  await expect(message).toHaveCSS('padding', '16px');
+  await expect(message).toHaveCSS('border-top-width', '1px');
+  await expect.poll(() => dialog.evaluate(element => element.getAnimations().filter(animation => animation.playState === 'running').length)).toBe(0);
+  const headerBox = (await dialog.locator('[data-slot="dialog-header"]').boundingBox())!;
+  const imageBox = (await dialog.getByRole('img').boundingBox())!;
+  const buttonBox = (await dialog.getByRole('link', { name: 'Download QR (SVG)' }).boundingBox())!;
+  expect(imageBox.y - headerBox.y - headerBox.height).toBeGreaterThanOrEqual(23);
+  expect(buttonBox.y - imageBox.y - imageBox.height).toBeGreaterThanOrEqual(23);
+  await expect(dialog).toHaveCSS('overflow-y', 'auto');
+});
+
+test('event cards contain full posters in taller images and highlight service badges', async ({ page }) => {
+  await page.route('**/storage/v1/object/public/images/events/poster.jpg', route => route.fulfill({
+    contentType: 'image/svg+xml',
+    body: '<svg xmlns="http://www.w3.org/2000/svg" width="600" height="900"><rect width="600" height="900" fill="#164e3a"/><text x="30" y="50" fill="white">Poster top</text><text x="30" y="870" fill="white">Poster bottom</text></svg>',
+  }));
+  await fixture(page, 'event-posters');
+  for (const mode of ['Car', 'Table', 'Pickup']) {
+    const card = page.getByRole('article').filter({ has: page.getByRole('heading', { name: `${mode.toLowerCase()} Event`, exact: true }) });
+    const image = card.getByRole('img', { name: 'Event poster' });
+    await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.complete && element.naturalHeight === 900)).toBe(true);
+    await expect(image).toHaveCSS('object-fit', 'contain');
+    await expect(image).toHaveCSS('padding-left', '8px');
+    await expect(image).toHaveCSS('padding-right', '8px');
+    const box = (await image.boundingBox())!;
+    expect(box.height / box.width).toBeCloseTo(3 / 4, 2);
+    const badge = card.getByText(`${mode} Service`, { exact: true });
+    await expect(badge).toHaveAttribute('data-slot', 'badge');
+    await expect(badge).toHaveCSS('font-weight', '600');
+    await expect(badge).toHaveCSS('border-top-width', '1px');
+    await expect(badge).not.toHaveCSS('background-color', 'rgba(0, 0, 0, 0)');
+    const badgeBox = (await badge.boundingBox())!;
+    const address = card.locator('address');
+    await expect(address.locator('span')).toHaveText(mode === 'Car'
+      ? ['Town Square', 'Market Street', 'Riverside Quarter', 'Bristol, BS1 1AA']
+      : ['Town Square', 'Market Street', 'Bristol, BS1 1AA']);
+    const venueBox = (await address.boundingBox())!;
+    const actionsBox = (await card.getByRole('button', { name: 'Ordering QR Code', exact: true }).boundingBox())!;
+    const actions = card.getByRole('button', { name: 'Ordering QR Code', exact: true }).locator('../..');
+    await expect(actions).toHaveCSS('border-top-width', '1px');
+    await expect(actions).toHaveCSS('padding-top', '16px');
+    expect(badgeBox.y - venueBox.y - venueBox.height).toBeGreaterThanOrEqual(16);
+    expect(actionsBox.y - badgeBox.y - badgeBox.height).toBeGreaterThanOrEqual(16);
+    await expect(card.getByText('QR-Only Ordering', { exact: true })).toHaveCSS('color', await badge.evaluate(element => getComputedStyle(element).color));
+  }
+});
+
+test('event cards only show full-width outstanding orders buttons for events with outstanding orders', async ({ page }) => {
+  await fixture(page, 'event-orders');
+  const withOrders = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Friday Market', exact: true }) });
+  const withoutOrders = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'No Outstanding Orders', exact: true }) });
+  const button = withOrders.getByRole('link', { name: 'Outstanding Event Orders', exact: true });
+  await expect(button).toBeVisible();
+  await expect(button).toHaveClass(/w-full/);
+  await expect(button).toHaveAttribute('data-slot', 'button');
+  await expect(button).toHaveAttribute('href', '/admin/orders?event=00000000-0000-0000-0000-000000000001&status=ordered&status=preparing&status=ready_for_pickup');
+  await expect(withoutOrders.getByRole('link', { name: 'Outstanding Event Orders' })).toHaveCount(0);
 });
 
 test('dashboard retains its last successful data through failed realtime updates and recovers without route refreshes', async ({ page }) => {

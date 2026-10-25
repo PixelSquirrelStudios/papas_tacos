@@ -71,6 +71,14 @@ described below. Ordinary modifiers, recipe ingredients and shared ingredient
 pools are not automatically depleted. Portions of tacos and nachos are independent
 limits even if both use the same ingredients.
 
+For a one-portion test, use **Event Portions Only** and set that event's portions
+to 1. With **Global Stock + Event Allocations**, receiving 1 globally is not enough:
+the event also needs an allocation. Existing checkout holds reduce availability.
+The customer bag counts towards its own quantity limit without reserving stock.
+If it already contains the last portion, the picker shows "Maximum quantity reached."
+instead of inventory details. Editing that bag line excludes its original
+quantity from the calculation, so it does not count against itself.
+
 ## Drinks, sweets and linked menu items
 
 Create each actual product as a **Menu Item**, for example Coca-Cola 330ml,

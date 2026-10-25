@@ -27,7 +27,7 @@ function SelectedChoices({ quote }: { quote: ReturnType<typeof quoteLine> }) {
         <h4 className="border-b border-brand-yellow/20 bg-brand-yellow/10 px-4 py-3 text-sm font-semibold text-brand-yellow wrap-break-word">{title}</h4>
         <dl className="grid min-w-0 gap-3 p-3 sm:grid-cols-2">
           {selectedGroups.map((group) => <div key={group.id} className="min-w-0 bg-muted/40 p-3">
-            <dt className="mb-2 text-xs font-semibold text-muted-foreground wrap-break-word">{group.id === root.id ? (/ filling$/i.test(root.label || root.name) ? 'Filling' : 'Choices') : group.name.slice(root.name.length + 3)}</dt>
+            <dt className="mb-2 text-xs font-semibold text-muted-foreground wrap-break-word">{group.group_type === 'removal' && group.id !== root.id ? 'Make It Yours' : group.id === root.id ? (/ filling$/i.test(root.label || root.name) ? 'Filling' : 'Choices') : group.name.slice(root.name.length + 3)}</dt>
             <dd className="flex min-w-0 flex-wrap gap-2">{quote.options.filter((option) => option.modifier_group_id === group.id).map((option) => <Badge key={option.id} variant="outline" className={`max-w-full flex-wrap justify-start gap-x-2 gap-y-1 rounded-md px-2.5 py-1.5 text-sm whitespace-normal ${option.is_available ? 'border-turquoise/25 bg-turquoise/5' : 'border-primary/30 bg-primary/5 text-muted-foreground'}`}>
               <span className="min-w-0 wrap-anywhere">{option.name}</span>
               {option.price_pence > 0 && <span className="tabular-nums text-muted-foreground">{quote.item?.item_kind === 'group' && option.linked_menu_item_id && option.pricing_mode === 'item' ? '' : '+'}{money(option.price_pence)}</span>}

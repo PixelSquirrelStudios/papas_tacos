@@ -77,6 +77,28 @@ See [the content setup guide](../docs/CATALOGUE_SETUP.md) for publishing menu it
 
 ### Ingredient removals
 
+Apply [059_shared_nested_modifiers.sql](sql/059_shared_nested_modifiers.sql) after
+the preceding upgrades to retire 058's per-item nested overrides. It restores
+shared group expansion for checkout and removes the override column, guard and
+RPCs. The migration is repeatable and also works if 058 was never applied.
+Deploy with the read-only nested-group editor. Previously excluded branches
+follow their shared parent configuration again; review that configuration before
+reopening ordering. Historical orders and shared group assignments are unchanged.
+Do not rerun 058 after 059.
+
+Apply [057_per_taco_options.sql](sql/057_per_taco_options.sql) after 056 for per-taco
+customisations. It permits customisation groups as nested leaves and moves overall
+options on the seeded `two-tacos`/`three-tacos` meals into their individual taco
+groups. It rejects ambiguous/shared configurations, is repeatable, and does not
+rewrite saved orders. Review existing bags after moving their selections.
+
+Apply [056_optional_option_charges.sql](sql/056_optional_option_charges.sql) after 055
+before deploying optional **Extra Cost** for Removals and Other Options. This
+repeatable upgrade permits positive option prices and paid order snapshots while
+retaining flat, optional groups with no linked stock or added allergens. Existing
+free options and historical orders are unchanged. Blank/0 costs stay free; positive
+costs are charged per selected option per portion through the existing checkout.
+
 Apply [055_exact_modifier_names.sql](sql/055_exact_modifier_names.sql) after 054
 before deploying the exact-name UI. It is repeatable and preserves existing orders
 and catalogue names. New order snapshots use option titles exactly as entered,

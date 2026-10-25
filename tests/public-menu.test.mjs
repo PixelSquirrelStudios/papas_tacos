@@ -68,7 +68,15 @@ test('public menu visibility covers homepage, header, navigation, footer and dir
       assert.doesNotMatch(html, /href="\/menu"/);
       assert.match(html, /href="\/events"/);
     }
-    assert.match(await ui.menu(), /Public Menu Unavailable/);
+    const unavailable = await ui.menu();
+    assert.match(unavailable, /Public Menu Unavailable/);
+    assert.match(unavailable, /<main[^>]*class="[^"]*\btext-center\b/);
+    assert.match(unavailable, /<main[^>]*class="[^"]*flex-col items-center justify-center/);
+    assert.match(unavailable, /<main[^>]*class="[^"]*flex flex-1 flex-col/);
+    assert.doesNotMatch(unavailable, /min-h-96/);
+    assert.doesNotMatch(unavailable, /100svh|100vh/);
+    assert.match(unavailable, /<p class="mx-auto mt-5 max-w-xl/);
+    assert.match(unavailable, /<div class="mt-8 flex flex-wrap justify-center gap-3"/);
     assert.equal(state.catalogueReads, 0);
     assert.match(await ui.menu('event-id'), /data-menu-browser/);
     assert.equal(state.catalogueReads, 1);

@@ -29,6 +29,9 @@ While admin editing is still a later stage, use the Supabase Table Editor to ent
 2. Create `menu_items` linked to that category. Prices are integer pence: 850 means GBP 8.50.
 3. Set `is_published = true`, use `is_available` for sold-out status, and set `is_featured` for the homepage.
 4. Enter verified allergens/dietary labels. Empty allergen lists are not presented as an allergen-free guarantee.
+   The picker keeps custom allergen notes. Once any allergens are listed (including
+   selected options), the seeded "empty allergen list" warning instead cautions
+   that listed allergens may not be exhaustive; it does not imply verification.
 5. For customisations, create published `modifier_groups`, their `modifier_options`, then connect them using `menu_item_modifier_groups`.
 6. A group's `min_selections` makes choices required; `max_selections` limits choices. Optional extras should use `min_selections = 0`. Each option can be selected once per item unit; quantities apply to the complete customised item.
 7. Publish genuine testimonials; mark selected ones `is_featured`. No sample customer endorsements are inserted.
@@ -99,45 +102,85 @@ order instructions. Existing catalogue names and historical order snapshots are 
 rewritten. Review existing options and rename **Cheese** to **No Cheese**, for example,
 where removal is intended. Run this upgrade even if 054 was already applied.
 
+Apply [056_optional_option_charges.sql](../supabase/sql/056_optional_option_charges.sql)
+after 055 before deploying optional charges. This repeatable migration allows paid
+customisations while preserving existing free options and historical order snapshots.
+
+Apply [057_per_taco_options.sql](../supabase/sql/057_per_taco_options.sql) after 056
+to enable nesting these choices inside taco groups. For the seeded `two-tacos` and
+`three-tacos` meals it moves directly assigned customisation groups into each
+`Taco N filling` group and removes the overall assignment. It is repeatable and
+leaves other menu items and saved orders unchanged. Ambiguous/shared configurations
+with conflicting option sets fail with guidance rather than guessing. When the
+meals share filling groups and only one has overall options, those options are
+applied to every taco in both meals. Separate conflicting taco groups or name
+the individual groups `Taco 1 filling`, `Taco 2 filling`, `Taco 3 filling` and retry.
+Existing bags with overall selections must review and reselect them per taco;
+the app does not silently copy requests or charges to all tacos.
+
 1. In **Admin > Modifier Groups**, create a group such as **Loaded Nachos Removals**,
    select **Group Type > Removals and Other Options**, and publish it.
    Its admin card shows the number of configured options (including unavailable
    ones) and distinct menu items assigned to it, including drafts and archived items.
 2. In **Admin > Modifier Options**, choose that group and enter the exact option
    titles, such as **No Cheese**, **No Onions** or **Extra Salsa**. Customers and
-   staff see the names as entered, with no automatic prefix. Extra options in this
-   group remain free; use standard modifier groups for priced or allergen-adding extras.
+   staff see the names as entered, with no automatic prefix. Set **Extra Cost (GBP)**
+   for paid extras, or leave blank/0 for removals and included choices. Admin cards
+   and customer choices show prices only for positive charges. Standard choices
+   also support Extra Cost; linked products can still use their product price.
 3. In **Admin > Menu Items**, attach the group only to dishes that contain those
    ingredients. Reuse it across dishes with the same removable ingredients;
    use separate groups where recipes differ. Nothing is inferred from descriptions.
+   For multi-taco meals, instead select the group under **Nested Modifier Groups**
+   in each taco's filling group, after its sauce choices. Do not also attach it
+   directly to the meal. Customers select options independently under
+   **Taco 1 / Make It Yours**, **Taco 2 / Make It Yours**, etc.
+   The menu-item editor and **Modifiers** assignment dialog show inherited groups
+   indented beneath selected parents, marked **Nested** (and **Draft** if unpublished).
+   Nested groups are read-only here; checkboxes control direct assignments only.
+   Manage nested choices in **Modifier Groups > parent group > Nested Modifier Groups**.
+   Changes apply to every meal using that parent. For different meal configurations,
+   create separate parent groups while reusing sauce/customisation child groups.
+   Apply [059_shared_nested_modifiers.sql](../supabase/sql/059_shared_nested_modifiers.sql)
+   after the preceding migrations before deploying this editor. It retires the
+   per-item exclusions introduced in 058: the shared group structure becomes the
+   sole source of truth for both the public menu and checkout. Any formerly
+   excluded branches become available again if still linked and published.
+   Review shared nesting before reopening ordering. Historical orders are unchanged;
+   stale bag selections require review rather than silently removing requests.
 
-Removal groups are always optional and flat, with up to 30 ingredient options.
-Customers can select none, some or all ingredients. Prices and ingredient/product
-links are unavailable for removal options; the server and database enforce zero
-price, no linked stock, and no added allergens. **Available** controls whether a
-removal can be requested, not whether the ingredient is in stock.
-Before converting an existing standard group, remove parent/child nesting links
-and clear option prices, product links and added allergens; invalid conversions
+These groups are always optional leaves (no children of their own), with up to 30 options.
+Customers can select none, some or all options. Extra Cost is a non-negative charge
+per selected option, per portion on the bag line. Blank/0 means no price change,
+not a discount. Ingredient/product links and added allergens remain unavailable;
+use standard groups for stock-linked or allergen-adding choices. **Available**
+controls whether an option can be requested, not whether an ingredient is in stock.
+Before converting an existing standard group, remove its child nesting links
+and clear product links and added allergens; existing extra costs are retained. Invalid conversions
 are rejected rather than silently rewriting options.
 
 The picker shows a distinct warm yellow-tinted **Make It Yours** panel with a bold left accent border and unchecked
 **No Cheese**-style boxes and a short explanation. Internal group names and selection
 limits are not shown in this panel; standard sauce/extra choices keep their existing layout.
-The normal recipe is the default. There is no discount. Removals apply to every
-portion on that bag line; add separate lines for different preparations.
+The normal recipe is the default. There is no discount. Nested options apply only
+to the named taco; paid extras are charged for each selected taco, multiplied by
+the meal quantity. Requests apply to each copy of that meal on the bag line;
+add separate lines for different preparations.
 Editing preserves selected requests. If a choice becomes unavailable, customers
 must explicitly deselect it; if deleted or unassigned, they must acknowledge
 clearing it before updating. Checkout independently rejects stale selections.
 
 Bag summaries, admin preparation details, customer order history, confirmation
-emails and PDF receipts show the exact option titles under **Make It Yours**. Orders snapshot both
-the instruction and group type, so later catalogue edits cannot reinterpret them.
+emails and PDF receipts show the exact option titles and positive surcharges under
+**Make It Yours**. The bag, checkout and payment total include these charges for
+each portion. Orders snapshot the instruction, extra cost and group type, so later
+catalogue edits cannot change saved prices or reinterpret instructions.
 Base dish allergens and confirmed dietary labels remain unchanged: removing cheese
 does not guarantee a milk-free or vegan dish. Portion stock is deducted normally;
 this is not ingredient-level inventory tracking.
 
 Deployment checks: create a test removal group and attach it to a test dish;
-verify unchanged pricing, multiple/zero selections, separate regular/customised
+verify free removals and paid extras (including quantity multiplication), multiple/zero selections, separate regular/customised
 bag lines and saved edits. Complete a test-mode card checkout and check admin
 instructions, account order details, email and receipt. Disable a selected removal
 and confirm the bag blocks checkout until the customer explicitly reviews it.

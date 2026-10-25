@@ -80,7 +80,12 @@ the key and saves it in an HTTP-only, same-site browser cookie for up to seven d
 expiry and ordering controls still apply. The menu URL is then cleaned of the secret, and access survives
 sign-in on the same browser. Cookie restrictions or another browser/device may require another scan.
 Download/print the QR again after enabling private ordering: a previously printed public QR will not unlock it.
-The **Open Event Menu** link in the admin QR dialog uses the same private access link as the printed code.
+The **View Event Menu** button beside **Ordering QR Code** on the admin event card
+opens a new tab using the same private access link as the printed code. The QR dialog
+is reserved for previewing and downloading the code.
+Event cards show a full-width **Outstanding Event Orders** button only when the
+event has paid, partially refunded or refunded orders still ordered, preparing or
+ready for pickup. The button filters to those three outstanding statuses.
 An attendee can still forward the QR or its link: this is QR-link access, not proof of physical attendance.
 Event-specific bags retain their event when adding more items. Car/table, private and custom-set
 events are shown as fixed ordering details rather than a changeable event dropdown. Signed-in

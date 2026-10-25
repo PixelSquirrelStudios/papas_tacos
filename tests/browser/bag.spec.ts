@@ -165,6 +165,52 @@ test('stock refresh failure blocks ordering and recovers without clearing saved 
   await expect(page.getByRole('link', { name: 'Checkout', exact: true })).toBeVisible();
 });
 
+for (const mode of ['event', 'global']) {
+  test(`${mode} stock shows a concise quantity limit and allows editing the last portion`, async ({ page }) => {
+    await isolateOptionPicker(page);
+    const data = fixture();
+    await page.route('**/api/catalogue', route => route.fulfill({ json: data }));
+    let quantity = 1;
+    await page.route('**/api/stock*', route => route.fulfill({ json: { stock: [{ menu_item_id: itemId, tracking_mode: mode, available_quantity: quantity }] } }));
+    await page.goto('/menu?event=market');
+    await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+    const picker = page.getByRole('dialog');
+    await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+    await expect(picker.getByRole('button', { name: 'Increase Test Taco' })).toBeDisabled();
+    await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
+    await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+    await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+    await expect(picker.getByText('Maximum quantity reached.', { exact: true })).toBeVisible();
+    const messageBox = (await picker.getByText('Maximum quantity reached.', { exact: true }).boundingBox())!;
+    const quantityBox = (await picker.getByRole('button', { name: 'Increase Test Taco', exact: true }).boundingBox())!;
+    expect(messageBox.x).toBeGreaterThan(quantityBox.x + quantityBox.width);
+    expect(Math.abs(messageBox.y + messageBox.height / 2 - quantityBox.y - quantityBox.height / 2)).toBeLessThan(2);
+    expect(await picker.evaluate(element => element.scrollWidth <= element.clientWidth)).toBe(true);
+    await expect(picker).not.toContainText('Only 0');
+    await expect(picker.getByRole('button', { name: 'Add to Bag', exact: true })).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await page.goto('/bag');
+    await page.getByRole('button', { name: 'Edit Test Taco', exact: true }).click();
+    await expect(picker.getByRole('button', { name: 'Update Bag', exact: true })).toBeEnabled();
+    await expect(picker.getByText('Maximum quantity reached.', { exact: true })).toHaveCount(0);
+    quantity = 0;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(picker.getByText('This item is sold out.', { exact: true })).toBeVisible();
+    await expect(picker.getByRole('button', { name: 'Update Bag', exact: true })).toBeDisabled();
+    await expect(picker).not.toContainText('Only 0');
+    quantity = 2;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(picker.getByRole('button', { name: 'Increase Test Taco' })).toBeEnabled();
+    await picker.getByRole('button', { name: 'Increase Test Taco' }).click();
+    quantity = 1;
+    await page.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await expect(picker.getByText('Up to 1 available for this selection. Reduce the quantity to continue.', { exact: true })).toBeVisible();
+    await expect(picker.getByRole('button', { name: 'Update Bag', exact: true })).toBeDisabled();
+    await picker.getByRole('button', { name: 'Decrease Test Taco' }).click();
+    await expect(picker.getByRole('button', { name: 'Update Bag', exact: true })).toBeEnabled();
+  });
+}
+
 test('event bag navigation stays scoped and matching paid orders reset to the public menu', async ({ page }) => {
   await isolateOptionPicker(page);
   const data = fixture();
@@ -435,6 +481,58 @@ test('another tab updates open picker prices and availability without a page rel
   await expect(picker.getByRole('button', { name: 'Orders Closed' })).toBeDisabled();
   await editor.close();
 });
+
+for (const tacoCount of [2, 3]) {
+  test(`${tacoCount} tacos keep customisations and paid extras separate per taco`, async ({ page }) => {
+    await isolateOptionPicker(page);
+    const data = fixture();
+    const options = {
+      id: extrasId, name: 'Private Taco Options', group_type: 'removal', min_selections: 0, max_selections: 30,
+      options: [
+        { id: guacamoleId, modifier_group_id: extrasId, name: 'No Onions', price_pence: 0, allergens: [], is_available: true },
+        { id: '00000000-0000-4000-8000-000000000032', modifier_group_id: extrasId, name: 'Extra Cheese', price_pence: 125, allergens: [], is_available: true },
+      ],
+    };
+    const parents = Array.from({ length: tacoCount }, (_, index) => ({
+      id: `00000000-0000-4000-8000-00000000004${index}`, name: `Taco ${index + 1} filling`, min_selections: 1, max_selections: 1,
+      options: [{ ...data.catalogue.items[0].groups[0].options[0], id: `00000000-0000-4000-8000-00000000005${index}`, name: 'Chicken' }],
+      child_group_ids: [extrasId],
+    }));
+    data.catalogue.items[0].groups = expandModifierGroups(parents.map(parent => parent.id), [...parents, options]) as typeof data.catalogue.items[0]['groups'];
+    await page.route('**/api/catalogue', route => route.fulfill({ json: data }));
+    await page.goto('/menu?event=market');
+    await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+    const picker = page.getByRole('dialog');
+    for (let index = 1; index <= tacoCount; index++) {
+      await picker.getByRole('group', { name: `Taco ${index} filling`, exact: true }).getByRole('radio', { name: 'Chicken', exact: true }).check();
+    }
+    const first = picker.getByRole('group', { name: 'Taco 1 / Make It Yours', exact: true });
+    const second = picker.getByRole('group', { name: 'Taco 2 / Make It Yours', exact: true });
+    await expect(picker.getByRole('group', { name: 'Make It Yours', exact: true })).toHaveCount(0);
+    await first.getByRole('checkbox', { name: 'No Onions', exact: true }).check();
+    await expect(second.getByRole('checkbox', { name: 'No Onions', exact: true })).not.toBeChecked();
+    await second.getByRole('checkbox', { name: /Extra Cheese/ }).check();
+    if (tacoCount === 3) await picker.getByRole('group', { name: 'Taco 3 / Make It Yours', exact: true }).getByRole('checkbox', { name: /Extra Cheese/ }).check();
+    await picker.getByRole('button', { name: 'Increase Test Taco' }).click();
+    await expect(picker.getByText(tacoCount === 2 ? '£19.50' : '£22.00', { exact: true })).toBeVisible();
+    await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
+    await page.goto('/bag');
+    const firstSummary = page.getByRole('region', { name: 'Taco 1', exact: true });
+    const secondSummary = page.getByRole('region', { name: 'Taco 2', exact: true });
+    await expect(firstSummary).toContainText('Make It Yours');
+    await expect(firstSummary).toContainText('No Onions');
+    await expect(firstSummary).not.toContainText('Extra Cheese');
+    await expect(secondSummary).toContainText('Extra Cheese');
+    await expect(secondSummary).toContainText('+£1.25');
+    await expect(secondSummary).not.toContainText('No Onions');
+    await expect(page.getByRole('group', { name: 'Selected Choices' })).not.toContainText('Private Taco Options');
+    await page.getByRole('button', { name: 'Edit Test Taco', exact: true }).click();
+    await expect(first.getByRole('checkbox', { name: 'No Onions', exact: true })).toBeChecked();
+    await expect(second.getByRole('checkbox', { name: /Extra Cheese/ })).toBeChecked();
+    await second.getByRole('checkbox', { name: /Extra Cheese/ }).uncheck();
+    await expect(first.getByRole('checkbox', { name: 'No Onions', exact: true })).toBeChecked();
+  });
+}
 
 test('nested reusable groups keep sauces and extras separate for each part', async ({ page }, testInfo) => {
   await isolateOptionPicker(page);
@@ -795,6 +893,8 @@ test('picker shows one custom or fallback allergy notice', async ({ page }, test
     { note: 'Ask us about preparation before ordering this dish.', allergens: ['milk'], expected: 'Ask us about preparation before ordering this dish.' },
     { note: '', allergens: [], expected: 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.' },
     { note: '   ', allergens: ['milk'], expected: 'Cross-contamination may occur. Speak to our team about any food allergy before ordering.' },
+    { note: 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.', allergens: ['sesame'], expected: 'Allergen information is awaiting confirmation. Ask the team before ordering; listed allergens may not be exhaustive.' },
+    { note: 'Ask the team before ordering; an empty allergen list does not mean allergen-free.', allergens: ['milk'], expected: 'Ask the team before ordering; listed allergens may not be exhaustive.' },
   ]) {
     data.catalogue.items[0].allergen_note = scenario.note;
     data.catalogue.items[0].allergens = scenario.allergens;
@@ -807,7 +907,8 @@ test('picker shows one custom or fallback allergy notice', async ({ page }, test
     await expect(notice).toHaveCSS('border-top-width', '1px');
     await expect(notice.locator('svg.lucide-circle-alert')).toBeVisible();
     await expect(picker.getByText('Please confirm allergen information with our team before ordering.', { exact: true })).toHaveCount(0);
-    await expect(picker.getByLabel('Contains: Milk', { exact: true })).toHaveCount(scenario.allergens.length ? 1 : 0);
+    await expect(picker.getByLabel('Contains: Milk', { exact: true })).toHaveCount(scenario.allergens.includes('milk') ? 1 : 0);
+    await expect(picker.getByLabel('Contains: Sesame', { exact: true })).toHaveCount(scenario.allergens.includes('sesame') ? 1 : 0);
     if (scenario.note.trim()) {
       await expect(picker.getByText('Cross-contamination may occur.', { exact: false })).toHaveCount(0);
       await notice.scrollIntoViewIfNeeded();
@@ -1052,6 +1153,44 @@ test('ingredient removals stay free, preserve separate recipes and require expli
   await picker.getByRole('button', { name: 'Update Bag' }).click();
   await expect(page.getByRole('button', { name: 'Edit Test Taco' })).toHaveCount(1);
   await expect(page.getByText('One or more choices are unavailable. Please edit this item.')).not.toBeVisible();
+});
+
+test('paid customisations display surcharges and multiply through picker and bag quantities', async ({ page }) => {
+  await isolateOptionPicker(page);
+  const data = fixture();
+  Object.assign(data.catalogue.items[0].groups[1], {
+    group_type: 'removal', min_selections: 0, max_selections: 30,
+    options: [
+      { id: guacamoleId, modifier_group_id: extrasId, name: 'Extra Cheese', price_pence: 125, allergens: [], is_available: true, sort_order: 0 },
+      { id: '00000000-0000-4000-8000-000000000032', modifier_group_id: extrasId, name: 'No Onions', price_pence: 0, allergens: [], is_available: true, sort_order: 1 },
+    ],
+  });
+  await page.route('**/api/catalogue', route => route.fulfill({ json: data }));
+  await page.goto('/menu?event=market');
+  await page.getByRole('button', { name: 'Add Test Taco to Bag' }).click();
+  const picker = page.getByRole('dialog');
+  const options = picker.getByRole('group', { name: 'Make It Yours', exact: true });
+  await expect(options.getByRole('checkbox', { name: /Extra Cheese/ })).toHaveAccessibleName('Extra Cheese +£1.25');
+  await expect(options.getByRole('checkbox', { name: 'No Onions', exact: true })).toBeVisible();
+  await expect(options).not.toContainText('£0.00');
+  await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
+  await options.getByRole('checkbox', { name: /Extra Cheese/ }).check();
+  await options.getByRole('checkbox', { name: 'No Onions', exact: true }).check();
+  await picker.getByRole('button', { name: 'Increase Test Taco' }).click();
+  await expect(picker.getByText('£19.50', { exact: true })).toBeVisible();
+  await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
+  await page.goto('/bag');
+  const summary = page.getByRole('region', { name: 'Make It Yours' });
+  await expect(summary).toContainText('Extra Cheese');
+  await expect(summary).toContainText('+£1.25');
+  await expect(summary).toContainText('No Onions');
+  await page.getByRole('button', { name: 'Edit Test Taco', exact: true }).click();
+  await expect(options.getByRole('checkbox', { name: /Extra Cheese/ })).toBeChecked();
+  await options.getByRole('checkbox', { name: /Extra Cheese/ }).uncheck();
+  await expect(picker.getByText('£17.00', { exact: true })).toBeVisible();
+  await picker.getByRole('button', { name: 'Update Bag' }).click();
+  await expect(summary).not.toContainText('Extra Cheese');
+  await expect(summary).toContainText('No Onions');
 });
 
 test('deleted removal choices require acknowledgement before a saved recipe can be updated', async ({ page }) => {

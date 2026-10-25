@@ -9,7 +9,7 @@ export function formDefaults(resource: Resource, row: AdminRow = {}) {
   return Object.fromEntries(resource.fields.map((field) => {
     const stored = row[field.key];
     if (stored === null || stored === undefined) return [field.key, field.initial ?? (field.type === 'tags' || field.type === 'groups' ? [] : field.type === 'boolean' ? false : '')];
-    if (field.type === 'money') return [field.key, Number(stored) / 100];
+    if (field.type === 'money') return [field.key, resource.table === 'modifier_options' && stored === 0 ? '' : Number(stored) / 100];
     if (field.type === 'datetime') return [field.key, formatInTimeZone(String(stored), 'Europe/London', "yyyy-MM-dd'T'HH:mm")];
     return [field.key, stored];
   }));
@@ -25,7 +25,7 @@ export function formPayload(resource: Resource, values: Record<string, unknown>)
       if (Number.isNaN(date.getTime()) || formatInTimeZone(date, 'Europe/London', "yyyy-MM-dd'T'HH:mm") !== value) return [field.key, 'Invalid local time'];
       return [field.key, date.toISOString()];
     }
-    if (field.type === 'money' || field.type === 'number') return [field.key, value === '' ? NaN : Number(value)];
+    if (field.type === 'money' || field.type === 'number') return [field.key, value === '' ? resource.table === 'modifier_options' && field.key === 'price_pence' ? 0 : NaN : Number(value)];
     return [field.key, value];
   }));
 }

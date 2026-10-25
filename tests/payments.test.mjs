@@ -19,6 +19,17 @@ test('saved order breakdown groups each taco and omits zero extra charges', () =
   assert.equal(orderChoicesText(choices), 'Taco 1\n  Filling: Chicken\n  Extras: Cheese (+£1.00 each)\nTaco 2\n  Sauces: Salsa');
 });
 
+test('per-taco customisation snapshots keep their taco grouping without exposing admin group names', () => {
+  const choices = [
+    { group_name: 'Taco 1 filling / Private Recipe Options', group_type: 'removal', option_name: 'No Onions', unit_price_pence: 0 },
+    { group_name: 'Taco 2 filling / Private Recipe Options', group_type: 'removal', option_name: 'Extra Cheese', unit_price_pence: 125 },
+    { group_name: 'Taco 3 filling / Private Recipe Options', group_type: 'removal', option_name: 'No Cheese', unit_price_pence: 0 },
+  ];
+  assert.deepEqual(groupOrderChoices(choices).map(({ title, groups }) => [title, groups[0].label]),
+    [['Taco 1', 'Make It Yours'], ['Taco 2', 'Make It Yours'], ['Taco 3', 'Make It Yours']]);
+  assert.equal(orderChoicesText(choices), 'Taco 1\n  Make It Yours: No Onions\nTaco 2\n  Make It Yours: Extra Cheese (+£1.25 each)\nTaco 3\n  Make It Yours: No Cheese');
+});
+
 const orderId = '00000000-0000-4000-8000-000000000001';
 const customerId = '00000000-0000-4000-8000-000000000002';
 const fixtureOrder = {
@@ -33,17 +44,27 @@ const fixtureOrder = {
 test('removal snapshots remain explicit in grouped order summaries, emails and receipts', async () => {
   const choices = [
     { id: orderId, group_name: 'Old Nachos Recipe', group_type: 'removal', option_name: 'No Cheese', unit_price_pence: 0 },
+    { id: 'extra-cheese', group_name: 'Old Nachos Recipe', group_type: 'removal', option_name: 'Extra Salsa', unit_price_pence: 125 },
+    { id: 'taco-option', group_name: 'Taco 2 filling / Private Taco Options', group_type: 'removal', option_name: 'No Onions', unit_price_pence: 0 },
     { id: customerId, group_name: 'Extras', group_type: 'standard', option_name: 'Extra Beef', unit_price_pence: 100 },
   ];
-  assert.deepEqual(groupOrderChoices(choices).map(group => group.title), ['Extras', 'Make It Yours']);
+  assert.deepEqual(groupOrderChoices(choices).map(group => group.title), ['Extras', 'Make It Yours', 'Taco 2']);
   assert.match(orderChoicesText(choices), /Make It Yours\n  Choices: No Cheese/);
   assert.doesNotMatch(orderChoicesText(choices), /No Cheese.*[+£]/);
-  const order = { ...fixtureOrder, order_items: [{ ...fixtureOrder.order_items[0], order_item_modifiers: choices }] };
+  assert.match(orderChoicesText(choices), /Extra Salsa \(\+£1.25 each\)/);
+  const order = { ...fixtureOrder, subtotal_pence: 1450, total_pence: 1525,
+    order_items: [{ ...fixtureOrder.order_items[0], unit_extras_pence: 225, line_total_pence: 1450, order_item_modifiers: choices }] };
   const email = orderConfirmationEmail(order, { siteUrl: 'https://tacos.example', logoUrl: '', instagramUrl: null, facebookUrl: null });
   for (const output of [email.html, email.text]) {
     assert.match(output, /Make It Yours/);
     assert.match(output, /No Cheese/);
     assert.match(output, /Extra Beef/);
+    assert.match(output, /Extra Salsa/);
+    assert.match(output, /1\.25/);
+    assert.match(output, /15\.25/);
+    assert.match(output, /Taco 2/);
+    assert.match(output, /No Onions/);
+    assert.doesNotMatch(output, /Private Taco Options/);
     assert.doesNotMatch(output, /Old Nachos Recipe/);
   }
   const { getDocument } = await import('pdfjs-dist/legacy/build/pdf.mjs');
@@ -54,6 +75,11 @@ test('removal snapshots remain explicit in grouped order summaries, emails and r
     assert.match(text, /Make It Yours/);
     assert.match(text, /No Cheese/);
     assert.match(text, /Extra Beef/);
+    assert.match(text, /Extra Salsa\s+\+GBP 1\.25 each/);
+    assert.match(text, /GBP 15\.25/);
+    assert.match(text, /Taco 2/);
+    assert.match(text, /No Onions/);
+    assert.doesNotMatch(text, /Private Taco Options/);
     assert.doesNotMatch(text, /Old Nachos Recipe/);
   } finally { await loading.destroy(); }
 });

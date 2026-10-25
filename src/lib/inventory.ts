@@ -116,6 +116,19 @@ export function maximumLineQuantity(line: BagLine, otherLines: BagLine[], catalo
   return maximum;
 }
 
+export function lineStockIssue(line: BagLine, otherLines: BagLine[], catalogue: Catalogue): string {
+  const maximum = maximumLineQuantity(line, otherLines, catalogue);
+  if (line.quantity <= maximum) return '';
+  if (maximum > 0) return `Up to ${maximum} available for this selection. Reduce the quantity to continue.`;
+  if (maximumLineQuantity(line, [], catalogue) > 0) {
+    return 'Maximum quantity reached.';
+  }
+  const item = catalogue.items.find((candidate) => candidate.id === line.itemId);
+  return item?.stock_quantity === 0
+    ? 'This item is sold out for this event.'
+    : 'Not enough stock for one item with these choices. Please change your choices.';
+}
+
 export function heldQuantity(rows: OrderStock[], itemId: string, eventId?: string, now = Date.now()) {
   return rows.filter((row) => row.menu_item_id === itemId && (!eventId || row.event_id === eventId)
     && row.state === 'held' && row.expires_at !== null && Date.parse(row.expires_at) > now)

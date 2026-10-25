@@ -8,6 +8,7 @@ import { money } from '@/lib/bag';
 import { choiceLabel, publicImageUrl } from '@/lib/catalogue/format';
 import { supabaseConfig } from '@/lib/supabase/config';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { ExpandableDescription } from '@/components/catalogue/rich-description';
 import { FoodBadges } from '@/components/catalogue/food-badges';
 
@@ -72,7 +73,7 @@ export function RecordStatus({ row }: { row: AdminRow }) {
     {Boolean(row.is_featured) && <Badge variant="outline" className="border-brand-yellow/30 text-brand-yellow">{'category_id' in row ? <Skull className="size-3 shrink-0" aria-hidden="true" /> : <Star className="size-3 shrink-0" aria-hidden="true" />}{'category_id' in row ? "Papa's Choice" : 'Featured'}</Badge>}
     {Boolean(row.is_crowd_favourite) && <Badge variant="outline" className="border-brand-yellow/30 text-brand-yellow"><Star className="size-3 shrink-0 fill-current" aria-hidden="true" />Crowd Favourites</Badge>}
     {row.ordering_status ? <Badge variant="outline" className="capitalize">{String(row.ordering_status)}</Badge> : null}
-    {row.is_private === true && <Badge variant="outline" className="border-turquoise/30 text-turquoise">QR-Only Ordering</Badge>}
+    {row.is_private === true && <Badge variant="outline" className="border-brand-yellow/40 bg-brand-yellow/10 text-brand-yellow">QR-Only Ordering</Badge>}
   </div>;
 }
 
@@ -91,19 +92,28 @@ export function RecordCard({ resourceKey, row, references, associations = [], ch
   const linked = row.linked_menu_item_id ? references.menu_items?.find((item) => item.id === row.linked_menu_item_id) : undefined;
   const optionCount = resourceKey === 'modifiers' ? (references.modifier_options ?? []).filter((option) => option.modifier_group_id === row.id).length : 0;
   const menuItemCount = resourceKey === 'modifiers' ? new Set(associations.filter((link) => link.modifier_group_id === row.id).map((link) => link.menu_item_id)).size : 0;
+  const hasOutstandingOrders = resourceKey === 'events' && references.orders?.some((order) => order.event_id === row.id);
   const price = row.item_kind === 'group' ? 'Priced by Choices'
     : row.linked_menu_item_id && row.pricing_mode === 'item'
       ? typeof linked?.price_pence === 'number' ? money(linked.price_pence * Number(row.linked_quantity ?? 1)) : 'Linked Price Unavailable'
-      : typeof row.price_pence === 'number' ? money(row.price_pence) : null;
+      : typeof row.price_pence === 'number' && (resourceKey !== 'options' || row.price_pence > 0) ? money(row.price_pence) : null;
   return <article className={`flex min-w-0 flex-col overflow-hidden rounded-lg border border-border bg-card shadow-sm transition-colors ${resourceKey === 'settings' ? 'hover:border-turquoise/40' : 'hover:border-brand-yellow/40'}`}>
-    {media && <div className={`relative overflow-hidden border-b bg-muted/40 ${resourceKey === 'menu' ? 'aspect-[4/3]' : 'aspect-video'}`}>{image ? <Image src={image} alt={String(row.image_alt || '')} fill sizes="(min-width: 1536px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" unoptimized className="object-cover" /> : <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"><Icon className="size-9 opacity-50" strokeWidth={1.2} aria-hidden="true" /><span className="text-xs">No Image</span></div>}{price && <span className="absolute bottom-3 right-3 rounded-md bg-background/95 px-3 py-1.5 text-sm font-semibold tabular-nums text-brand-yellow">{price}</span>}</div>}
+    {media && <div className="relative aspect-[4/3] overflow-hidden border-b bg-muted/40">{image ? <Image src={image} alt={String(row.image_alt || '')} fill sizes="(min-width: 1536px) 25vw, (min-width: 1024px) 33vw, (min-width: 640px) 50vw, 100vw" unoptimized className={resourceKey === 'events' ? 'object-contain px-2' : 'object-cover'} /> : <div className="flex h-full flex-col items-center justify-center gap-2 text-muted-foreground"><Icon className="size-9 opacity-50" strokeWidth={1.2} aria-hidden="true" /><span className="text-xs">No Image</span></div>}{price && <span className="absolute bottom-3 right-3 rounded-md bg-background/95 px-3 py-1.5 text-sm font-semibold tabular-nums text-brand-yellow">{price}</span>}</div>}
     <div className="flex flex-1 flex-col gap-4 p-5">
       <div className="flex items-start gap-3">{!media && (image ? <Image src={image} alt="" width={44} height={44} unoptimized className="size-11 shrink-0 rounded-md object-cover" /> : <div className="flex size-10 shrink-0 items-center justify-center rounded-md bg-turquoise/10 text-turquoise"><Icon className="size-5" aria-hidden="true" /></div>)}<div className="min-w-0 flex-1">{reference && <p className="mb-1 truncate text-xs font-medium text-muted-foreground">{String(reference.name ?? reference.title)}</p>}<h2 className="wrap-break-word text-lg font-semibold leading-snug">{label}</h2>{row.slug ? <p className="mt-1 truncate text-xs text-muted-foreground">/{String(row.slug)}</p> : null}</div>{!media && price && <p className="max-w-40 text-right font-semibold tabular-nums text-brand-yellow">{price}</p>}</div>
       {resourceKey !== 'settings' && <RecordStatus row={row} />}
       {description && (['menu', 'options', 'events'].includes(resourceKey) ? <ExpandableDescription description={description} name={label} /> : <p className="line-clamp-3 wrap-break-word text-sm leading-relaxed text-muted-foreground">{description}</p>)}
       <div className="mt-auto space-y-2 text-sm text-muted-foreground">
         {resourceKey === 'menu' && (dietary.length > 0 || allergens.length > 0) && <div className="border-t border-border pt-4"><FoodBadges dietary={dietary} allergens={allergens} /></div>}
-        {resourceKey === 'events' && <><p className="flex items-start gap-2"><CalendarDays className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{adminDate(row.starts_at)}</p><p className="flex items-start gap-2"><MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{[row.venue_name, row.town].filter(Boolean).join(', ')}</p><p>{choiceLabel(String(row.service_mode || 'pickup'))} Service</p>{row.id && <><EventQr id={row.id} title={label} />        <Link className="block min-h-9 text-turquoise underline" href={`/admin/orders?event=${row.id}&status=ordered`}>Outstanding Event Orders</Link></>}</>}
+        {resourceKey === 'events' && <>
+          <p className="flex items-start gap-2"><CalendarDays className="mt-0.5 size-4 shrink-0" aria-hidden="true" />{adminDate(row.starts_at)}</p>
+          <div className="flex items-start gap-2"><MapPin className="mt-0.5 size-4 shrink-0" aria-hidden="true" /><address className="min-w-0 break-words not-italic leading-relaxed">{[row.venue_name, row.address_line_1, row.address_line_2, [row.town, row.postcode].filter(Boolean).join(', ')].filter(Boolean).map((line, index) => <span key={index} className="block">{String(line)}</span>)}</address></div>
+          <div className="py-2"><Badge variant="outline" className="border-brand-yellow/40 bg-brand-yellow/10 px-3 py-1 text-sm font-semibold text-brand-yellow">{choiceLabel(String(row.service_mode || 'pickup'))} Service</Badge></div>
+          {row.id && <div className="space-y-2 border-t border-border pt-4">
+            <div className="flex flex-wrap gap-2"><EventQr id={row.id} title={label} /><Button asChild variant="outline"><a href={`/api/admin/events/${row.id}/qr?open=1`} target="_blank" rel="noopener noreferrer">View Event Menu</a></Button></div>
+            {hasOutstandingOrders && <Button asChild className="w-full"><Link href={`/admin/orders?event=${row.id}&status=ordered&status=preparing&status=ready_for_pickup`}>Outstanding Event Orders</Link></Button>}
+          </div>}
+        </>}
         {resourceKey === 'slots' && <><p>Until {adminDate(row.ends_at)}</p><p className="font-medium text-foreground">Capacity: {String(row.capacity)} Orders</p></>}
         {resourceKey === 'modifiers' && (row.group_type === 'removal' ? <div className="flex items-center gap-3"><span>{optionCount} {optionCount === 1 ? 'Option' : 'Options'}</span><span aria-hidden="true" className="h-4 shrink-0 border-l border-border" /><span>Used by {menuItemCount} Menu {menuItemCount === 1 ? 'Item' : 'Items'}</span></div> : <p>{String(row.min_selections)} - {String(row.max_selections)} Choices</p>)}
         {resourceKey === 'options' && row.linked_menu_item_id ? <div className="space-y-1 rounded-md border border-turquoise/25 p-3 text-xs"><p className="font-medium text-foreground">{linked ? String(linked.name) : 'Linked Item Unavailable / No Longer Eligible'}</p><p>{String(row.linked_quantity ?? 1)} unit(s) per choice · {row.pricing_mode === 'item' ? 'Uses Linked Product Price' : 'Included / Fixed Surcharge'}</p><p>Details and stock come from the linked menu item.</p><Link href={`/admin/stock?item=${row.linked_menu_item_id}`} className="block text-brand-yellow underline">Manage Product Stock</Link></div> : null}

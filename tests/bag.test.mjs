@@ -1,13 +1,42 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { lineKey, mergeLine, parseBag, quoteLine } from '../src/lib/bag.ts';
-import { canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
+import { allergyNotice, canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
 import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
-import { applyStock, bagStockIssue, heldQuantity, inventoryActionSchema, publicStockSchema, maximumLineQuantity } from '../src/lib/inventory.ts';
+import { applyStock, bagStockIssue, heldQuantity, inventoryActionSchema, publicStockSchema, maximumLineQuantity, lineStockIssue } from '../src/lib/inventory.ts';
 import { resolveLinkedItems, minimumItemPrice } from '../src/lib/catalogue/linked-items.ts';
 import { menuCatalogue } from '../src/lib/catalogue/menu-sets.ts';
+
+test('allergy guidance adapts seeded warnings without losing custom notes or uncertainty', () => {
+  const seeded = 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.';
+  assert.equal(allergyNotice([], seeded), seeded);
+  assert.equal(allergyNotice(['sesame'], seeded), 'Allergen information is awaiting confirmation. Ask the team before ordering; listed allergens may not be exhaustive.');
+  assert.equal(allergyNotice(['sesame'], 'Ask the team before ordering; an empty allergen list does not mean allergen-free.'), 'Ask the team before ordering; listed allergens may not be exhaustive.');
+  assert.equal(allergyNotice(['milk'], '  Prepared alongside nuts.  '), 'Prepared alongside nuts.');
+  assert.equal(allergyNotice([], 'Prepared alongside nuts.'), 'Prepared alongside nuts.');
+  assert.match(allergyNotice(['sesame'], ''), /Cross-contamination/);
+  assert.equal(allergyNotice([], '  '), seeded);
+});
+
+test('picker stock guidance distinguishes stock exhaustion, bag usage and excessive quantities', () => {
+  const item = { id: 'taco', name: 'Taco', stock_quantity: 1, groups: [] };
+  const catalogue = { items: [item] };
+  const line = { itemId: item.id, optionIds: [], quantity: 1 };
+  assert.equal(lineStockIssue(line, [], catalogue), '');
+  assert.equal(lineStockIssue(line, [line], catalogue), 'Maximum quantity reached.');
+  assert.equal(lineStockIssue({ ...line, quantity: 2 }, [], catalogue), 'Up to 1 available for this selection. Reduce the quantity to continue.');
+  item.stock_quantity = 0;
+  assert.equal(lineStockIssue(line, [], catalogue), 'This item is sold out for this event.');
+  item.stock_quantity = 1;
+  item.groups = [{ options: [{ id: 'drink', name: 'Drink', linked_menu_item_id: 'cola', linked_quantity: 2, stock_quantity: 1 }] }];
+  const withDrink = { ...line, optionIds: ['drink'] };
+  assert.equal(lineStockIssue(withDrink, [], catalogue), 'Not enough stock for one item with these choices. Please change your choices.');
+  item.groups[0].options[0].stock_quantity = 2;
+  assert.equal(lineStockIssue(withDrink, [], catalogue), '');
+  assert.equal(lineStockIssue(withDrink, [{ ...withDrink, itemId: item.id }], catalogue), 'Maximum quantity reached.');
+});
 
 test('removals preserve price, portion demand, allergens and distinct editable bag lines', () => {
   const item = { id: 'nachos', name: 'Nachos', price_pence: 850, is_available: true, allergens: ['milk'], stock_quantity: 10,
@@ -25,6 +54,11 @@ test('removals preserve price, portion demand, allergens and distinct editable b
   assert.equal(mergeLine([customised], { ...customised, optionIds: [...customised.optionIds].reverse() })[0].quantity, 4);
   const catalogue = { items: [item], available: true, categories: [] };
   assert.equal(maximumLineQuantity(customised, [regular], catalogue), 9);
+  item.groups[0].options[1].price_pence = 125;
+  assert.equal(quoteLine(customised, [item]).total, 1950);
+  assert.equal(quoteLine(regular, [item]).total, 850);
+  assert.equal(maximumLineQuantity(customised, [regular], catalogue), 9);
+  assert.deepEqual(item.allergens, ['milk']);
   item.groups[0].options[0].is_available = false;
   assert.match(quoteLine(customised, [item]).issue, /unavailable/);
   assert.match(quoteLine({ ...regular, optionIds: ['removed-id'] }, [item]).issue, /unavailable/);
@@ -275,6 +309,21 @@ test('nested groups keep reused options independent, priced and required per pat
   assert.deepEqual(parseBag(JSON.stringify({ version: 1, lines: [nestedLine] }))[0].optionIds, [...selections].sort());
   assert.notEqual(lineKey({ ...nestedLine, optionIds: selections.slice(0, 1) }), lineKey({ ...nestedLine, optionIds: selections.slice(1) }));
   assert.throws(() => expandModifierGroups([groupId], [{ id: groupId, options: [], child_group_ids: [groupId] }]), /nesting/);
+});
+
+test('shared nested groups are expanded consistently without mutating definitions', () => {
+  const first = crypto.randomUUID(), second = crypto.randomUUID(), child = crypto.randomUUID(), leaf = crypto.randomUUID();
+  const definitions = [
+    { id: first, name: 'Taco 1', options: [], child_group_ids: [child] },
+    { id: second, name: 'Taco 2', options: [], child_group_ids: [child] },
+    { id: child, name: 'Sauces', options: [], child_group_ids: [leaf] },
+    { id: leaf, name: 'Choices', options: [] },
+  ];
+  const before = JSON.stringify(definitions);
+  assert.deepEqual(expandModifierGroups([first, second], definitions).map(group => group.id),
+    [first, `${first}/${child}`, `${first}/${child}/${leaf}`, second, `${second}/${child}`, `${second}/${child}/${leaf}`]);
+  assert.equal(expandModifierGroups([first, second], definitions).length, 6);
+  assert.equal(JSON.stringify(definitions), before);
 });
 
 test('saved bags accommodate bounded nested identifiers without silently losing valid lines', () => {

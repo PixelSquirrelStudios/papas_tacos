@@ -17,7 +17,7 @@ test('modifier listing loads option counts and composite-key item assignments fo
     const bundle = await build({
       stdin: { resolveDir: process.cwd(), loader: 'tsx', contents: `
         import Page from '@/app/admin/[resource]/page';
-        export async function render() { return Page({params:Promise.resolve({resource:'modifiers'})}); }
+        export async function render(resource = 'modifiers') { return Page({params:Promise.resolve({resource})}); }
       ` },
       bundle: true, write: false, platform: 'node', format: 'esm', jsx: 'automatic',
       plugins: [{ name: 'modifier-count-boundaries', setup(builder) {
@@ -44,6 +44,13 @@ test('modifier listing loads option counts and composite-key item assignments fo
     assert.deepEqual(page.props.associations, [{ menu_item_id: 'item', modifier_group_id: 'group' }]);
     assert.deepEqual(state.calls.find(([table]) => table === 'modifier_options')[1], { order: 'id.asc', select: 'id,modifier_group_id' });
     assert.equal(state.calls.find(([table]) => table === 'menu_item_modifier_groups')[1].order, 'sort_order.asc,modifier_group_id.asc');
+    state.calls = [];
+    await render('events');
+    assert.deepEqual(state.calls.find(([table]) => table === 'orders')[1], {
+      order: 'id.asc', select: 'id,event_id',
+      status: 'in.(ordered,preparing,ready_for_pickup)',
+      payment_status: 'in.(paid,partially_refunded,refunded)',
+    });
   } finally { delete globalThis.__modifierCountsTest; }
 });
 
@@ -55,6 +62,22 @@ test('removal group forms default to standard and enforce optional flat unrestri
   for (const override of [{ min_selections: 1 }, { max_selections: 1 }, { child_group_ids: ['00000000-0000-4000-8000-000000000001'] }]) {
     assert.equal(schema.safeParse({ ...values, group_type: 'removal', ...override }).success, false);
   }
+});
+
+test('optional option costs accept blank or zero, preserve paid edits and reject invalid charges', () => {
+  const resource = resources.options;
+  const defaults = formDefaults(resource);
+  assert.equal(defaults.price_pence, '');
+  assert.equal(formDefaults(resource, { price_pence: 0 }).price_pence, '');
+  assert.equal(formDefaults(resource, { price_pence: 125 }).price_pence, 1.25);
+  const values = { ...defaults, modifier_group_id: '00000000-0000-4000-8000-000000000001', name: 'Extra Cheese' };
+  for (const [input, pence] of [['', 0], [0, 0], [1.25, 125]]) {
+    assert.equal(resourceSchema(resource).parse(formPayload(resource, { ...values, price_pence: input })).price_pence, pence);
+  }
+  for (const input of [-1, 1.001, 1001]) {
+    assert.equal(resourceSchema(resource).safeParse(formPayload(resource, { ...values, price_pence: input })).success, false);
+  }
+  assert.ok(Number.isNaN(formPayload(resources.menu, { price_pence: '' }).price_pence));
 });
 
 test('stock and linked-product labels use Title Case without changing internal option values', () => {
@@ -277,7 +300,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     assert.equal((await updateOrder(id, 'preparing')).ok, true);
@@ -323,7 +346,22 @@ test('admin mutations protect unarchive and ordering settings with authorization
     const menuValues = { ...formDefaults(resources.menu), category_id: id, name: 'Taco', slug: 'taco', description: '<p onclick="alert(1)"><strong>Fresh</strong></p><script>alert(1)</script>' };
     assert.equal((await saveRecord('menu', id, version, formPayload(resources.menu, menuValues))).ok, true);
     assert.equal(state.calls.at(-1)[3].description, '<p><strong>Fresh</strong></p>');
+    state.rows[0].group_type = 'removal';
+    const optionValues = formPayload(resources.options, {
+      ...formDefaults(resources.options), modifier_group_id: id, name: 'Extra Cheese', price_pence: 1.25,
+    });
+    assert.equal((await saveRecord('options', null, null, optionValues)).ok, true);
+    assert.equal(state.calls.at(-1)[0], 'modifier_options');
+    assert.equal(state.calls.at(-1)[3].price_pence, 125);
+    for (const override of [{ linked_menu_item_id: id }, { allergens: ['milk'] }]) {
+      assert.equal((await saveRecord('options', null, null, { ...optionValues, ...override })).ok, false);
+      assert.equal(state.calls.at(-1)[0], 'modifier_groups');
+    }
+    delete state.rows[0].group_type;
     const menuPayload = formPayload(resources.menu, menuValues);
+    assert.equal((await assignGroups(id, [id], version)).ok, true);
+    assert.equal(state.calls.at(-1)[0], 'rpc/admin_assign_modifier_groups');
+    assert.deepEqual(state.calls.at(-1)[3], { item_id: id, group_ids: [id], expected_updated_at: version });
     assert.equal((await saveRecord('menu', null, null, menuPayload, [id])).ok, true);
     assert.equal(state.calls.at(-1)[0], 'rpc/admin_save_menu_item');
     assert.deepEqual(state.calls.at(-1)[3].group_ids, [id]);

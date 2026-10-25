@@ -29,9 +29,10 @@ export default async function ResourcePage({ params }: { params: Promise<{ resou
     const tables = [...new Set(resource.fields.flatMap((field) => field.reference ? [field.reference] : []))];
     if (key === 'menu') tables.push('modifier_groups');
     if (key === 'modifiers') tables.push('modifier_options');
+    if (key === 'events') tables.push('orders');
     [rows, references, associations] = await Promise.all([
       adminRows(resource.table, { order: resource.order }),
-      Promise.all(tables.map(async (table) => [table, await adminRows(table, { order: ['menu_categories', 'modifier_groups'].includes(table) ? 'sort_order.asc,id.asc' : 'id.asc', ...(table === 'modifier_options' ? { select: 'id,modifier_group_id' } : {}) })] as const)).then(Object.fromEntries),
+      Promise.all(tables.map(async (table) => [table, await adminRows(table, { order: ['menu_categories', 'modifier_groups'].includes(table) ? 'sort_order.asc,id.asc' : 'id.asc', ...(table === 'modifier_options' ? { select: 'id,modifier_group_id' } : {}), ...(table === 'orders' ? { select: 'id,event_id', status: 'in.(ordered,preparing,ready_for_pickup)', payment_status: 'in.(paid,partially_refunded,refunded)' } : {}) })] as const)).then(Object.fromEntries),
       ['menu', 'options', 'modifiers'].includes(key) ? adminRows('menu_item_modifier_groups', { order: 'sort_order.asc,modifier_group_id.asc' }) : Promise.resolve([]),
     ]);
     if (key === 'options') references.menu_items = (references.menu_items ?? []).filter((item) => !item.archived_at && item.item_kind !== 'group' && !associations.some((link) => link.menu_item_id === item.id));

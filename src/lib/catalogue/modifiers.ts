@@ -1,5 +1,4 @@
 import type { ModifierGroup } from './types';
-
 export function expandModifierGroups(rootIds: string[], groups: ModifierGroup[]): ModifierGroup[] {
   const result: ModifierGroup[] = [];
   function visit(id: string, path: string[], names: string[]) {

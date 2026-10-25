@@ -5,7 +5,9 @@ export type SavedChoice = { group_name: string; group_type?: 'standard' | 'remov
 export function groupOrderChoices<Choice extends SavedChoice>(modifiers: Choice[]) {
   const roots = new Map<string, Map<string, Choice[]>>();
   for (const modifier of modifiers) {
-    const [root, ...children] = (modifier.group_type === 'removal' ? 'Make It Yours' : modifier.group_name).split(' / ');
+    const names = modifier.group_name.split(' / ');
+    if (modifier.group_type === 'removal') names[names.length - 1] = 'Make It Yours';
+    const [root, ...children] = names;
     const label = children.join(' / ') || (/ filling$/i.test(root) ? 'Filling' : 'Choices');
     if (!roots.has(root)) roots.set(root, new Map());
     const groups = roots.get(root)!;

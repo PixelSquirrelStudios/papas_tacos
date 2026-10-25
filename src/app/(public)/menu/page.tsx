@@ -12,7 +12,7 @@ export default async function MenuPage({ searchParams }: { searchParams: Promise
   const { event } = await searchParams;
   const settings = await getSettings();
   if (!event && settings?.public_menu_enabled !== true) {
-    return <main id="main-content" className="page-width py-16"><h1 className="page-title">{settings ? 'Public Menu Unavailable' : 'Menu Temporarily Unavailable'}</h1><p className="mt-5 max-w-xl text-muted-foreground">{settings ? 'Our public menu is not currently displayed. Event menus remain available through their event links and QR codes.' : 'We could not check menu availability. Please try again shortly.'}</p><div className="mt-8 flex flex-wrap gap-3"><Button asChild><Link href="/events">Find the Truck</Link></Button><Button asChild variant="outline"><Link href="/contact">Contact Us</Link></Button></div></main>;
+    return <main id="main-content" className="page-width flex flex-1 flex-col items-center justify-center py-16 text-center"><h1 className="page-title">{settings ? 'Public Menu Unavailable' : 'Menu Temporarily Unavailable'}</h1><p className="mx-auto mt-5 max-w-xl text-muted-foreground">{settings ? 'Our public menu is not currently displayed. Event menus remain available through their event links and QR codes.' : 'We could not check menu availability. Please try again shortly.'}</p><div className="mt-8 flex flex-wrap justify-center gap-3"><Button asChild><Link href="/events">Find the Truck</Link></Button><Button asChild variant="outline"><Link href="/contact">Contact Us</Link></Button></div></main>;
   }
   const [catalogue, events] = await Promise.all([getCatalogue(), event ? getEvents() : Promise.resolve(null)]);
   const selected = events?.events.find((candidate) => candidate.id === event);

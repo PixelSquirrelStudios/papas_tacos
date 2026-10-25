@@ -4,6 +4,17 @@ export function choiceLabel(value: string) {
   return value.replaceAll('_', ' ').replaceAll('-', ' ').replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }
 
+export function allergyNotice(allergens: string[], note: string) {
+  const savedNote = note.trim();
+  if (savedNote) {
+    // Keep the seeded warning accurate once allergens have been entered.
+    return allergens.length ? savedNote.replace('an empty allergen list does not mean allergen-free', 'listed allergens may not be exhaustive') : savedNote;
+  }
+  return allergens.length
+    ? 'Cross-contamination may occur. Speak to our team about any food allergy before ordering.'
+    : 'Allergen information is awaiting confirmation. Ask the team before ordering; an empty allergen list does not mean allergen-free.';
+}
+
 export function publicImageUrl(path: string | null, storageOrigin: string | null) {
   if (!path) return null;
   try {

@@ -8,7 +8,7 @@ const admin = '00000000-0000-4000-8000-000000000001';
 const customer = '00000000-0000-4000-8000-000000000002';
 const sqlDirectory = new URL('../supabase/sql/', import.meta.url);
 
-async function database({ linked = true, exactNames = true } = {}) {
+async function database({ linked = true, exactNames = true, optionCharges = true, perTaco = true, sharedOnly = true } = {}) {
   const db = new PGlite();
   await db.exec(`
     create role anon nologin;
@@ -25,8 +25,12 @@ async function database({ linked = true, exactNames = true } = {}) {
     alter default privileges in schema public grant all on sequences to anon, authenticated, service_role;
   `);
   for (const file of (await readdir(sqlDirectory)).filter(file => file.endsWith('.sql')).sort()) {
-    if (!linked && ['051_linked_menu_items.sql', '054_removal_modifiers.sql', '055_exact_modifier_names.sql'].includes(file)) continue;
+    if (!linked && ['051_linked_menu_items.sql', '054_removal_modifiers.sql', '055_exact_modifier_names.sql', '056_optional_option_charges.sql'].includes(file)) continue;
     if (!exactNames && file === '055_exact_modifier_names.sql') continue;
+    if ((!optionCharges || !exactNames) && file === '056_optional_option_charges.sql') continue;
+    if ((!linked || !optionCharges || !exactNames || !perTaco) && file === '057_per_taco_options.sql') continue;
+    if (!linked && file === '058_item_nested_modifier_overrides.sql') continue;
+    if ((!linked || !sharedOnly) && file === '059_shared_nested_modifiers.sql') continue;
     await db.exec(await readFile(new URL(file, sqlDirectory), 'utf8'));
   }
   await db.query(`insert into auth.users(id,email) values($1,'admin@example.test'),($2,'customer@example.test')`, [admin, customer]);
@@ -204,7 +208,47 @@ test('exact-name upgrade is repeatable, preserves historical instructions and sa
   } finally { await db.close(); }
 });
 
-test('database rejects paid, linked, nested, required and oversized removal configurations', async () => {
+test('optional charges upgrade preserves free orders and snapshots paid extras per portion', async () => {
+  const db = await database({ optionCharges: false });
+  try {
+    const f = await fixture(db);
+    const item = await f.item('Nachos', 850);
+    await f.inventory(item, 10);
+    const group = await f.group(item, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [group]);
+    const options = (await db.query(`insert into public.modifier_options(modifier_group_id,name)
+      values($1,'No Onions'),($1,'Extra Cheese') returning id`, [group])).rows;
+    const ids = options.map(option => option.id);
+    const legacy = await f.reserve(f.body([line(item, ids)], 850));
+    await assert.rejects(db.query('update public.modifier_options set price_pence=125 where id=$1', [ids[1]]), /must be free/);
+    const upgrade = await readFile(new URL('056_optional_option_charges.sql', sqlDirectory), 'utf8');
+    await db.exec(upgrade);
+    await db.exec(upgrade);
+    await db.query('update public.modifier_options set price_pence=125 where id=$1', [ids[1]]);
+    await assert.rejects(f.reserve(f.body([line(item, ids, 2)], 1700)), /price|total|changed/i);
+    const order = await f.reserve(f.body([line(item, ids, 2)], 1950));
+    assert.equal(order.subtotal_pence, 1950);
+    const saved = (await db.query(`select i.quantity,i.unit_extras_pence,i.line_total_pence,i.allergen_snapshot,
+      m.option_name,m.unit_price_pence,m.group_type,m.linked_menu_item_id
+      from public.order_items i join public.order_item_modifiers m on m.order_item_id=i.id
+      where i.order_id=$1 order by m.unit_price_pence`, [order.id])).rows;
+    assert.deepEqual(saved.map(choice => [choice.option_name, choice.unit_price_pence]), [['No Onions', 0], ['Extra Cheese', 125]]);
+    assert.ok(saved.every(choice => choice.quantity === 2 && choice.unit_extras_pence === 125 && choice.line_total_pence === 1950
+      && choice.group_type === 'removal' && choice.linked_menu_item_id === null && choice.allergen_snapshot.includes('milk')));
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: item, quantity: 2, state: 'held' }]);
+    assert.equal(await f.pay(order), false);
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: item, quantity: 2, state: 'sold' }]);
+    await db.query('update public.modifier_options set price_pence=200 where id=$1', [ids[1]]);
+    assert.equal((await db.query('select subtotal_pence from public.orders where id=$1', [legacy.id])).rows[0].subtotal_pence, 850);
+    assert.deepEqual((await db.query(`select m.unit_price_pence from public.order_item_modifiers m
+      join public.order_items i on i.id=m.order_item_id where i.order_id=$1 order by m.unit_price_pence`, [legacy.id])).rows.map(row => row.unit_price_pence), [0, 0]);
+    assert.equal((await db.query(`select m.unit_price_pence from public.order_item_modifiers m
+      join public.order_items i on i.id=m.order_item_id where i.order_id=$1 and m.option_name='Extra Cheese'`, [order.id])).rows[0].unit_price_pence, 125);
+    await assert.rejects(db.query('update public.modifier_options set price_pence=-1 where id=$1', [ids[1]]), /check/);
+  } finally { await db.close(); }
+});
+
+test('database allows paid options but rejects linked, nested, required and oversized customisations', async () => {
   const db = await database();
   try {
     const f = await fixture(db);
@@ -213,18 +257,193 @@ test('database rejects paid, linked, nested, required and oversized removal conf
     const option = (await db.query("insert into public.modifier_options(modifier_group_id,name) values($1,'Cheese') returning id", [group])).rows[0].id;
     const linked = await f.item('Linked', 100);
     for (const statement of [
-      'price_pence=100', `linked_menu_item_id='${linked}'`, "allergens='{milk}'",
-    ]) await assert.rejects(db.query(`update public.modifier_options set ${statement} where id=$1`, [option]), /Removal options must be free/);
+      `linked_menu_item_id='${linked}'`, "allergens='{milk}'",
+    ]) await assert.rejects(db.query(`update public.modifier_options set ${statement} where id=$1`, [option]), /must be unlinked/);
+    await db.query('update public.modifier_options set price_pence=100 where id=$1', [option]);
     await assert.rejects(db.query('update public.modifier_groups set min_selections=1 where id=$1', [group]), /removal_group_limits/);
     await assert.rejects(db.query('update public.modifier_groups set max_selections=1 where id=$1', [group]), /removal_group_limits/);
     const parent = await f.group();
     await assert.rejects(db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [group, [parent]]), /removal_group_limits/);
-    await assert.rejects(db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [parent, [group]]), /attached directly/);
+    await db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [parent, [group]]);
     await assert.rejects(db.query(`insert into public.modifier_options(modifier_group_id,name)
       select $1,'Ingredient ' || n from generate_series(1,30) n`, [group]), /at most 30/);
     const standard = await f.group(null, 0, 30);
     await f.option(standard, null, 1, 'extra', 50);
-    await assert.rejects(db.query("update public.modifier_groups set group_type='removal' where id=$1", [standard]), /Removal options must be free/);
+    await assert.rejects(db.query("update public.modifier_groups set group_type='removal' where id=$1", [standard]), /must be unlinked/);
+    await db.query("update public.modifier_options set allergens='{}' where modifier_group_id=$1", [standard]);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [standard]);
+  } finally { await db.close(); }
+});
+
+for (const assignedTo of ['both', 'two', 'three']) {
+test(`per-taco upgrade handles options assigned to ${assignedTo} meals and preserves distinct taco prices`, async () => {
+  const db = await database({ perTaco: false });
+  try {
+    const f = await fixture(db);
+    const two = await f.item('2 Tacos', 800);
+    const three = await f.item('3 Tacos', 1000);
+    await db.query("update public.menu_items set slug='two-tacos' where id=$1", [two]);
+    await db.query("update public.menu_items set slug='three-tacos' where id=$1", [three]);
+    const roots = [];
+    const fillings = [];
+    for (let index = 1; index <= 3; index++) {
+      const group = await f.group(three);
+      roots.push(group);
+      await db.query("update public.modifier_groups set name=$2 where id=$1", [group, `Taco ${index} filling`]);
+      if (index <= 2) await db.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values($1,$2)', [two, group]);
+      fillings.push(await f.option(group, null, 1, 'extra', 0));
+    }
+    const options = await f.group(two, 0, 30);
+    await db.query("update public.modifier_groups set name='Private Recipe Options',group_type='removal' where id=$1", [options]);
+    await db.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values($1,$2)', [three, options]);
+    const choices = (await db.query(`insert into public.modifier_options(modifier_group_id,name,price_pence)
+      values($1,'No Onions',0),($1,'Extra Cheese',125) returning id`, [options])).rows.map(row => row.id);
+    const legacy = await f.reserve(f.body([line(two, [...fillings.slice(0, 2), choices[0]])], 800));
+    if (assignedTo !== 'both') {
+      await db.query('delete from public.menu_item_modifier_groups where menu_item_id=$1 and modifier_group_id=$2',
+        [assignedTo === 'two' ? three : two, options]);
+    }
+    const upgrade = await readFile(new URL('057_per_taco_options.sql', sqlDirectory), 'utf8');
+    await db.exec(upgrade);
+    await db.exec(upgrade);
+    assert.equal((await db.query('select count(*)::int as count from public.menu_item_modifier_groups where modifier_group_id=$1', [options])).rows[0].count, 0);
+    for (const root of roots) assert.deepEqual((await db.query('select child_group_ids from public.modifier_groups where id=$1', [root])).rows[0].child_group_ids, [options]);
+    await assert.rejects(f.reserve(f.body([line(two, [...fillings.slice(0, 2), choices[0]])], 800)), /no longer available/);
+    for (const [item, count, base] of [[two, 2, 800], [three, 3, 1000]]) {
+      const selected = [...fillings.slice(0, count), `${roots[0]}/${options}:${choices[0]}`, `${roots[1]}/${options}:${choices[1]}`];
+      if (count === 3) selected.push(`${roots[2]}/${options}:${choices[1]}`);
+      const expected = (base + 125 * (count - 1)) * 2;
+      const order = await f.reserve(f.body([line(item, selected, 2)], expected));
+      assert.equal(order.total_pence, expected);
+      const saved = (await db.query(`select m.group_name,m.option_name,m.unit_price_pence from public.order_item_modifiers m
+        join public.order_items i on i.id=m.order_item_id where i.order_id=$1 and m.group_type='removal'
+        order by m.group_name`, [order.id])).rows;
+      assert.equal(saved.length, count);
+      assert.equal(saved[0].group_name, 'Taco 1 filling / Private Recipe Options');
+      assert.equal(saved[0].option_name, 'No Onions');
+      assert.equal(saved[1].option_name, 'Extra Cheese');
+      assert.equal(saved[1].unit_price_pence, 125);
+      assert.equal(await f.pay(order), false);
+    }
+    const historical = (await db.query(`select m.group_name from public.order_item_modifiers m
+      join public.order_items i on i.id=m.order_item_id where i.order_id=$1 and m.group_type='removal'`, [legacy.id])).rows;
+    assert.deepEqual(historical, [{ group_name: 'Private Recipe Options' }]);
+  } finally { await db.close(); }
+});
+}
+
+test('per-taco migration still rejects conflicting option sets on shared taco groups', async () => {
+  const db = await database({ perTaco: false });
+  try {
+    const f = await fixture(db);
+    const two = await f.item('2 Tacos', 800);
+    const three = await f.item('3 Tacos', 1000);
+    await db.query("update public.menu_items set slug='two-tacos' where id=$1", [two]);
+    await db.query("update public.menu_items set slug='three-tacos' where id=$1", [three]);
+    for (let index = 1; index <= 3; index++) {
+      const group = await f.group(three);
+      await db.query('update public.modifier_groups set name=$2 where id=$1', [group, `Taco ${index} filling`]);
+      if (index <= 2) await db.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values($1,$2)', [two, group]);
+    }
+    const first = await f.group(two, 0, 30);
+    const second = await f.group(three, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=any($1)", [[first, second]]);
+    await assert.rejects(db.exec(await readFile(new URL('057_per_taco_options.sql', sqlDirectory), 'utf8')), /different overall options/);
+    await db.exec('rollback');
+    const assignments = (await db.query('select menu_item_id,modifier_group_id from public.menu_item_modifier_groups where modifier_group_id=any($1)', [[first, second]])).rows;
+    assert.equal(assignments.length, 2);
+    assert.ok(assignments.some(row => row.menu_item_id === two && row.modifier_group_id === first));
+    assert.ok(assignments.some(row => row.menu_item_id === three && row.modifier_group_id === second));
+  } finally { await db.close(); }
+});
+
+test('per-taco migration rejects ambiguous parent groups without removing overall options', async () => {
+  const db = await database({ perTaco: false });
+  try {
+    const f = await fixture(db);
+    const item = await f.item('2 Tacos', 800);
+    await db.query("update public.menu_items set slug='two-tacos' where id=$1", [item]);
+    const options = await f.group(item, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [options]);
+    await assert.rejects(db.exec(await readFile(new URL('057_per_taco_options.sql', sqlDirectory), 'utf8')), /expected separate Taco N filling groups/);
+    await db.exec('rollback');
+    assert.equal((await db.query('select count(*)::int as count from public.menu_item_modifier_groups where modifier_group_id=$1', [options])).rows[0].count, 1);
+  } finally { await db.close(); }
+});
+
+test('retiring per-item overrides restores shared checkout choices and preserves saved orders', async () => {
+  const db = await database({ sharedOnly: false });
+  try {
+    const f = await fixture(db);
+    const first = await f.item('2 Tacos', 800);
+    const second = await f.item('3 Tacos', 1000);
+    const roots = [await f.group(first), await f.group(first)];
+    const fillings = [];
+    const child = await f.group(null, 0, 30);
+    await db.query("update public.modifier_groups set group_type='removal' where id=$1", [child]);
+    const option = (await db.query("insert into public.modifier_options(modifier_group_id,name,price_pence) values($1,'Extra Cheese',125) returning id", [child])).rows[0].id;
+    for (const root of roots) {
+      await db.query('insert into public.menu_item_modifier_groups(menu_item_id,modifier_group_id) values($1,$2)', [second, root]);
+      await db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [root, [child]]);
+      fillings.push(await f.option(root, null, 1, 'extra', 0));
+    }
+    const path = `${roots[0]}/${child}`;
+    const selection = `${path}:${option}`;
+    const otherSelection = `${roots[1]}/${child}:${option}`;
+    const current = async () => (await db.query('select updated_at from public.menu_items where id=$1', [first])).rows[0].updated_at;
+    const originalVersion = await current();
+    await role(db, 'authenticated', customer, () => assert.rejects(db.query(
+      'select public.admin_assign_modifier_groups_overrides($1,$2,$3,$4)', [first, roots, originalVersion, [path]]), /Admin access required/));
+    const assign = async (paths, version = null) => role(db, 'authenticated', admin, async () =>
+      db.query('select public.admin_assign_modifier_groups_overrides($1,$2,$3,$4)', [first, roots, version ?? await current(), paths]));
+    await assign([path]);
+    assert.deepEqual((await db.query('select excluded_modifier_group_paths from public.menu_items where id=$1', [first])).rows[0].excluded_modifier_group_paths, [path]);
+    await assert.rejects(assign([], originalVersion), /changed/);
+    const effective = async id => role(db, 'service_role', null, async () => (await db.query('select group_key from private.item_modifier_groups($1)', [id])).rows.map(row => row.group_key));
+    assert.ok(!(await effective(first)).includes(path));
+    assert.ok((await effective(first)).includes(`${roots[1]}/${child}`));
+    assert.ok((await effective(second)).includes(path));
+    await assert.rejects(f.reserve(f.body([line(first, [...fillings, selection])], 925)), /no longer available/);
+    const savedOrder = await f.reserve(f.body([line(first, [...fillings, otherSelection])], 925));
+    assert.equal(savedOrder.total_pence, 925);
+    await f.pay(savedOrder);
+    const secondOrder = await f.reserve(f.body([line(second, [...fillings, selection])], 1125));
+    assert.equal(secondOrder.total_pence, 1125);
+    await f.pay(secondOrder);
+    const savedLines = (await db.query('select * from public.order_items where order_id=$1', [savedOrder.id])).rows;
+    await assert.rejects(assign(['bad/path']), /Invalid nested modifier assignment/);
+    assert.deepEqual((await db.query('select excluded_modifier_group_paths from public.menu_items where id=$1', [first])).rows[0].excluded_modifier_group_paths, [path]);
+    const item = (await db.query('select * from public.menu_items where id=$1', [first])).rows[0];
+    const values = Object.fromEntries(['category_id', 'name', 'slug', 'description', 'price_pence', 'image_path', 'image_alt', 'dietary_tags', 'allergens', 'allergen_note', 'is_published', 'is_available', 'is_featured', 'is_crowd_favourite', 'item_kind', 'show_standalone'].map(key => [key, item[key]]));
+    await role(db, 'authenticated', admin, () => db.query(
+      'select public.admin_save_menu_item_overrides($1,$2,$3,$4,$5)', [first, item.updated_at, { ...values, name: 'Edited Tacos' }, roots, []]));
+    assert.ok((await effective(first)).includes(path));
+    const beforeInvalid = await current();
+    await role(db, 'authenticated', admin, () => assert.rejects(db.query(
+      'select public.admin_save_menu_item_overrides($1,$2,$3,$4,$5)', [first, beforeInvalid, { ...values, name: 'Must Roll Back' }, [], ['invalid']]), /Invalid nested modifier assignment/));
+    assert.equal((await db.query('select name from public.menu_items where id=$1', [first])).rows[0].name, 'Edited Tacos');
+    assert.ok((await effective(first)).includes(path));
+    await db.exec(await readFile(new URL('058_item_nested_modifier_overrides.sql', sqlDirectory), 'utf8'));
+    assert.ok((await effective(second)).includes(path));
+    await assign([path]);
+    assert.ok(!(await effective(first)).includes(path));
+    const retire = await readFile(new URL('059_shared_nested_modifiers.sql', sqlDirectory), 'utf8');
+    await db.exec(retire);
+    await db.exec(retire);
+    assert.ok((await effective(first)).includes(path));
+    assert.ok((await effective(second)).includes(path));
+    assert.equal((await db.query("select count(*)::int as count from information_schema.columns where table_schema='public' and table_name='menu_items' and column_name='excluded_modifier_group_paths'")).rows[0].count, 0);
+    assert.equal((await db.query("select to_regprocedure('public.admin_assign_modifier_groups_overrides(uuid,uuid[],timestamptz,text[])') as fn")).rows[0].fn, null);
+    assert.equal((await db.query("select to_regprocedure('public.admin_save_menu_item_overrides(uuid,timestamptz,jsonb,uuid[],text[])') as fn")).rows[0].fn, null);
+    assert.deepEqual((await db.query('select * from public.order_items where order_id=$1', [savedOrder.id])).rows, savedLines);
+    const restored = await f.reserve(f.body([line(first, [...fillings, selection])], 925));
+    assert.equal(restored.total_pence, 925);
+    await f.pay(restored);
+    await role(db, 'authenticated', admin, () => db.query('update public.modifier_groups set child_group_ids=$2 where id=$1', [roots[0], []]));
+    assert.ok(!(await effective(first)).includes(path));
+    assert.ok(!(await effective(second)).includes(path));
+    await assert.rejects(f.reserve(f.body([line(first, [...fillings, selection])], 925)), /no longer available/);
+    await assert.rejects(f.reserve(f.body([line(second, [...fillings, selection])], 1125)), /no longer available/);
   } finally { await db.close(); }
 });
 
