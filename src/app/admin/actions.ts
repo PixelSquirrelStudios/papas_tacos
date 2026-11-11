@@ -49,12 +49,19 @@ export async function saveRecord(key: string, id: string | null, updatedAt: stri
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
 
-export async function removeRecord(key: string, id: string, updatedAt: string, archive = false): Promise<AdminResult> {
+export async function removeRecord(key: string, id: string, updatedAt: string, archive = false, overrideReferences = false): Promise<AdminResult> {
   await requireAdmin();
   const resource = getResource(key);
   if (!resource || resource.singleton || !identity.safeParse(id).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid record.' };
+  if (!z.boolean().safeParse(archive).success || !z.boolean().safeParse(overrideReferences).success) return { ok: false, error: 'Invalid deletion request.' };
   if (archive && key !== 'menu') return { ok: false, error: 'Only menu items can be archived.' };
+  if (overrideReferences && key !== 'menu') return { ok: false, error: 'Only menu items support unlinking references.' };
   try {
+    if (key === 'menu' && !archive) {
+      await adminRequest('rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: updatedAt, override_references: overrideReferences });
+      refresh(key);
+      return { ok: true };
+    }
     const result = await adminRequest(resource.table, { id: `eq.${id}`, updated_at: `eq.${updatedAt}` }, archive ? 'PATCH' : 'DELETE', archive ? { archived_at: new Date().toISOString(), is_published: false, is_available: false } : undefined);
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'This record changed or was removed. Refresh before trying again.');
     refresh(key);

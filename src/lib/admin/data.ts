@@ -60,6 +60,7 @@ export async function getDashboardData(): Promise<DashboardSnapshot> {
 export function adminError(error: unknown) {
   if (error instanceof AdminDataError) {
     if (['42703', 'PGRST204'].includes(error.code) && /group_type/i.test(error.message)) return 'Ingredient removals require database upgrade 054_removal_modifiers.sql after 053. Apply it, then refresh.';
+    if (error.code === 'PGRST202' && /admin_delete_menu_item/i.test(error.message)) return 'Confirmed menu-item deletion requires database upgrade 060_admin_delete_menu_items.sql after 059. Apply it, then refresh.';
     if (['42703', 'PGRST204'].includes(error.code) && /public_menu_enabled/i.test(error.message)) return 'Public menu visibility requires database upgrade 052_public_menu_visibility.sql. Apply it, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /linked_menu_item|linked_quantity|pricing_mode|item_kind|show_standalone/i.test(error.message)) return 'Linked product choices require database upgrade 051_linked_menu_items.sql after 050. Apply it during an ordering maintenance window, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /inventory|event_stock|restock_order/i.test(error.message)) return 'Stock management requires database upgrade 050_inventory.sql after 049. Follow the stock deployment checklist before applying it, then refresh.';
@@ -71,7 +72,7 @@ export function adminError(error: unknown) {
     if (['42703', 'PGRST204'].includes(error.code) && /modifier_options/i.test(error.message) && /\b(description|image_path|image_alt)\b/i.test(error.message)) return 'Modifier option images and descriptions are not available in the database yet. Apply supabase/sql/031_modifier_option_content.sql, then refresh. SQL 032 does not include these columns.';
     if (error.code === 'PGRST202' && /admin_save_menu_item/i.test(error.message)) return 'The menu-item save function is unavailable in the database API. Apply supabase/sql/032_menu_item_modifier_save.sql to this project; if already applied, reload the PostgREST schema cache, then refresh.';
     if (['42703', 'PGRST202', 'PGRST204'].includes(error.code)) return `The database API is missing an expected column or function (${error.code}). Check outstanding upgrades in supabase/sql; if already applied, reload the PostgREST schema cache, then refresh.`;
-    if (error.code === '23503') return 'This record is still referenced. Archive menu items, or remove unused links and slots before deleting.';
+    if (error.code === '23503') return 'This record is still referenced. For menu items, choose Delete & Unlink in the confirmation or archive the item; remove other linked records before deleting.';
     if (error.code === '23505') return 'That slug or pickup time already exists. Choose a unique value.';
     if (error.code === '23514') return 'The database rejected these values. Check dates, prices and limits.';
     if (error.code === '42501' || error.code === 'AUTH') return 'Administrator access is required. Sign in again.';

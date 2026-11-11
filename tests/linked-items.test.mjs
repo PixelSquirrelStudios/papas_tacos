@@ -26,6 +26,7 @@ async function database({ linked = true, exactNames = true, optionCharges = true
   `);
   for (const file of (await readdir(sqlDirectory)).filter(file => file.endsWith('.sql')).sort()) {
     if (!linked && ['051_linked_menu_items.sql', '054_removal_modifiers.sql', '055_exact_modifier_names.sql', '056_optional_option_charges.sql'].includes(file)) continue;
+    if (!linked && file === '060_admin_delete_menu_items.sql') continue;
     if (!exactNames && file === '055_exact_modifier_names.sql') continue;
     if ((!optionCharges || !exactNames) && file === '056_optional_option_charges.sql') continue;
     if ((!linked || !optionCharges || !exactNames || !perTaco) && file === '057_per_taco_options.sql') continue;
@@ -630,6 +631,66 @@ test('catalogue guards reject group/self/complex references, double charging, gr
     assert.equal(updated.item_kind, 'group');
     assert.equal(updated.show_standalone, true);
     await assert.rejects(role(db, 'authenticated', admin, () => db.query('select * from public.admin_save_menu_item($1,null,$2,$3)', [saved.id, values, [group]])), /Item changed/);
+  } finally { await db.close(); }
+});
+
+test('menu item deletion can unlink safe references and preserve order snapshots', async () => {
+  const db = await database();
+  try {
+    const f = await fixture(db);
+    const parent = await f.item('Parent product');
+    const target = await f.item('Linked product');
+    const group = await f.group(parent);
+    const option = await f.option(group, target, 2, 'item');
+    const order = await f.reserve(f.body([line(parent, [option]), line(target)], 2000));
+    const version = (await db.query('select updated_at from public.menu_items where id=$1', [target])).rows[0].updated_at;
+
+    await role(db, 'authenticated', customer, async () => {
+      await assert.rejects(db.query(
+        'select public.admin_delete_menu_item($1,$2,true)', [target, version],
+      ), /permission denied|Admin access required/);
+    });
+    await role(db, 'authenticated', admin, async () => {
+      await assert.rejects(db.query(
+        'select public.admin_delete_menu_item($1,$2,false)', [target, version],
+      ), /foreign key/);
+      await db.query('select public.admin_delete_menu_item($1,$2,true)', [target, version]);
+    });
+
+    assert.equal((await db.query('select id from public.menu_items where id=$1', [target])).rows.length, 0);
+    assert.equal((await db.query('select menu_item_id from public.order_items where order_id=$1 and item_name=$2', [order.id, 'Linked product'])).rows[0].menu_item_id, null);
+    assert.equal((await db.query('select item_name,unit_price_pence from public.order_items where order_id=$1 and item_name=$2', [order.id, 'Linked product'])).rows[0].unit_price_pence, 500);
+    const savedChoice = (await db.query('select linked_menu_item_id,linked_quantity,option_name from public.order_item_modifiers where order_item_id in (select id from public.order_items where order_id=$1)', [order.id])).rows[0];
+    assert.deepEqual(savedChoice, { linked_menu_item_id: null, linked_quantity: 2, option_name: 'Linked product' });
+    assert.deepEqual((await db.query('select linked_menu_item_id,linked_quantity,pricing_mode from public.modifier_options where id=$1', [option])).rows[0], {
+      linked_menu_item_id: null, linked_quantity: 1, pricing_mode: 'extra',
+    });
+    assert.equal((await db.query('select menu_item_id from public.inventory_items where menu_item_id=$1', [target])).rows.length, 0);
+
+    const stocked = await f.item('Stocked product');
+    await f.inventory(stocked, 3);
+    const stockedVersion = (await db.query('select updated_at from public.menu_items where id=$1', [stocked])).rows[0].updated_at;
+    await role(db, 'authenticated', admin, async () => {
+      await assert.rejects(db.query(
+        'select public.admin_delete_menu_item($1,$2,true)', [stocked, stockedVersion],
+      ), /still has stock or active commitments/);
+    });
+    const stockOrder = await f.reserve(f.body([line(stocked, [], 3)], 1500));
+    await f.pay(stockOrder);
+    await role(db, 'authenticated', admin, async () => {
+      await assert.rejects(db.query(
+        'select public.admin_delete_menu_item($1,$2,false)', [stocked, stockedVersion],
+      ), /Confirm Delete & Unlink to retain the inventory audit trail/);
+      await db.query('select public.admin_delete_menu_item($1,$2,true)', [stocked, stockedVersion]);
+    });
+    assert.equal((await db.query('select id from public.menu_items where id=$1', [stocked])).rows.length, 0);
+    assert.deepEqual((await db.query('select tracking_mode,on_hand from public.inventory_items where menu_item_id=$1', [stocked])).rows[0], {
+      tracking_mode: 'global', on_hand: 0,
+    });
+    assert.equal((await db.query('select remaining from public.inventory_allocations where menu_item_id=$1', [stocked])).rows[0].remaining, 0);
+    assert.ok((await db.query('select id from public.inventory_movements where menu_item_id=$1', [stocked])).rows.length > 0);
+    assert.equal((await db.query('select state from public.inventory_order_stock where order_id=$1', [stockOrder.id])).rows[0].state, 'sold');
+    assert.equal((await db.query('select menu_item_id from public.order_items where order_id=$1', [stockOrder.id])).rows[0].menu_item_id, null);
   } finally { await db.close(); }
 });
 

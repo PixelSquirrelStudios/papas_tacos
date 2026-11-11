@@ -265,7 +265,7 @@ test('dashboard refresh API requires an administrator and returns explicit uncac
   } finally { delete globalThis.__dashboardApiTest; }
 });
 
-test('admin schema errors identify option content separately from the menu save function', async () => {
+test('admin schema and reference errors identify menu-item deletion requirements', async () => {
   const bundle = await build({ entryPoints: ['src/lib/admin/data.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'schema-error-boundaries', setup(builder) {
     builder.onResolve({ filter: /^(server-only|@\/lib\/auth\/session|@\/lib\/supabase\/(server|config))$/ }, (args) => ({ path: args.path, namespace: 'test' }));
     builder.onLoad({ filter: /.*/, namespace: 'test' }, () => ({ contents: 'export function requireAdmin() {} export function createServerSupabase() {} export function supabaseConfig() {}' }));
@@ -281,6 +281,8 @@ test('admin schema errors identify option content separately from the menu save 
   const missingFunction = adminError(new AdminDataError('PGRST202', 'Could not find the function public.admin_save_menu_item in the schema cache'));
   assert.match(missingFunction, /032_menu_item_modifier_save.sql/);
   assert.match(missingFunction, /schema cache/);
+  assert.match(adminError(new AdminDataError('PGRST202', 'Could not find the function public.admin_delete_menu_item in the schema cache')), /060_admin_delete_menu_items.sql/);
+  assert.match(adminError(new AdminDataError('23503', 'foreign key violation')), /Delete & Unlink/);
   assert.match(adminError(new AdminDataError('PGRST204', "Could not find the 'child_group_ids' column of 'modifier_groups' in the schema cache")), /034_modifier_group_nesting.sql/);
   assert.match(adminError(new AdminDataError('PGRST202', 'Could not find public.admin_order_counts in the schema cache')), /045_table_car_ordering.sql/);
   assert.match(adminError(new AdminDataError('42703', 'column events.service_mode does not exist')), /045_table_car_ordering.sql/);
@@ -300,7 +302,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, removeRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     assert.equal((await updateOrder(id, 'preparing')).ok, true);
@@ -335,6 +337,12 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.deepEqual(state.calls[0], ['menu_items', { id: `eq.${id}`, updated_at: `eq.${version}`, archived_at: 'not.is.null' }, 'PATCH', { archived_at: null, is_published: false, is_available: false }]);
     assert.equal((await setOrderingStatus('closed', version)).ok, true);
     assert.deepEqual(state.calls[1], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { ordering_status: 'closed' }]);
+    assert.equal((await removeRecord('menu', id, version, false, true)).ok, true);
+    assert.deepEqual(state.calls.at(-1), ['rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: version, override_references: true }]);
+    assert.equal((await removeRecord('menu', id, version, false, 'true')).ok, false);
+    assert.equal((await removeRecord('events', id, version, false, true)).ok, false);
+    assert.equal((await removeRecord('menu', id, version)).ok, true);
+    assert.deepEqual(state.calls.at(-1), ['rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: version, override_references: false }]);
     assert.equal((await setOrderingStatus('open', version)).ok, true);
     for (const enabled of [true, false]) {
       assert.equal((await setMaintenanceMode(enabled, version)).ok, true);

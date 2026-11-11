@@ -39,7 +39,9 @@ While admin editing is still a later stage, use the Supabase Table Editor to ent
 9. Set contact details and actual HTTPS social URLs in the singleton `business_settings` row. Unconfigured social links are omitted, not fabricated.
 
 Use Table Editor's UUID values for foreign keys. A published item in an unpublished category
-does not appear. Archive referenced menu items rather than deleting them.
+does not appear. Admins can archive items or explicitly confirm deleting and unlinking menu
+items; saved order details and inventory audit history remain, but linked product choices are
+converted to regular modifiers. Reconcile remaining stock and active commitments before deletion.
 Public reads use only the anonymous publishable key, even for a signed-in admin; draft content
 is not exposed through the public menu. Failed queries render unavailable states, while a
 successful empty query renders an empty state. Do not use a privileged secret key to bypass RLS.

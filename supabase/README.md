@@ -86,6 +86,13 @@ follow their shared parent configuration again; review that configuration before
 reopening ordering. Historical orders and shared group assignments are unchanged.
 Do not rerun 058 after 059.
 
+Apply [060_admin_delete_menu_items.sql](sql/060_admin_delete_menu_items.sql) after 059
+to allow admins to explicitly unlink safe references when deleting menu items.
+Order snapshots and inventory audit history remain intact, and linked product choices
+become regular modifiers. Reconcile remaining stock and active commitments before deletion.
+If 060 was already applied with the earlier inventory-history restriction, also apply
+[061_delete_menu_items_with_inventory_history.sql](sql/061_delete_menu_items_with_inventory_history.sql).
+
 Apply [057_per_taco_options.sql](sql/057_per_taco_options.sql) after 056 for per-taco
 customisations. It permits customisation groups as nested leaves and moves overall
 options on the seeded `two-tacos`/`three-tacos` meals into their individual taco
@@ -502,7 +509,9 @@ All monetary values are integer pence in GBP. Item and modifier prices are per u
 line totals multiply the base price plus extras by quantity. Order totals add the
 subtotal and the explicitly recorded fees. Names, prices, allergens, and pickup
 details are snapshots, not live joins that change when the menu or event is edited.
-Referenced menu items must be archived instead of deleted.
+Admins may confirm unlinking menu-item references when deleting; inventory history
+is retained as an unlinked audit trail. Remaining stock and active commitments must
+be reconciled before deletion.
 Order numbers are display references and can have gaps; UUIDs and RLS control access.
 
 ## Stripe Checkout Upgrade

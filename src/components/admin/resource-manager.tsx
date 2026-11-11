@@ -10,6 +10,7 @@ import { sectionOrder } from '@/lib/catalogue/ordering';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { FilterSelect } from '@/components/ui/filter-select';
+import { Checkbox } from '@/components/ui/checkbox';
 import { AlertDialog, AlertDialogContent, AlertDialogHeader, AlertDialogTitle, AlertDialogDescription, AlertDialogFooter, AlertDialogCancel } from '@/components/ui/alert-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { RecordEditor } from './record-editor';
@@ -25,7 +26,7 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
   const [status, setStatus] = useState<string[]>([]);
   const [page, setPage] = useState(0);
   const [editing, setEditing] = useState<AdminRow | null | undefined>(undefined);
-  const [removing, setRemoving] = useState<{ row: AdminRow; archive: boolean; restore?: boolean } | null>(null);
+  const [removing, setRemoving] = useState<{ row: AdminRow; archive: boolean; restore?: boolean; overrideReferences?: boolean } | null>(null);
   const [assigning, setAssigning] = useState<AdminRow | null>(null);
   const [pending, startTransition] = useTransition();
   const scopeField = resource.fields.find((field) => field.key === resource.scope);
@@ -56,9 +57,9 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
     if (!removing) return;
     startTransition(async () => {
       try {
-        const result = removing.restore ? await unarchiveMenuItem(removing.row.id!, removing.row.updated_at!) : await removeRecord(resourceKey, removing.row.id!, removing.row.updated_at!, removing.archive);
+        const result = removing.restore ? await unarchiveMenuItem(removing.row.id!, removing.row.updated_at!) : await removeRecord(resourceKey, removing.row.id!, removing.row.updated_at!, removing.archive, removing.overrideReferences);
         if (!result.ok) { toast.error(result.error); return; }
-        toast.success(removing.restore ? 'Item Restored as a Draft' : removing.archive ? 'Item Archived' : 'Record Deleted');
+        toast.success(removing.restore ? 'Item Restored as a Draft' : removing.archive ? 'Item Archived' : resourceKey === 'menu' ? 'Menu Item Deleted' : 'Record Deleted');
         setRemoving(null); refresh();
       } catch { toast.error('Unable to complete the request.'); }
     });
@@ -79,7 +80,7 @@ export function ResourceManager({ resourceKey, rows, references, associations = 
     {!visible.length && <div className="flex min-h-64 flex-col items-center justify-center gap-4 rounded-lg border border-dashed px-5 text-center"><Search className="size-8 text-muted-foreground" aria-hidden="true" /><h2 className="text-lg font-semibold">{rows.length ? 'No Matching Records' : 'No Records Yet'}</h2></div>}
     {!resource.singleton && <div className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t pt-5 text-sm"><span role="status" className="text-muted-foreground">{filtered.length} results / Page {currentPage + 1} of {lastPage + 1}</span><div className="flex gap-2"><Button variant="ghost" size="icon" title="Previous Page" aria-label="Previous Page" disabled={currentPage === 0} onClick={() => setPage(currentPage - 1)}><ArrowLeft /></Button><Button variant="ghost" size="icon" title="Next Page" aria-label="Next Page" disabled={currentPage === lastPage} onClick={() => setPage(currentPage + 1)}><ArrowRight /></Button></div></div>}
     {editing !== undefined && <RecordEditor resourceKey={resourceKey} row={editing} references={references} initialGroupIds={associations.filter((link) => link.menu_item_id === editing?.id).map((link) => String(link.modifier_group_id))} onClose={() => setEditing(undefined)} onSaved={() => { setEditing(undefined); refresh(); }} />}
-    <AlertDialog open={Boolean(removing)} onOpenChange={(open) => { if (!open && !pending) setRemoving(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : 'Delete'} {String(removing?.row[resource.label] ?? 'record')}?</AlertDialogTitle><AlertDialogDescription>{removing?.restore ? 'This item will return as an unpublished, unavailable draft. Review it before publishing and making it available.' : removing?.archive ? 'This item will be hidden and unavailable. Existing order history is retained.' : 'This cannot be undone. Referenced records may be protected from deletion.'}</AlertDialogDescription></AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel><Button variant={removing?.restore ? 'default' : 'destructive'} disabled={pending} onClick={remove}>{pending ? 'Working...' : removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : 'Delete'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
+    <AlertDialog open={Boolean(removing)} onOpenChange={(open) => { if (!open && !pending) setRemoving(null); }}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>{removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : 'Delete'} {String(removing?.row[resource.label] ?? 'record')}?</AlertDialogTitle><AlertDialogDescription>{removing?.restore ? 'This item will return as an unpublished, unavailable draft. Review it before publishing and making it available.' : removing?.archive ? 'This item will be hidden and unavailable. Existing order history is retained.' : resourceKey === 'menu' ? 'Deleting is permanent. Saved order details and inventory audit history are retained but unlinked from this item. Remaining stock and active commitments must be resolved first.' : 'This cannot be undone. Referenced records may be protected from deletion.'}</AlertDialogDescription></AlertDialogHeader>{resourceKey === 'menu' && !removing?.archive && !removing?.restore && <label className="flex items-start gap-3 text-sm leading-relaxed"><Checkbox checked={removing?.overrideReferences ?? false} disabled={pending} onCheckedChange={(checked) => setRemoving((current) => current ? { ...current, overrideReferences: checked === true } : current)} /><span>Delete and unlink related order history, linked product choices, and inventory history. Saved order details and stock audit records are retained; linked product choices become regular modifiers.</span></label>}<AlertDialogFooter><AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel><Button variant={removing?.restore ? 'default' : 'destructive'} disabled={pending} onClick={remove}>{pending ? 'Working...' : removing?.restore ? 'Unarchive' : removing?.archive ? 'Archive' : removing?.overrideReferences ? 'Delete & Unlink' : 'Delete'}</Button></AlertDialogFooter></AlertDialogContent></AlertDialog>
     {assigning && <GroupAssignment item={assigning} groups={references.modifier_groups ?? []} initial={associations.filter((link) => link.menu_item_id === assigning.id).map((link) => String(link.modifier_group_id))} onClose={() => setAssigning(null)} onSaved={() => { setAssigning(null); refresh(); }} />}
   </main>;
 }
