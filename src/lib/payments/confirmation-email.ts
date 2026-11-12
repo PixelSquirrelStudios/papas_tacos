@@ -7,9 +7,9 @@ import { deliveryLabel, serviceMode } from '../service-ordering.ts';
 export type OrderEmailStage = 'ordered' | 'preparing' | 'ready_for_pickup' | 'collected' | 'cancelled';
 
 export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmailBrand, stage: OrderEmailStage = 'ordered') {
-  const onlineOrder = !order.event_id;
+  const deliveryOrder = !order.event_id;
   const mode = serviceMode(order.pickup_location);
-  const service = !onlineOrder && mode !== 'pickup';
+  const service = !deliveryOrder && mode !== 'pickup';
   const messages = {
     ordered: { subject: 'confirmed for pickup', eyebrow: 'Payment received', heading: 'Your pickup order is confirmed.', intro: 'We have received your order and payment.', note: 'This confirms your order, not that it is ready. Please collect at your selected pickup time.' },
     preparing: { subject: 'is being prepared', eyebrow: 'In the kitchen', heading: 'We are preparing your order.', intro: 'Your food is being freshly prepared.', note: 'We will email you again when your order is ready for pickup.' },
@@ -21,20 +21,21 @@ export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmail
     ? { subject: 'confirmed for delivery', eyebrow: 'Payment received', heading: 'Your order is confirmed.', intro: 'We have received your order and payment.', note: `We will bring your food to ${deliveryLabel(order.pickup_location)} as soon as possible. Please remain at your assigned location.` }
     : service && stage === 'collected'
       ? { ...messages.collected, subject: 'complete - thank you!', intro: 'Your order has been delivered. We hope you enjoyed every bite.' }
-      : onlineOrder ? ({
-        ordered: { subject: 'confirmed as an online order', eyebrow: 'Payment received', heading: 'Your online order is confirmed.', intro: 'We have received your order and payment.', note: 'We will update your order status as it is prepared.' },
-        preparing: { subject: 'is being prepared', eyebrow: 'In the kitchen', heading: 'We are preparing your online order.', intro: 'Your food is being freshly prepared.', note: 'Check your order page for status updates.' },
-        ready_for_pickup: { subject: 'is ready', eyebrow: 'Order update', heading: 'Your online order is ready.', intro: 'Your order is ready.', note: 'Check your order page for the latest updates.' },
+      : deliveryOrder ? ({
+        ordered: { subject: 'confirmed as a delivery order', eyebrow: 'Payment received', heading: 'Your delivery order is confirmed.', intro: 'We have received your order and payment.', note: 'We will update your order status as it is prepared.' },
+        preparing: { subject: 'is being prepared', eyebrow: 'In the kitchen', heading: 'We are preparing your delivery order.', intro: 'Your food is being freshly prepared.', note: 'Check your order page for status updates.' },
+        ready_for_pickup: { subject: 'is ready', eyebrow: 'Order update', heading: 'Your delivery order is ready.', intro: 'Your order is ready.', note: 'Check your order page for the latest updates.' },
         collected: { subject: 'is complete - thank you!', eyebrow: 'Thanks for choosing us', heading: 'Your order is complete.', intro: 'We hope you enjoyed every bite.', note: 'Enjoyed your meal? Please leave us a review on Facebook or share your visit on Instagram. Your feedback helps others find the truck.' },
         cancelled: messages.cancelled,
       })[stage] : messages[stage];
-  const collectionPrompt = onlineOrder ? 'Your order reference' : service ? `${deliveryLabel(order.pickup_location)} - Your order reference` : ['ordered', 'preparing', 'ready_for_pickup'].includes(stage) ? 'Show this order number to our staff when collecting.' : 'Your order reference';
-  const fulfilmentHeading = onlineOrder ? 'Online order' : service ? 'Delivery details' : 'Pickup details';
+  const collectionPrompt = deliveryOrder ? 'Your order reference' : service ? `${deliveryLabel(order.pickup_location)} - Your order reference` : ['ordered', 'preparing', 'ready_for_pickup'].includes(stage) ? 'Show this order number to our staff when collecting.' : 'Your order reference';
+  const fulfilmentHeading = deliveryOrder ? 'Delivery order' : service ? 'Delivery details' : 'Pickup details';
   const reference = `Order #${order.order_number}`;
   const orderUrl = new URL('/account', brand.siteUrl);
   orderUrl.search = new URLSearchParams({ view: 'orders', order: order.id }).toString();
-  const address = onlineOrder ? '' : pickupAddress(order.pickup_location);
-  const window = onlineOrder ? 'No event or pickup time selected.' : pickupWindow(order);
+  const address = deliveryOrder ? '' : pickupAddress(order.pickup_location);
+  const window = pickupWindow(order);
+  const locationName = deliveryOrder ? 'Delivery Order' : order.pickup_location.event_title || '';
   const totalLabel = order.payment_status === 'unpaid' ? 'Total' : 'Total paid';
   const totals = ([['Items and extras', order.subtotal_pence], ['Service fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence], [totalLabel, order.total_pence]] as const).filter(([label, value]) => value > 0 || label === 'Items and extras' || label === totalLabel);
   const itemsText = order.order_items.map((item) => `${item.quantity} x ${item.item_name} - ${money(item.line_total_pence)}\n${orderChoicesText(item.order_item_modifiers)}`).join('\n');
@@ -42,7 +43,7 @@ export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmail
   const socialLinks = [[brand.instagramUrl, 'Instagram'], [brand.facebookUrl, 'Facebook']].filter((entry): entry is [string, string] => Boolean(entry[0]));
   return {
     subject: `${reference} ${message.subject} | Papa's Tacos`,
-    text: `PAPA'S TACOS\n${message.heading.toUpperCase()}\n\n${reference.toUpperCase()}\n${collectionPrompt}\n\nThanks, ${order.customer_name}. ${message.intro}\n\n${message.note}\n\n${fulfilmentHeading.toUpperCase()}\n${order.pickup_location.event_title || ''}\n${window}\n${address}\n\nYOUR ORDER\n${itemsText}\n\n${totals.map(([label, value]) => `${label}: ${money(value)}`).join('\n')}${order.customer_note ? `\n\nYOUR NOTE\n${order.customer_note}` : ''}\n\nView your order and receipt (sign in required):\n${orderUrl.href}\n\nPapa's Tacos\n${brand.siteUrl}${socialLinks.map(([url, label]) => `\n${label}: ${url}`).join('')}`,
+    text: `PAPA'S TACOS\n${message.heading.toUpperCase()}\n\n${reference.toUpperCase()}\n${collectionPrompt}\n\nThanks, ${order.customer_name}. ${message.intro}\n\n${message.note}\n\n    ${fulfilmentHeading.toUpperCase()}\n${locationName}\n${window}\n${address}\n\nYOUR ORDER\n${itemsText}\n\n${totals.map(([label, value]) => `${label}: ${money(value)}`).join('\n')}${order.customer_note ? `\n\nYOUR NOTE\n${order.customer_note}` : ''}\n\nView your order and receipt (sign in required):\n${orderUrl.href}\n\nPapa's Tacos\n${brand.siteUrl}${socialLinks.map(([url, label]) => `\n${label}: ${url}`).join('')}`,
     html: `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${reference} confirmed | Papa's Tacos</title><style>@media(max-width:600px){.email-shell{padding:0!important}.email-main{padding:28px 20px!important}.email-header{padding:24px 20px!important}.email-footer{padding:26px 20px!important}}</style></head>
 <body style="margin:0;background:#eeefeb;color:#181918;font-family:Arial,Helvetica,sans-serif;"><div style="display:none;max-height:0;overflow:hidden;opacity:0;">${reference}: ${escapeHtml(message.heading)}</div>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="background:#eeefeb;"><tr><td class="email-shell" align="center" style="padding:32px 12px;"><table role="presentation" width="640" cellspacing="0" cellpadding="0" style="width:100%;max-width:640px;background:#ffffff;border-collapse:collapse;">
@@ -50,7 +51,7 @@ export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmail
 <tr><td class="email-main" style="padding:40px 48px;"><p style="margin:0 0 12px;color:#087b55;font-size:12px;font-weight:bold;text-transform:uppercase;">${message.eyebrow}</p><h1 style="margin:0;font-size:28px;line-height:1.25;">${escapeHtml(message.heading)}</h1><p style="font-size:15px;line-height:1.65;">Thanks, ${escapeHtml(order.customer_name)}. ${escapeHtml(message.intro)}</p>
 <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="margin:24px 0;background:#181918;"><tr><td align="center" style="padding:28px 16px;"><p style="margin:0;color:#f0bb7d;font-size:32px;font-weight:bold;line-height:1.3;overflow-wrap:anywhere;">${reference}</p><p style="margin:10px 0 0;color:#ffffff;font-size:14px;line-height:1.6;">${escapeHtml(collectionPrompt)}</p></td></tr></table>
 <p style="font-size:15px;line-height:1.65;">${escapeHtml(message.note)}</p>${stage === 'collected' ? `<p style="line-height:1.8;">${socialLinks.map(([url, label]) => `<a href="${escapeHtml(url)}" style="display:inline-block;margin:0 12px 8px 0;color:#087b55;font-weight:bold;">${label === 'Facebook' ? 'Leave a review on Facebook' : 'Share your visit on Instagram'}</a>`).join('')}</p>` : ''}
-<h2 style="font-size:17px;margin:28px 0 12px;">${fulfilmentHeading}</h2><p style="font-size:15px;">${escapeHtml(order.pickup_location.event_title || '')}</p><p style="margin:0 0 8px;font-size:16px;line-height:1.6;font-weight:bold;">${escapeHtml(window)}</p><p style="margin:0;font-size:15px;line-height:1.65;overflow-wrap:anywhere;">${escapeHtml(address)}</p>
+<h2 style="font-size:17px;margin:28px 0 12px;">${fulfilmentHeading}</h2><p style="font-size:15px;">${escapeHtml(locationName)}</p><p style="margin:0 0 8px;font-size:16px;line-height:1.6;font-weight:bold;">${escapeHtml(window)}</p><p style="margin:0;font-size:15px;line-height:1.65;overflow-wrap:anywhere;">${escapeHtml(address)}</p>
 <h2 style="font-size:17px;margin:28px 0 8px;">Your Order</h2><table width="100%" cellspacing="0" cellpadding="0" style="border-collapse:collapse;font-size:15px;line-height:1.5;">${itemsHtml}</table>
 <table width="100%" cellspacing="0" cellpadding="0" style="margin-top:16px;font-size:14px;line-height:1.6;">${totals.map(([label, value]) => `<tr><td style="padding:6px 0;${label === 'Total paid' ? 'font-weight:bold;font-size:18px;' : ''}">${label}</td><td align="right" style="padding:6px 0;white-space:nowrap;${label === 'Total paid' ? 'font-weight:bold;font-size:18px;' : ''}">${money(value)}</td></tr>`).join('')}</table>
 ${order.customer_note ? `<h2 style="font-size:17px;margin:28px 0 10px;">Your Note</h2><p style="font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;">${escapeHtml(order.customer_note)}</p>` : ''}

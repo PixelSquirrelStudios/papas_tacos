@@ -342,7 +342,7 @@ test('dashboard refresh API requires an administrator and returns explicit uncac
   } finally { delete globalThis.__dashboardApiTest; }
 });
 
-test('dashboard settings request includes online ordering availability', async () => {
+test('dashboard settings request includes delivery ordering availability', async () => {
   const previousFetch = globalThis.fetch;
   const requests = [];
   globalThis.fetch = async (input) => {
@@ -414,7 +414,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setOnlineOrderingEnabled, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, removeRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setDeliveryOrderingEnabled, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, removeRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     assert.equal((await updateOrder(id, 'preparing')).ok, true);
@@ -428,7 +428,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
     await assert.rejects(updateOrder(id, 'collected'), /Admin access required/);
     await assert.rejects(unarchiveMenuItem(id, version), /Admin access required/);
     await assert.rejects(setOrderingStatus('open', version), /Admin access required/);
-    await assert.rejects(setOnlineOrderingEnabled(true, version), /Admin access required/);
+    await assert.rejects(setDeliveryOrderingEnabled(true, version), /Admin access required/);
     await assert.rejects(setMaintenanceMode(true, version), /Admin access required/);
     await assert.rejects(setPublicMenuEnabled(false, version), /Admin access required/);
     await assert.rejects(setMenuAvailability(id, version, true), /Admin access required/);
@@ -438,8 +438,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await unarchiveMenuItem(id, 'invalid')).ok, false);
     assert.equal((await setOrderingStatus('invalid', version)).ok, false);
     assert.equal((await setOrderingStatus('open', 'invalid')).ok, false);
-    assert.equal((await setOnlineOrderingEnabled('true', version)).ok, false);
-    assert.equal((await setOnlineOrderingEnabled(true, 'invalid')).ok, false);
+    assert.equal((await setDeliveryOrderingEnabled('true', version)).ok, false);
+    assert.equal((await setDeliveryOrderingEnabled(true, 'invalid')).ok, false);
     assert.equal((await setMaintenanceMode('true', version)).ok, false);
     assert.equal((await setMaintenanceMode(true, 'invalid')).ok, false);
     assert.equal((await setPublicMenuEnabled('false', version)).ok, false);
@@ -452,8 +452,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.deepEqual(state.calls[0], ['menu_items', { id: `eq.${id}`, updated_at: `eq.${version}`, archived_at: 'not.is.null' }, 'PATCH', { archived_at: null, is_published: false, is_available: false }]);
     assert.equal((await setOrderingStatus('closed', version)).ok, true);
     assert.deepEqual(state.calls[1], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { ordering_status: 'closed' }]);
-    assert.equal((await setOnlineOrderingEnabled(true, version)).ok, true);
-    assert.deepEqual(state.calls[2], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { online_ordering_enabled: true }]);
+    assert.equal((await setDeliveryOrderingEnabled(true, version)).ok, true);
+    assert.deepEqual(state.calls[2], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { online_ordering_enabled: true, ordering_status: 'closed' }]);
     assert.equal((await removeRecord('menu', id, version, false, true)).ok, true);
     assert.deepEqual(state.calls.at(-1), ['rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: version, override_references: true }]);
     assert.equal((await removeRecord('menu', id, version, false, 'true')).ok, false);
@@ -461,6 +461,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await removeRecord('menu', id, version)).ok, true);
     assert.deepEqual(state.calls.at(-1), ['rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: version, override_references: false }]);
     assert.equal((await setOrderingStatus('open', version)).ok, true);
+    assert.deepEqual(state.calls.at(-1), ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { ordering_status: 'open', online_ordering_enabled: false }]);
     for (const enabled of [true, false]) {
       assert.equal((await setMaintenanceMode(enabled, version)).ok, true);
       assert.deepEqual(state.calls.at(-1), ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { maintenance_enabled: enabled }]);
@@ -522,8 +523,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     state.rows = [];
     assert.match((await setMenuAvailability(id, version, true)).error, /changed or was archived/);
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
-    assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
-    assert.match((await setOnlineOrderingEnabled(true, version)).error, /Online ordering settings changed/);
+    assert.match((await setOrderingStatus('open', version)).error, /Event ordering settings changed/);
+    assert.match((await setDeliveryOrderingEnabled(true, version)).error, /Delivery ordering settings changed/);
     assert.match((await setMaintenanceMode(true, version)).error, /Site settings changed/);
     assert.match((await setPublicMenuEnabled(false, version)).error, /Site settings changed/);
     assert.ok(state.revalidated.some(([route]) => route === '/admin/menu'));
@@ -543,7 +544,7 @@ test('slugs default from names and titles without replacing custom URLs', () => 
   assert.ok(slugFromTitle('long '.repeat(100)).length <= 160);
 });
 
-test('About settings validate editable content and supply defaults for legacy settings', () => {
+test('site settings validate delivery ordering and editable content with defaults', () => {
   const values = formPayload(resources.settings, { ...formDefaults(resources.settings), business_name: "Papa's Tacos" });
   assert.equal(values.maintenance_enabled, false);
   assert.equal(Object.hasOwn(values, 'maintenance_allowed_emails'), false);
@@ -551,6 +552,10 @@ test('About settings validate editable content and supply defaults for legacy se
   assert.equal(Object.hasOwn(settingsSchema.shape, 'maintenance_allowed_emails'), false);
   assert.equal(resourceSchema(resources.settings).parse({ ...values, maintenance_enabled: true }).maintenance_enabled, true);
   assert.equal(resourceSchema(resources.settings).safeParse({ ...values, maintenance_enabled: 'true' }).success, false);
+  assert.equal(values.online_ordering_enabled, false);
+  assert.equal(resourceSchema(resources.settings).safeParse({ ...values, ordering_status: 'open', online_ordering_enabled: true }).success, false);
+  assert.equal(resourceSchema(resources.settings).parse({ ...values, ordering_status: 'open', online_ordering_enabled: false }).ordering_status, 'open');
+  assert.equal(resourceSchema(resources.settings).parse({ ...values, ordering_status: 'closed', online_ordering_enabled: true }).online_ordering_enabled, true);
   assert.equal(settingsSchema.shape.maintenance_enabled.parse(undefined), false);
   assert.equal(resourceSchema(resources.settings).parse(values).homepage_hero_eyebrow, homepageHeroDefaults.homepage_hero_eyebrow);
   assert.equal(resourceSchema(resources.settings).parse(values).homepage_hero_description, homepageHeroDefaults.homepage_hero_description);

@@ -43,6 +43,6 @@ test('order snapshots validate amounts and format pickup in UK local time', () =
   assert.equal(detail.order_items[0].order_item_modifiers[0].option_name, 'Chicken');
   assert.equal(pickupWindow(summary), '1 Jun 2026, 13:00 - 13:15');
   assert.equal(pickupWindow({ ...summary, pickup_starts_at: '2026-12-01T12:00:00+00:00', pickup_ends_at: '2026-12-01T12:15:00+00:00' }), '1 Dec 2026, 12:00 - 12:15');
-  assert.equal(pickupWindow({ ...summary, event_id: null, pickup_starts_at: null, pickup_ends_at: null }), 'Online Order');
+  assert.equal(pickupWindow({ ...summary, event_id: null, pickup_starts_at: null, pickup_ends_at: null }), 'Delivery');
   assert.equal(pickupAddress(summary.pickup_location), 'Market, High Street, Town, AB1 2CD');
 });

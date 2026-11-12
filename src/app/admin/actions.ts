@@ -117,19 +117,19 @@ export async function setOrderingStatus(status: string, updatedAt: string): Prom
   await requireAdmin();
   if (!z.enum(['open', 'closed']).safeParse(status).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid ordering settings.' };
   try {
-    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { ordering_status: status });
-    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Ordering settings changed. The latest status will be loaded; try again.');
+    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { ordering_status: status, ...(status === 'open' ? { online_ordering_enabled: false } : {}) });
+    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Event ordering settings changed. The latest status will be loaded; try again.');
     refresh('settings');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }
 }
 
-export async function setOnlineOrderingEnabled(enabled: boolean, updatedAt: string): Promise<AdminResult> {
+export async function setDeliveryOrderingEnabled(enabled: boolean, updatedAt: string): Promise<AdminResult> {
   await requireAdmin();
-  if (!z.boolean().safeParse(enabled).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid online ordering settings.' };
+  if (!z.boolean().safeParse(enabled).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid delivery ordering settings.' };
   try {
-    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { online_ordering_enabled: enabled });
-    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Online ordering settings changed. The latest status will be loaded; try again.');
+    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { online_ordering_enabled: enabled, ...(enabled ? { ordering_status: 'closed' } : {}) });
+    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Delivery ordering settings changed. The latest status will be loaded; try again.');
     refresh('settings');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }

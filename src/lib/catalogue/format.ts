@@ -73,10 +73,10 @@ export function canOrder(events: TruckEvent[], settings: Settings | null, now = 
 }
 
 export function eventOrderingNotice(event: TruckEvent, settings: Settings | null, now = Date.now()) {
-  if (event.service_mode === 'walkup') return { title: 'Walk-Up Only', message: 'Online and pickup ordering are not available for this event. Please visit the truck to order and buy on site.' };
+  if (event.service_mode === 'walkup') return { title: 'Walk-Up Only', message: 'Delivery, pickup and event QR ordering are not available for this event. Please visit the truck to order and buy on site.' };
   const window = servingWindow(event);
   if (!settings) return { title: 'Ordering Unavailable', message: 'We cannot check ordering availability right now. Please try again shortly.' };
-  if (!event.pickup_enabled) return { title: 'Ordering Unavailable', message: 'Online ordering is not available for this event. Please speak to our team.' };
+  if (!event.pickup_enabled) return { title: 'Ordering Unavailable', message: 'Event ordering is not available for this event. Please speak to our team.' };
   if (settings.ordering_status === 'closed' || event.ordering_status === 'closed' || now >= Date.parse(window.closes)) return { title: 'Orders Closed', message: 'We are no longer accepting orders for this event. Thank you for visiting us. If you have already ordered, our team will still look after your order.' };
   if (settings.ordering_status === 'paused' || event.ordering_status === 'paused') return { title: 'Orders Paused', message: 'We have temporarily paused new orders. Please check back shortly. If you have already ordered, our team will still look after your order.' };
   if (now < Date.parse(window.opens)) return { title: 'Orders Open Later', message: `Ordering is not open yet. You can place orders from ${eventTime(window.opens)} on ${eventDate(window.opens)}. You are welcome to browse the menu while you wait.` };

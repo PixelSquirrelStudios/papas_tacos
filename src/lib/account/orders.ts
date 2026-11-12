@@ -70,7 +70,7 @@ export function orderDate(value: string) {
 }
 
 export function pickupWindow(order: OrderSummary) {
-  if (!order.event_id) return 'Online Order';
+  if (!order.event_id) return 'Delivery';
   if (serviceMode(order.pickup_location) !== 'pickup') return `${deliveryLabel(order.pickup_location)} - delivery as soon as possible`;
   if (!order.pickup_starts_at || !order.pickup_ends_at) return 'Pickup time unavailable';
   const end = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }).format(new Date(order.pickup_ends_at));

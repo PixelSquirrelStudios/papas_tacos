@@ -684,7 +684,7 @@ test('option images and descriptions switch with choices and survive bag editing
   await expect(picker.getByAltText('Mild salsa preview')).toBeVisible();
 });
 
-test('online ordering keeps public menu items orderable when no event is available', async ({ page }) => {
+test('delivery ordering keeps public menu items orderable when no event is available', async ({ page }) => {
   await isolateOptionPicker(page);
   const data = fixture();
   data.events = [];
@@ -715,11 +715,11 @@ test('general ordering ignores stale event stock context in the header and bag',
   await picker.getByRole('radio', { name: 'Mild salsa', exact: true }).check();
   await picker.getByRole('button', { name: 'Add to Bag', exact: true }).click();
   await page.goto('/bag');
-  await expect(page.getByText('This order is not tied to an event or pickup time.', { exact: true })).toBeVisible();
+  await expect(page.getByText('This is a delivery order.', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Checkout', exact: true })).toHaveAttribute('href', '/checkout');
 });
 
-test('online ordering allows adding to the public menu without an available event', async ({ page }) => {
+test('delivery ordering allows adding to the public menu without an available event', async ({ page }) => {
   await isolateOptionPicker(page);
   const data = fixture();
   data.events = [];
@@ -737,7 +737,7 @@ test('online ordering allows adding to the public menu without an available even
   await expect(page.getByRole('link', { name: 'View Bag', exact: true })).toBeVisible();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem('papas-tacos:bag:v1')!).lines[0].itemId)).toBe(itemId);
   await page.goto('/bag');
-  await expect(page.getByText('This order is not tied to an event or pickup time.', { exact: true })).toBeVisible();
+  await expect(page.getByText('This is a delivery order.', { exact: true })).toBeVisible();
   await expect(page.getByRole('link', { name: 'Checkout', exact: true })).toHaveAttribute('href', '/checkout');
 });
 
@@ -749,7 +749,7 @@ test('ordering controls fail closed and react to global and event changes', asyn
   data.settings.ordering_status = 'closed';
   await page.evaluate(() => window.dispatchEvent(new Event('focus')));
   await expect(page.getByRole('button', { name: 'Add to Bag', exact: true })).toHaveCount(0);
-  await expect(page.getByRole('dialog').getByRole('button', { name: 'Online Orders Closed' })).toBeDisabled();
+  await expect(page.getByRole('dialog').getByRole('button', { name: 'Delivery Orders Closed' })).toBeDisabled();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('link', { name: /Your bag,/ })).toHaveCount(0);
   await page.getByRole('button', { name: 'Open Navigation' }).click();
@@ -757,8 +757,8 @@ test('ordering controls fail closed and react to global and event changes', asyn
   await page.keyboard.press('Escape');
   const states = [
     [() => { data.settings.ordering_status = 'paused'; }, 'Orders Paused'],
-    [() => { data.settings.ordering_status = 'open'; data.events = []; }, 'Online Orders Closed'],
-    [() => { data.events = [{ ...fixture().events[0], ordering_status: 'closed' }]; }, 'Online Orders Closed'],
+    [() => { data.settings.ordering_status = 'open'; data.events = []; }, 'Delivery Orders Closed'],
+    [() => { data.events = [{ ...fixture().events[0], ordering_status: 'closed' }]; }, 'Delivery Orders Closed'],
   ] as const;
   for (const [change, label] of states) {
     change();

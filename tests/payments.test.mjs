@@ -111,6 +111,21 @@ test('pickup email has prominent order reference, escaped content, pickup detail
   assert.ok(!email.html.includes('<b>Tacos</b>'));
 });
 
+test('delivery confirmation identifies the non-event order as a delivery', () => {
+  const email = orderConfirmationEmail({
+    ...fixtureOrder,
+    event_id: null,
+    pickup_starts_at: null,
+    pickup_ends_at: null,
+    pickup_location: { event_title: 'Online Order' },
+  }, { siteUrl: 'https://tacos.example', logoUrl: 'https://images.example/logo.svg', instagramUrl: null, facebookUrl: null });
+  assert.match(email.subject, /confirmed as a delivery order/);
+  assert.match(email.text, /YOUR DELIVERY ORDER/);
+  assert.match(email.html, /Your delivery order is confirmed/);
+  assert.doesNotMatch(email.text, /online order/i);
+  assert.doesNotMatch(email.html, /online order/i);
+});
+
 test('stage emails distinguish confirmation preparation ready and collected review requests', () => {
   const brand = {siteUrl:'https://tacos.example',logoUrl:'https://images.example/logo.svg',instagramUrl:'https://instagram.com/papas',facebookUrl:'https://facebook.com/papas'};
   for (const [stage, phrase] of [['ordered', 'confirmed for pickup'], ['preparing', 'is being prepared'], ['ready_for_pickup', 'is ready for pickup'], ['collected', 'collected - thank you!'], ['cancelled', 'has been cancelled']]) {

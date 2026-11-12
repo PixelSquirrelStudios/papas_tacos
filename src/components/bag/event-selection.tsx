@@ -19,7 +19,7 @@ export function EventSelection({ requestedEventId, disabled = false }: { request
   if (!ready) return null;
   if (selectedEventId !== requestedEventId && lines.length > 0) {
     return <section aria-label="Ordering Event" role="alert" className="my-6 space-y-3 rounded-lg border border-brand-yellow/30 bg-brand-yellow/5 p-4">
-      <p className="text-sm">Your bag is for {selectedEvent?.title || (selectedEventId ? 'another event' : 'online ordering')}. Switch it to {requestedEventId ? requestedEvent?.title || 'the event from this link' : 'online ordering'} before checkout.</p>
+      <p className="text-sm">Your bag is for {selectedEvent?.title || (selectedEventId ? 'another event' : 'delivery ordering')}. Switch it to {requestedEventId ? requestedEvent?.title || 'the event from this link' : 'delivery ordering'} before checkout.</p>
       <Button type="button" disabled={disabled} onClick={() => selectEvent(requestedEventId)}>Switch Ordering Context</Button>
     </section>;
   }

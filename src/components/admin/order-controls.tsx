@@ -4,7 +4,7 @@ import { useEffect, useEffectEvent, useOptimistic, useRef, useState, useTransiti
 import { usePathname, useRouter } from 'next/navigation';
 import { Check, LoaderCircle, Power, UtensilsCrossed, Wrench } from 'lucide-react';
 import { toast } from 'sonner';
-import { setMaintenanceMode, setOnlineOrderingEnabled, setOrderingStatus, setPublicMenuEnabled, updateOrder } from '@/app/admin/actions';
+import { setDeliveryOrderingEnabled, setMaintenanceMode, setOrderingStatus, setPublicMenuEnabled, updateOrder } from '@/app/admin/actions';
 import { orderOperations } from '@/lib/admin/orders';
 import type { AdminRow } from '@/lib/admin/resources';
 import { notifySiteUpdated, siteUpdateEvent } from '@/lib/site-updates';
@@ -48,59 +48,59 @@ export function AdminRefresh({ onRefresh }: { onRefresh?: () => Promise<void> } 
   return null;
 }
 
-export function PickupOrderingControl({ status, updatedAt }: { status: string; updatedAt?: string }) {
+export function EventOrderingControl({ status, updatedAt }: { status: string; updatedAt?: string }) {
   const router = useRouter();
   const [current, setCurrent] = useOptimistic(status);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
   const open = current === 'open';
-  return <section aria-labelledby="pickup-ordering-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${open ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
+  return <section aria-labelledby="event-ordering-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${open ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
     <div className="flex flex-wrap items-center justify-between gap-5">
-      <div className="flex min-w-0 items-center gap-4"><Power className={`size-7 shrink-0 ${open ? 'text-turquoise' : 'text-brand-yellow'}`} aria-hidden="true" /><div><h2 id="pickup-ordering-title" className="text-sm font-medium text-muted-foreground">Pickup Ordering</h2><p role="status" className={`mt-1 text-2xl font-semibold ${open ? 'text-turquoise' : 'text-brand-yellow'}`}>{pending ? 'Updating...' : current === 'open' ? 'Pickup Orders Open' : current === 'paused' ? 'Pickup Orders Paused' : 'Pickup Orders Closed'}</p></div></div>
-      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{open ? 'Open' : current === 'paused' ? 'Paused' : 'Closed'}</span><Switch aria-label="Pickup Ordering" aria-describedby={error ? 'ordering-error' : undefined} checked={open} disabled={pending || !updatedAt} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
+      <div className="flex min-w-0 items-center gap-4"><Power className={`size-7 shrink-0 ${open ? 'text-turquoise' : 'text-brand-yellow'}`} aria-hidden="true" /><div><h2 id="event-ordering-title" className="text-sm font-medium text-muted-foreground">Event Ordering</h2><p role="status" className={`mt-1 text-2xl font-semibold ${open ? 'text-turquoise' : 'text-brand-yellow'}`}>{pending ? 'Updating...' : current === 'open' ? 'Event Orders Open' : current === 'paused' ? 'Event Orders Paused' : 'Event Orders Closed'}</p></div></div>
+      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{open ? 'Open' : current === 'paused' ? 'Paused' : 'Closed'}</span><Switch aria-label="Event Ordering" aria-describedby={error ? 'ordering-error' : undefined} checked={open} disabled={pending || !updatedAt} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
         if (!updatedAt) return;
         setError('');
         startTransition(async () => {
           setCurrent(checked ? 'open' : 'closed');
           try {
             const result = await setOrderingStatus(checked ? 'open' : 'closed', updatedAt);
-            if (!result.ok) { setError(result.error ?? 'Unable to update pickup ordering.'); router.refresh(); }
-            else { toast.success(checked ? 'Pickup ordering opened' : 'Pickup ordering closed'); notifySiteUpdated(); }
-          } catch { setError('Unable to update pickup ordering. Please try again.'); }
+            if (!result.ok) { setError(result.error ?? 'Unable to update event ordering.'); router.refresh(); }
+            else { toast.success(checked ? 'Event ordering opened' : 'Event ordering closed'); notifySiteUpdated(); }
+          } catch { setError('Unable to update event ordering. Please try again.'); }
         });
       }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
     </div>
-    <p className="mt-3 text-sm text-muted-foreground">Pickup orders follow event opening times and private event QR access.</p>
-    {!updatedAt && <p role="alert" className="mt-3 text-sm text-muted-foreground">Pickup ordering settings are unavailable.</p>}
+    <p className="mt-3 text-sm text-muted-foreground">Event orders follow event opening times and private event QR access.</p>
+    {!updatedAt && <p role="alert" className="mt-3 text-sm text-muted-foreground">Event ordering settings are unavailable.</p>}
     {error && <p id="ordering-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
   </section>;
 }
 
-export function OnlineOrderingControl({ enabled, updatedAt }: { enabled?: boolean; updatedAt?: string }) {
+export function DeliveryOrderingControl({ enabled, updatedAt }: { enabled?: boolean; updatedAt?: string }) {
   const router = useRouter();
   const [current, setCurrent] = useOptimistic(enabled ?? false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState('');
   const available = typeof enabled === 'boolean' && Boolean(updatedAt);
-  return <section aria-labelledby="online-ordering-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${current ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
+  return <section aria-labelledby="delivery-ordering-title" className={`min-w-0 border-y border-l-4 px-5 py-5 sm:px-6 ${current ? 'border-turquoise/40 bg-brand-green-deep/20' : 'border-brand-yellow/40 bg-brand-yellow/5'}`}>
     <div className="flex flex-wrap items-center justify-between gap-5">
-      <div className="flex min-w-0 items-center gap-4"><Power className={`size-7 shrink-0 ${current ? 'text-turquoise' : 'text-brand-yellow'}`} aria-hidden="true" /><div><h2 id="online-ordering-title" className="text-sm font-medium text-muted-foreground">Online Ordering</h2><p role="status" className={`mt-1 text-2xl font-semibold ${current ? 'text-turquoise' : 'text-brand-yellow'}`}>{!available ? 'Status Unavailable' : pending ? 'Updating...' : current ? 'Online Orders Open' : 'Online Orders Closed'}</p></div></div>
-      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{current ? 'Open' : 'Closed'}</span><Switch aria-label="Online Ordering" aria-describedby={error ? 'online-ordering-error' : undefined} checked={current} disabled={pending || !available} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
+      <div className="flex min-w-0 items-center gap-4"><Power className={`size-7 shrink-0 ${current ? 'text-turquoise' : 'text-brand-yellow'}`} aria-hidden="true" /><div><h2 id="delivery-ordering-title" className="text-sm font-medium text-muted-foreground">Delivery Ordering</h2><p role="status" className={`mt-1 text-2xl font-semibold ${current ? 'text-turquoise' : 'text-brand-yellow'}`}>{!available ? 'Status Unavailable' : pending ? 'Updating...' : current ? 'Delivery Orders Open' : 'Delivery Orders Closed'}</p></div></div>
+      <div className="flex min-h-11 items-center gap-4"><span className="text-sm font-semibold">{current ? 'Open' : 'Closed'}</span><Switch aria-label="Delivery Ordering" aria-describedby={error ? 'delivery-ordering-error' : undefined} checked={current} disabled={pending || !available} className="data-[size=default]:h-6 data-[size=default]:w-11 data-[state=checked]:bg-turquoise [&_[data-slot=switch-thumb]]:size-5 [&_[data-state=checked]]:translate-x-5" onCheckedChange={(checked) => {
         if (!updatedAt) return;
         setError('');
         startTransition(async () => {
           setCurrent(checked);
           try {
-            const result = await setOnlineOrderingEnabled(checked, updatedAt);
-            if (!result.ok) { setError(result.error ?? 'Unable to update online ordering.'); router.refresh(); }
-            else { toast.success(checked ? 'Online ordering opened' : 'Online ordering closed'); notifySiteUpdated(); }
-          } catch { setError('Unable to update online ordering. Please try again.'); }
+            const result = await setDeliveryOrderingEnabled(checked, updatedAt);
+            if (!result.ok) { setError(result.error ?? 'Unable to update delivery ordering.'); router.refresh(); }
+            else { toast.success(checked ? 'Delivery ordering opened' : 'Delivery ordering closed'); notifySiteUpdated(); }
+          } catch { setError('Unable to update delivery ordering. Please try again.'); }
         });
       }} />{pending && <LoaderCircle className="size-4 animate-spin" aria-hidden="true" />}</div>
     </div>
-    <p className="mt-3 text-sm text-muted-foreground">When open, customers can order from the public menu without choosing an event or pickup time.</p>
-    {!available && <p role="alert" className="mt-3 text-sm text-muted-foreground">Online ordering settings are unavailable. Apply the general online checkout database migration and reload.</p>}
-    {error && <p id="online-ordering-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
+    <p className="mt-3 text-sm text-muted-foreground">When open, customers can place delivery orders from the public menu. Event Ordering will close automatically.</p>
+    {!available && <p role="alert" className="mt-3 text-sm text-muted-foreground">Delivery ordering settings are unavailable. Apply the delivery checkout database migration and reload.</p>}
+    {error && <p id="delivery-ordering-error" role="alert" className="mt-3 text-sm text-destructive">{error}</p>}
   </section>;
 }
 

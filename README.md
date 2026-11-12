@@ -48,7 +48,8 @@ guide for pricing rules and setup.
 
 Apply database upgrade [052](supabase/sql/052_public_menu_visibility.sql) before deploying
 the public menu visibility controls. **Show Public Menu** is available in **Admin >
-Site Settings** and on the dashboard between Online Ordering and Maintenance.
+Site Settings**. The dashboard and Site Settings provide separate **Event
+Ordering** and **Delivery Ordering** controls; opening one closes the other.
 Turning it off hides homepage menu sections, the public menu page and its header,
 site-menu and footer links. Event menus and QR ordering remain available with their
 normal access, ordering and stock checks. The default is on; this is a display
