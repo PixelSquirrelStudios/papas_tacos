@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { useFormStatus } from 'react-dom';
-import { ArrowUpRight, CalendarDays, Clock3, LayoutDashboard, ListOrdered, LoaderCircle, LogOut, MessageSquare, Package, Settings2, ShoppingBag, SlidersHorizontal, Tags, UserRound, UtensilsCrossed } from 'lucide-react';
+import { ArrowUpRight, CalendarDays, Clock3, LayoutDashboard, ListOrdered, LoaderCircle, LogOut, MessageSquare, Package, Settings2, ShoppingBag, SlidersHorizontal, Star, Tags, UserRound, UtensilsCrossed } from 'lucide-react';
 import { Brand } from '@/components/brand';
 import { Sidebar, SidebarContent, SidebarFooter, SidebarGroup, SidebarGroupContent, SidebarGroupLabel, SidebarHeader, SidebarMenu, SidebarMenuButton, SidebarMenuItem, useSidebar } from '@/components/ui/sidebar';
 import { signOut } from '@/app/auth/actions';
@@ -30,6 +30,7 @@ export function AdminSidebar() {
       { href: '/admin/slots', label: 'Pickup Slots', icon: Clock3 },
     ] },
     { label: 'Catalogue', links: [
+      { href: '/admin/homepage-menu', label: 'Homepage Menu', icon: Star },
       { href: '/admin/menu', label: 'Menu Items', icon: UtensilsCrossed },
       { href: '/admin/menu-sets', label: 'Menu Sets', icon: ListOrdered },
       { href: '/admin/categories', label: 'Categories', icon: Tags },

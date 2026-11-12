@@ -12,7 +12,8 @@ const timestamp = z.string().datetime({ offset: true });
 export const orderSummarySchema = z.object({
   id: z.guid(), order_number: z.number().int().positive(), status: z.enum(orderStatuses),
   payment_method: z.enum(['card', 'cash']), payment_status: z.enum(['unpaid', 'paid', 'partially_refunded', 'refunded', 'failed']),
-  total_pence: amount, created_at: timestamp, pickup_starts_at: timestamp, pickup_ends_at: timestamp,
+  event_id: z.guid().nullable(), total_pence: amount, created_at: timestamp,
+  pickup_starts_at: timestamp.nullable(), pickup_ends_at: timestamp.nullable(),
   pickup_location: z.object({
     service_mode: serviceModeSchema.optional(), location_number: z.string().optional(), number_plate: z.string().optional(),
     event_title: z.string().optional(), venue_name: z.string().optional(), address_line_1: z.string().optional(),
@@ -34,7 +35,7 @@ export type OrderSummary = z.infer<typeof orderSummarySchema>;
 export type CustomerOrder = z.infer<typeof orderDetailSchema>;
 export type OrderFilter = 'all' | 'active' | 'past';
 export const ordersPerPage = 10;
-const summarySelect = 'id,order_number,status,payment_method,payment_status,total_pence,created_at,pickup_starts_at,pickup_ends_at,pickup_location';
+const summarySelect = 'id,order_number,status,payment_method,payment_status,total_pence,created_at,event_id,pickup_starts_at,pickup_ends_at,pickup_location';
 
 export function orderPage(value: unknown) {
   const page = typeof value === 'string' && /^\d+$/.test(value) ? Number(value) : 1;
@@ -69,7 +70,9 @@ export function orderDate(value: string) {
 }
 
 export function pickupWindow(order: OrderSummary) {
+  if (!order.event_id) return 'Online Order';
   if (serviceMode(order.pickup_location) !== 'pickup') return `${deliveryLabel(order.pickup_location)} - delivery as soon as possible`;
+  if (!order.pickup_starts_at || !order.pickup_ends_at) return 'Pickup time unavailable';
   const end = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }).format(new Date(order.pickup_ends_at));
   return `${orderDate(order.pickup_starts_at)} - ${end}`;
 }

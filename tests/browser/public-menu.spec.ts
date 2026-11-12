@@ -35,9 +35,12 @@ test('public menu visibility updates live in both directions while event menus s
         }, removeChannel() {}});`,
         '@/lib/catalogue/data': `export async function getSettings() { return {public_menu_enabled:window.__menuEnabled}; }
           export async function getCatalogue() { return {available:true,categories:[],items:[]}; }
-          export async function getEvents() { return {available:true,events:[{id:'market',menu_set_id:null}]}; }`,
-        '@/components/catalogue/menu-browser': 'export function MenuBrowser() { return <p>Menu products</p>; }',
-        '@/components/bag/bag-provider': 'export function MenuOrderingProvider({children}) { return children; }',
+          export async function getEvents() {
+            const walkUp = new URLSearchParams(location.search).get('mode') === 'walkup';
+            return {available:true,events:[{id:'market',title:'Friday Market',service_mode:walkUp ? 'walkup' : 'pickup',menu_set_id:null}]};
+          }`,
+        '@/components/catalogue/menu-browser': `export function MenuBrowser({readOnly}) { return <><p>Menu products</p><p>{readOnly ? 'Display only' : 'Ordering available'}</p></>; }`,
+        '@/components/bag/bag-provider': `export function MenuOrderingProvider({children,readOnly}) { return <div data-read-only={readOnly ? 'true' : 'false'}>{children}</div>; }`,
       };
       builder.onResolve({ filter: /.*/ }, (args) => Object.hasOwn(modules, args.path) ? { path: args.path, namespace: 'fixture' } : undefined);
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => ({ contents: modules[args.path], loader: 'tsx', resolveDir: process.cwd() }));
@@ -75,4 +78,11 @@ test('public menu visibility updates live in both directions while event menus s
   await expect.poll(() => page.evaluate(() => Reflect.get(window, '__menuRenders'))).toBeGreaterThan(renders);
   await expect(page.getByText('Menu products', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: 'Public Menu Unavailable' })).toHaveCount(0);
+
+  await page.goto('/menu?event=market&mode=walkup');
+  const menuHeading = page.getByRole('heading', { name: 'Available Menu for Friday Market' });
+  await expect(menuHeading).toBeVisible();
+  await expect(menuHeading).toHaveClass(/text-4xl/);
+  await expect(page.getByText('Display only', { exact: true })).toBeVisible();
+  await expect(page.locator('[data-read-only="true"]')).toBeVisible();
 });

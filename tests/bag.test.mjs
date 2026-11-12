@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { lineKey, mergeLine, parseBag, quoteLine } from '../src/lib/bag.ts';
-import { allergyNotice, canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, publicImageUrl } from '../src/lib/catalogue/format.ts';
+import { allergyNotice, canOrder, choiceLabel, eventOrderingNotice, eventTime, pickupState, publicImageUrl, servingWindow } from '../src/lib/catalogue/format.ts';
 import { displayOrder, sectionOrder } from '../src/lib/catalogue/ordering.ts';
 import { descriptionHtml, descriptionText } from '../src/lib/catalogue/rich-text.ts';
 import { expandModifierGroups } from '../src/lib/catalogue/modifiers.ts';
@@ -192,6 +192,9 @@ test('menu descriptions preserve paragraphs and formatting while stripping unsaf
   }
   assert.equal(descriptionHtml('<p onclick="alert(1)" style="color:red">Safe</p><a href="javascript:alert(1)">Link</a>'), '<p>Safe</p><a>Link</a>');
   assert.equal(descriptionHtml('<a href="https://example.com" title="Menu">Link</a>'), '<a href="https://example.com" title="Menu">Link</a>');
+  assert.equal(descriptionHtml('<a href="https://example.com" target="_blank" rel="opener">Link</a>'), '<a href="https://example.com" target="_blank" rel="noopener noreferrer">Link</a>');
+  assert.equal(descriptionHtml('<a href="https://example.com" target="_self" rel="opener">Link</a>'), '<a href="https://example.com">Link</a>');
+  assert.equal(descriptionHtml('<a href="https://example.com" target="_top">Link</a>'), '<a href="https://example.com">Link</a>');
   assert.equal(descriptionHtml('<h2>Our Story</h2><h3>Street Food</h3><blockquote>Made fresh.</blockquote>'), '<h2>Our Story</h2><h3>Street Food</h3><blockquote>Made fresh.</blockquote>');
   assert.equal(descriptionText('<h2>Our Story</h2><p>Made fresh.</p>'), 'Our Story Made fresh.');
   assert.equal(descriptionHtml(descriptionHtml('Original\n\nParagraph')), descriptionHtml('Original\n\nParagraph'));
@@ -264,6 +267,20 @@ test('ordering requires an open business and an active published event ordering 
   assert.equal(canOrder([late], { ordering_status: 'open' }, now), true);
   assert.equal(canOrder([late], { ordering_status: 'open' }, Date.parse(late.orders_close_at)), false);
   assert.equal(canOrder([{ ...event, orders_close_at: '2026-09-23T11:30:00Z' }], { ordering_status: 'open' }, now), false);
+});
+
+test('walk-up events show event hours and never allow online ordering', () => {
+  const event = {
+    service_mode: 'walkup', pickup_enabled: false, ordering_status: 'open',
+    starts_at: '2030-09-25T17:00:00Z', ends_at: '2030-09-25T21:00:00Z',
+    orders_open_at: '2030-09-25T16:00:00Z', orders_close_at: '2030-09-25T22:00:00Z',
+  };
+  assert.deepEqual(servingWindow(event), { opens: event.starts_at, closes: event.ends_at });
+  assert.equal(pickupState(event, null), 'Walk-Up Only - visit the truck to order');
+  const notice = eventOrderingNotice(event, null);
+  assert.equal(notice.title, 'Walk-Up Only');
+  assert.match(notice.message, /visit the truck to order and buy on site/);
+  assert.equal(canOrder([{ ...event, pickup_enabled: true }], { ordering_status: 'open' }, Date.parse('2030-09-25T18:00:00Z')), false);
 });
 
 test('ordering status is independent of maintenance access and still respects event gates', () => {

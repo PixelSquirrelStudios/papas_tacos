@@ -49,10 +49,10 @@ export async function adminRows(table: string, query: Record<string, string> = {
 
 export async function getDashboardData(): Promise<DashboardSnapshot> {
   const [orders, menu, events, settings] = await Promise.all([
-    adminRows('orders', { select: 'id,order_number,customer_name,status,total_pence,pickup_starts_at,pickup_location', status: 'in.(pending_payment,ordered,preparing,ready_for_pickup)', order: 'pickup_starts_at.asc,id.asc' }),
+    adminRows('orders', { select: 'id,order_number,customer_name,status,total_pence,event_id,pickup_starts_at,pickup_location', status: 'in.(pending_payment,ordered,preparing,ready_for_pickup)', order: 'pickup_starts_at.asc.nullslast,created_at.asc' }),
     adminRows('menu_items', { select: 'id,is_published,is_available', archived_at: 'is.null' }),
     adminRows('events', { select: 'id,title,starts_at,venue_name,address_line_1,address_line_2,town,postcode', ends_at: `gte.${new Date().toISOString()}`, order: 'starts_at.asc,id.asc' }),
-    adminRows('business_settings', { select: 'ordering_status,ordering_message,maintenance_enabled,public_menu_enabled,updated_at', order: 'singleton.asc' }),
+    adminRows('business_settings', { select: 'ordering_status,online_ordering_enabled,ordering_message,maintenance_enabled,public_menu_enabled,updated_at', order: 'singleton.asc' }),
   ]);
   return dashboardSnapshotSchema.parse({ orders, menu, events, settings: settings[0] });
 }
@@ -62,6 +62,9 @@ export function adminError(error: unknown) {
     if (['42703', 'PGRST204'].includes(error.code) && /group_type/i.test(error.message)) return 'Ingredient removals require database upgrade 054_removal_modifiers.sql after 053. Apply it, then refresh.';
     if (error.code === 'PGRST202' && /admin_delete_menu_item/i.test(error.message)) return 'Confirmed menu-item deletion requires database upgrade 060_admin_delete_menu_items.sql after 059. Apply it, then refresh.';
     if (['42703', 'PGRST204'].includes(error.code) && /public_menu_enabled/i.test(error.message)) return 'Public menu visibility requires database upgrade 052_public_menu_visibility.sql. Apply it, then refresh.';
+    if (['42703', 'PGRST204'].includes(error.code) && /homepage_(papas_choice|crowd_favourite)_ids/i.test(error.message)) return 'Homepage menu curation requires database upgrade 063_homepage_featured_menu.sql. Apply it, then refresh.';
+    if (['42703', 'PGRST204'].includes(error.code) && /homepage_hero_(eyebrow|description)/i.test(error.message)) return 'Editable homepage hero copy requires database upgrade 065_homepage_hero_copy.sql. Apply it, then refresh.';
+    if (['42703', 'PGRST204'].includes(error.code) && /online_ordering_enabled/i.test(error.message)) return 'General online checkout requires database upgrade 067_general_online_checkout.sql after 066. Apply it, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /linked_menu_item|linked_quantity|pricing_mode|item_kind|show_standalone/i.test(error.message)) return 'Linked product choices require database upgrade 051_linked_menu_items.sql after 050. Apply it during an ordering maintenance window, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /inventory|event_stock|restock_order/i.test(error.message)) return 'Stock management requires database upgrade 050_inventory.sql after 049. Follow the stock deployment checklist before applying it, then refresh.';
     if (['42P01', '42703', 'PGRST202', 'PGRST204', 'PGRST205'].includes(error.code) && /menu_set|admin_save_menu_set/i.test(error.message)) return 'Menu sets require database upgrade 048_menu_sets.sql after 047. Apply it in supabase/sql, then refresh.';
@@ -76,7 +79,7 @@ export function adminError(error: unknown) {
     if (error.code === '23505') return 'That slug or pickup time already exists. Choose a unique value.';
     if (error.code === '23514') return 'The database rejected these values. Check dates, prices and limits.';
     if (error.code === '42501' || error.code === 'AUTH') return 'Administrator access is required. Sign in again.';
-    if (['P0001', 'LIMIT', 'CONFLICT'].includes(error.code)) return error.message;
+    if (['P0001', 'LIMIT', 'CONFLICT', 'DATA'].includes(error.code)) return error.message;
   }
   return 'Unable to complete the request. Check your connection and try again.';
 }

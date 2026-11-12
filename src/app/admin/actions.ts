@@ -7,7 +7,7 @@ import { adminError, adminRequest, AdminDataError } from '@/lib/admin/data';
 import { getResource, resourceSchema } from '@/lib/admin/resources';
 import { sendOrderStatusEmails } from '@/lib/payments/send-status-emails';
 
-export type AdminResult = { ok: boolean; error?: string; warning?: string; fields?: Record<string, string>; id?: string };
+export type AdminResult = { ok: boolean; error?: string; warning?: string; fields?: Record<string, string>; id?: string; updatedAt?: string };
 const identity = z.guid();
 const version = z.iso.datetime({ offset: true });
 
@@ -119,6 +119,17 @@ export async function setOrderingStatus(status: string, updatedAt: string): Prom
   try {
     const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { ordering_status: status });
     if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Ordering settings changed. The latest status will be loaded; try again.');
+    refresh('settings');
+    return { ok: true };
+  } catch (error) { return { ok: false, error: adminError(error) }; }
+}
+
+export async function setOnlineOrderingEnabled(enabled: boolean, updatedAt: string): Promise<AdminResult> {
+  await requireAdmin();
+  if (!z.boolean().safeParse(enabled).success || !version.safeParse(updatedAt).success) return { ok: false, error: 'Invalid online ordering settings.' };
+  try {
+    const result = await adminRequest('business_settings', { singleton: 'eq.true', updated_at: `eq.${updatedAt}` }, 'PATCH', { online_ordering_enabled: enabled });
+    if (result.length !== 1) throw new AdminDataError('CONFLICT', 'Online ordering settings changed. The latest status will be loaded; try again.');
     refresh('settings');
     return { ok: true };
   } catch (error) { return { ok: false, error: adminError(error) }; }

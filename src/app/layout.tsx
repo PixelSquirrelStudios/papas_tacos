@@ -6,7 +6,7 @@ import { SiteUpdates } from '@/components/site-updates';
 import './globals.css';
 
 export const metadata: Metadata = {
-  title: { default: "Papa's Tacos | Mexican Street Food", template: "%s | Papa's Tacos" },
+  title: { default: "Papa's Tacos | Mexican-Inspired Street Food with a Global Twist", template: "%s | Papa's Tacos" },
   description: "Mexican soul. Street food spirit. Welcome to Papa's Tacos.",
 };
 

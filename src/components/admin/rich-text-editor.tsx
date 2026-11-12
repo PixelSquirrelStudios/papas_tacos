@@ -32,7 +32,7 @@ export function RichTextEditor({ id, value, onChange, onBlur, disabled, label = 
       skin: 'oxide',
       content_css: 'default',
       iframe_aria_text: `${label} editor`,
-      valid_elements: full ? 'p,h2,h3,h4,br,strong/b,em/i,u,s,ul,ol,li,blockquote,a[href|title]' : 'p,br,strong/b,em/i,u,s,ul,ol,li,blockquote,a[href|title]',
+      valid_elements: full ? 'p,h2,h3,h4,br,strong/b,em/i,u,s,ul,ol,li,blockquote,a[href|title|target|rel]' : 'p,br,strong/b,em/i,u,s,ul,ol,li,blockquote,a[href|title|target|rel]',
       formats: { underline: { inline: 'u', exact: true }, strikethrough: { inline: 's', exact: true } },
       content_style: 'body { font-family: sans-serif; font-size: 14px; line-height: 1.6; } p { margin: 0 0 12px; }',
     }}

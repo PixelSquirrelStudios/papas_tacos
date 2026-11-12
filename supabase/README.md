@@ -148,11 +148,50 @@ to true, and refreshes the admin-only settings view to include the new column.
 It is repeatable and preserves an already saved visibility setting.
 
 Use **Show Public Menu** in **Admin > Site Settings**, or the dashboard switch
-between **Online Ordering** and **Maintenance Mode**. Turning it off hides homepage
+between **Pickup Ordering** and **Maintenance Mode**. Turning it off hides homepage
 menu sections, public menu navigation (including the footer) and the generic
 `/menu` page. Event-specific `/menu?event=<id>` pages and QR ordering retain their
 existing access, availability, pricing and stock checks. It does not unpublish
 products, cancel orders or prevent public reads of published catalogue data.
+
+### Homepage featured menu
+
+Apply [063_homepage_featured_menu.sql](sql/063_homepage_featured_menu.sql) after
+062, then apply [064_homepage_featured_any_menu_item.sql](sql/064_homepage_featured_any_menu_item.sql)
+before deploying the homepage curation editor. The migrations add two ordered
+lists to site settings, each limited to three distinct published items. Migration
+063 seeds existing homepage picks where possible; items already selected for
+Papa's Choice are not duplicated in Crowd Favourites. Migration 064 allows any
+published item in a published category to be selected. The existing per-item
+choice flags remain available for menu labels and do not control homepage
+placement.
+
+Use **Admin > Homepage Menu** to select and reorder the two lists. Draft, archived,
+and items in unpublished categories cannot be selected. A menu item can appear
+in only one homepage section. The lists become visible on the homepage after the
+public menu is enabled.
+
+### Homepage hero copy
+
+Apply [065_homepage_hero_copy.sql](sql/065_homepage_hero_copy.sql) after 064 and
+before deploying the editable homepage hero fields. It adds the hero eyebrow and
+description to site settings with defaults matching the current homepage copy and
+refreshes the admin settings view. Use **Admin > Site Settings** to edit the text
+above and below the Papa's Tacos heading.
+
+### General online ordering
+
+Apply [066_separate_delivery_ordering.sql](sql/066_separate_delivery_ordering.sql)
+after 065, then apply
+[067_general_online_checkout.sql](sql/067_general_online_checkout.sql) before
+deploying the general checkout flow. Migration 067 renames the separate control to
+Online Ordering and enables card checkout from the public menu without an event or
+pickup time. These orders have no event association and use unallocated global stock;
+event-only inventory remains unavailable to public orders.
+
+Event-specific menus continue to carry their event through the bag and checkout and
+retain their event menu, time-window, pickup-slot and private QR checks. This general
+online flow does not collect a delivery address or implement home delivery.
 
 ### Missing customer profile repair
 
@@ -301,7 +340,14 @@ Apply [047_independent_ordering_times.sql](sql/047_independent_ordering_times.sq
 It removes the event-end cap from explicit serving/ordering windows, aligns checkout, pickup schedules,
 availability and private QR expiry with those windows, and preserves blank-field event-time defaults.
 Service checkout deadlines follow the explicit close rather than the event end.
-It is repeatable. Reapply 045, 046 then 047 after rerunning earlier function migrations.
+It is repeatable. Reapply 045, 046, 047 and 062 after rerunning earlier function migrations.
+
+After upgrades through [061_delete_menu_items_with_inventory_history.sql](sql/061_delete_menu_items_with_inventory_history.sql),
+apply [062_walk_up_only_events.sql](sql/062_walk_up_only_events.sql) for **Walk-Up Only** events. This
+service type keeps event details public while preventing online and pickup checkout, including at the
+database order guard. Select **Walk-Up Only** in Admin > Events; customers must visit the truck to order.
+Apply [063_homepage_featured_menu.sql](sql/063_homepage_featured_menu.sql) after 062 to configure the
+homepage's two curated lists in **Admin > Homepage Menu**.
 
 For maintenance controls, also apply
 [025_business_settings_maintenance.sql](sql/025_business_settings_maintenance.sql) and

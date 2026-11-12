@@ -36,11 +36,13 @@ export function eventTime(value: string) {
   return new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' }).format(new Date(value));
 }
 
-export function servingWindow(event: Pick<TruckEvent, 'starts_at' | 'ends_at' | 'orders_open_at' | 'orders_close_at'>) {
+export function servingWindow(event: Pick<TruckEvent, 'starts_at' | 'ends_at' | 'orders_open_at' | 'orders_close_at' | 'service_mode'>) {
+  if (event.service_mode === 'walkup') return { opens: event.starts_at, closes: event.ends_at };
   return { opens: event.orders_open_at || event.starts_at, closes: event.orders_close_at || event.ends_at };
 }
 
 export function pickupState(event: TruckEvent, settings: Settings | null, now = Date.now()) {
+  if (event.service_mode === 'walkup') return 'Walk-Up Only - visit the truck to order';
   if (event.service_mode && event.service_mode !== 'pickup') {
     const label = event.service_mode === 'table' ? 'Table Service' : 'Car Service';
     if (canOrder([event], settings, now)) return `${label} Orders Open`;
@@ -66,11 +68,12 @@ export function canOrder(events: TruckEvent[], settings: Settings | null, now = 
     const window = servingWindow(event);
     const opens = Date.parse(window.opens);
     const closes = Date.parse(window.closes);
-    return (!event.is_private || event.ordering_access === true) && event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
+    return event.service_mode !== 'walkup' && (!event.is_private || event.ordering_access === true) && event.pickup_enabled && event.ordering_status === 'open' && now >= opens && now < closes;
   });
 }
 
 export function eventOrderingNotice(event: TruckEvent, settings: Settings | null, now = Date.now()) {
+  if (event.service_mode === 'walkup') return { title: 'Walk-Up Only', message: 'Online and pickup ordering are not available for this event. Please visit the truck to order and buy on site.' };
   const window = servingWindow(event);
   if (!settings) return { title: 'Ordering Unavailable', message: 'We cannot check ordering availability right now. Please try again shortly.' };
   if (!event.pickup_enabled) return { title: 'Ordering Unavailable', message: 'Online ordering is not available for this event. Please speak to our team.' };

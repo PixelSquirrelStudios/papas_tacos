@@ -33,7 +33,7 @@ test('per-taco customisation snapshots keep their taco grouping without exposing
 const orderId = '00000000-0000-4000-8000-000000000001';
 const customerId = '00000000-0000-4000-8000-000000000002';
 const fixtureOrder = {
-  id: orderId, order_number: 1234, customer_id: customerId, customer_name: 'Customer', customer_email: 'customer@example.test',
+  id: orderId, order_number: 1234, customer_id: customerId, event_id: orderId, customer_name: 'Customer', customer_email: 'customer@example.test',
   customer_phone: '07000000000', customer_note: '', created_at: new Date().toISOString(), status: 'ordered', payment_method: 'card', payment_status: 'paid',
   subtotal_pence: 1200, service_fee_pence: 50, packaging_fee_pence: 25, total_pence: 1275,
   pickup_starts_at: '2026-09-25T17:00:00Z', pickup_ends_at: '2026-09-25T17:15:00Z', pickup_location: { venue_name: 'Test Market', town: 'Cardiff' },
@@ -153,6 +153,7 @@ test('service checkout validates dedicated location fields and does not require 
   const input = { key: orderId, eventId: orderId, locationNumber: '27', numberPlate: 'ab12 cde', name: 'Customer', phone: '07000000000', note: '', expectedTotal: 800, lines: [{ itemId: orderId, optionIds: [], quantity: 1 }] };
   assert.equal(checkoutSchema.parse(input).numberPlate, 'AB12 CDE');
   for (const invalid of [{ ...input, eventId: undefined }, { ...input, locationNumber: '' }, { ...input, locationNumber: '<script>' }, { ...input, numberPlate: 'x'.repeat(21) }]) assert.equal(checkoutSchema.safeParse(invalid).success, false);
+  assert.equal(checkoutSchema.safeParse({ ...input, eventId: undefined, locationNumber: undefined, numberPlate: undefined }).success, true);
 });
 
 test('status delivery retries identical payloads and blocks later stages after failure', async () => {
@@ -281,7 +282,7 @@ test('confirmation delivery retries the same snapshot and suppresses duplicates 
 });
 
 test('checkout input rejects client prices, invalid choices and oversized bags', () => {
-  const input = { key: orderId, slotId: orderId, name: 'Customer', phone: '07000000000', note: '', expectedTotal: 1275, lines: [{ itemId: orderId, optionIds: [], quantity: 2 }] };
+  const input = { key: orderId, eventId: orderId, slotId: orderId, name: 'Customer', phone: '07000000000', note: '', expectedTotal: 1275, lines: [{ itemId: orderId, optionIds: [], quantity: 2 }] };
   assert.equal(checkoutSchema.safeParse(input).success, true);
   for (const invalid of [{ ...input, subtotal: 1 }, { ...input, expectedTotal: -1 }, { ...input, lines: [] }, { ...input, lines: Array(51).fill(input.lines[0]) }, { ...input, lines: [{ ...input.lines[0], quantity: 100 }] }]) assert.equal(checkoutSchema.safeParse(invalid).success, false);
 });
@@ -297,12 +298,15 @@ test('checkout presents authoritative pickup statuses and passes pickup failures
       '@/components/bag/checkout-form': 'export const CheckoutForm = "checkout-fixture";',
       '@/lib/payments/pickup': 'export async function getPickupChoices() { return globalThis.__slotTest; }',
     });
-    const page = await CheckoutPage();
+    const page = await CheckoutPage({ searchParams: Promise.resolve({ event: orderId }) });
     assert.deepEqual(page.props.children.at(-1).props.slots, state.slots);
+    const onlinePage = await CheckoutPage({ searchParams: Promise.resolve({}) });
+    assert.deepEqual(onlinePage.props.children.at(-1).props.slots, []);
+    assert.equal(onlinePage.props.children.at(-1).props.eventId, '');
     state.slots = [];
-    assert.deepEqual((await CheckoutPage()).props.children.at(-1).props.slots, []);
+    assert.deepEqual((await CheckoutPage({ searchParams: Promise.resolve({ event: orderId }) })).props.children.at(-1).props.slots, []);
     state.error = true;
-    assert.equal((await CheckoutPage()).props.children.at(-1).props.initialSlotError, true);
+    assert.equal((await CheckoutPage({ searchParams: Promise.resolve({ event: orderId }) })).props.children.at(-1).props.initialSlotError, true);
   } finally { delete globalThis.__slotTest; }
 });
 
@@ -334,7 +338,7 @@ test('checkout uses trusted order prices and a stable Stripe idempotency key', a
           retrieve: async () => ({status: 'open', url: 'https://checkout.stripe.com/existing'}),
         } } });`,
     });
-    const input = { key: orderId, slotId: orderId, name: 'Customer', phone: '07000000000', note: '', expectedTotal: 1275, lines: [{ itemId: orderId, optionIds: [], quantity: 2 }] };
+    const input = { key: orderId, eventId: orderId, slotId: orderId, name: 'Customer', phone: '07000000000', note: '', expectedTotal: 1275, lines: [{ itemId: orderId, optionIds: [], quantity: 2 }] };
     assert.equal((await startCheckout(input)).url, 'https://checkout.stripe.com/test');
     assert.equal(state.calls[0][1].payload.email, fixtureOrder.customer_email);
     assert.equal(state.calls[0][1].customer_uuid, customerId);

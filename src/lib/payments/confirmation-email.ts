@@ -7,8 +7,9 @@ import { deliveryLabel, serviceMode } from '../service-ordering.ts';
 export type OrderEmailStage = 'ordered' | 'preparing' | 'ready_for_pickup' | 'collected' | 'cancelled';
 
 export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmailBrand, stage: OrderEmailStage = 'ordered') {
+  const onlineOrder = !order.event_id;
   const mode = serviceMode(order.pickup_location);
-  const service = mode !== 'pickup';
+  const service = !onlineOrder && mode !== 'pickup';
   const messages = {
     ordered: { subject: 'confirmed for pickup', eyebrow: 'Payment received', heading: 'Your pickup order is confirmed.', intro: 'We have received your order and payment.', note: 'This confirms your order, not that it is ready. Please collect at your selected pickup time.' },
     preparing: { subject: 'is being prepared', eyebrow: 'In the kitchen', heading: 'We are preparing your order.', intro: 'Your food is being freshly prepared.', note: 'We will email you again when your order is ready for pickup.' },
@@ -20,14 +21,20 @@ export function orderConfirmationEmail(order: CustomerOrder, brand: EnquiryEmail
     ? { subject: 'confirmed for delivery', eyebrow: 'Payment received', heading: 'Your order is confirmed.', intro: 'We have received your order and payment.', note: `We will bring your food to ${deliveryLabel(order.pickup_location)} as soon as possible. Please remain at your assigned location.` }
     : service && stage === 'collected'
       ? { ...messages.collected, subject: 'complete - thank you!', intro: 'Your order has been delivered. We hope you enjoyed every bite.' }
-      : messages[stage];
-  const collectionPrompt = service ? `${deliveryLabel(order.pickup_location)} - Your order reference` : ['ordered', 'preparing', 'ready_for_pickup'].includes(stage) ? 'Show this order number to our staff when collecting.' : 'Your order reference';
-  const fulfilmentHeading = service ? 'Delivery details' : 'Pickup details';
+      : onlineOrder ? ({
+        ordered: { subject: 'confirmed as an online order', eyebrow: 'Payment received', heading: 'Your online order is confirmed.', intro: 'We have received your order and payment.', note: 'We will update your order status as it is prepared.' },
+        preparing: { subject: 'is being prepared', eyebrow: 'In the kitchen', heading: 'We are preparing your online order.', intro: 'Your food is being freshly prepared.', note: 'Check your order page for status updates.' },
+        ready_for_pickup: { subject: 'is ready', eyebrow: 'Order update', heading: 'Your online order is ready.', intro: 'Your order is ready.', note: 'Check your order page for the latest updates.' },
+        collected: { subject: 'is complete - thank you!', eyebrow: 'Thanks for choosing us', heading: 'Your order is complete.', intro: 'We hope you enjoyed every bite.', note: 'Enjoyed your meal? Please leave us a review on Facebook or share your visit on Instagram. Your feedback helps others find the truck.' },
+        cancelled: messages.cancelled,
+      })[stage] : messages[stage];
+  const collectionPrompt = onlineOrder ? 'Your order reference' : service ? `${deliveryLabel(order.pickup_location)} - Your order reference` : ['ordered', 'preparing', 'ready_for_pickup'].includes(stage) ? 'Show this order number to our staff when collecting.' : 'Your order reference';
+  const fulfilmentHeading = onlineOrder ? 'Online order' : service ? 'Delivery details' : 'Pickup details';
   const reference = `Order #${order.order_number}`;
   const orderUrl = new URL('/account', brand.siteUrl);
   orderUrl.search = new URLSearchParams({ view: 'orders', order: order.id }).toString();
-  const address = pickupAddress(order.pickup_location);
-  const window = pickupWindow(order);
+  const address = onlineOrder ? '' : pickupAddress(order.pickup_location);
+  const window = onlineOrder ? 'No event or pickup time selected.' : pickupWindow(order);
   const totalLabel = order.payment_status === 'unpaid' ? 'Total' : 'Total paid';
   const totals = ([['Items and extras', order.subtotal_pence], ['Service fee', order.service_fee_pence], ['Packaging', order.packaging_fee_pence], [totalLabel, order.total_pence]] as const).filter(([label, value]) => value > 0 || label === 'Items and extras' || label === totalLabel);
   const itemsText = order.order_items.map((item) => `${item.quantity} x ${item.item_name} - ${money(item.line_total_pence)}\n${orderChoicesText(item.order_item_modifiers)}`).join('\n');

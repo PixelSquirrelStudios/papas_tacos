@@ -2,6 +2,8 @@ import { z } from 'zod';
 
 export const serviceModeSchema = z.enum(['pickup', 'table', 'car']);
 export type ServiceMode = z.infer<typeof serviceModeSchema>;
+export const eventServiceModeSchema = z.enum(['pickup', 'table', 'car', 'walkup']);
+export type EventServiceMode = z.infer<typeof eventServiceModeSchema>;
 export const locationNumberSchema = z.string().trim().min(1).max(40).regex(/^[a-zA-Z0-9 /-]+$/, 'Use letters, numbers, spaces, / or -.');
 export const numberPlateSchema = z.string().trim().max(20).regex(/^[a-zA-Z0-9 -]*$/, 'Enter a valid number plate.').transform((value) => value.toUpperCase());
 
@@ -18,7 +20,9 @@ export function deliveryLabel(location: unknown) {
   return `${mode === 'table' ? 'Table' : 'Car'} ${number}${plate ? ` / ${plate}` : ''}`;
 }
 
-export function orderStatusLabel(status: string, location: unknown) {
+export function orderStatusLabel(status: string, location: unknown, onlineOrder = false) {
+  if (onlineOrder && status === 'ready_for_pickup') return 'Ready';
+  if (onlineOrder && status === 'collected') return 'Complete';
   if (serviceMode(location) !== 'pickup' && status === 'collected') return 'Complete';
   return status.replaceAll('_', ' ').replace(/\b[a-z]/g, (letter) => letter.toUpperCase());
 }

@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import type { Catalogue } from './types.ts';
+import type { Catalogue, CatalogueItem } from './types.ts';
 
 export const menuSetSchema = z.object({ id: z.guid(), name: z.string(), is_default: z.boolean(), updated_at: z.string() });
 export const menuSectionSchema = z.object({ id: z.guid(), menu_set_id: z.guid(), title: z.string(), sort_order: z.number() });
@@ -26,6 +26,15 @@ export function menuCatalogue(source: Catalogue, menuSetId?: string | null): Cat
     ...source, items, stockItems: source.stockItems ?? source.items,
     categories: orderedSections.map((section) => ({ id: section.id, name: section.title, slug: section.id, sort_order: section.sort_order })),
   };
+}
+
+export function homepageFeaturedItems(source: Catalogue, currentItems: CatalogueItem[], itemIds: string[]): CatalogueItem[] {
+  const publishedItemIds = new Set(source.items.map((item) => item.id));
+  const currentItemsById = new Map(currentItems.map((item) => [item.id, item]));
+  return itemIds.slice(0, 3).flatMap((id) => {
+    const item = currentItemsById.get(id);
+    return publishedItemIds.has(id) && item ? [item] : [];
+  });
 }
 
 export const menuSetInputSchema = z.object({

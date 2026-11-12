@@ -26,6 +26,7 @@ async function database({ linked = true, exactNames = true, optionCharges = true
   `);
   for (const file of (await readdir(sqlDirectory)).filter(file => file.endsWith('.sql')).sort()) {
     if (!linked && ['051_linked_menu_items.sql', '054_removal_modifiers.sql', '055_exact_modifier_names.sql', '056_optional_option_charges.sql'].includes(file)) continue;
+    if (!linked && ['063_homepage_featured_menu.sql', '064_homepage_featured_any_menu_item.sql'].includes(file)) continue;
     if (!linked && file === '060_admin_delete_menu_items.sql') continue;
     if (!exactNames && file === '055_exact_modifier_names.sql') continue;
     if ((!optionCharges || !exactNames) && file === '056_optional_option_charges.sql') continue;
@@ -139,6 +140,76 @@ async function fixture(db) {
 const line = (itemId, optionIds = [], quantity = 1) => ({ itemId, optionIds, quantity });
 const stocks = async (db, order) => (await db.query(
   'select menu_item_id,quantity,state from public.inventory_order_stock where order_id=$1 order by menu_item_id', [order.id])).rows;
+
+test('general online checkout uses only unallocated global stock and finalizes without event context', async () => {
+  const db = await database();
+  try {
+    const f = await fixture(db);
+    const item = await f.item('Online Taco', 500);
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'configure',0,0,'Configure','global','each')", [item]));
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'receive',10,1,'Opening receipt')", [item]));
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,$2,'allocate',4,null,'Event allocation')", [item, f.event]));
+
+    const payload = {
+      name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '',
+      expectedTotal: 3000, lines: [line(item, [], 6)],
+    };
+    await assert.rejects(f.reserve(payload), /Online ordering unavailable/);
+    assert.equal((await db.query('select online_ordering_enabled from public.business_settings')).rows[0].online_ordering_enabled, false);
+
+    await db.exec("update public.business_settings set online_ordering_enabled=true,ordering_status='closed'");
+    await db.query("update public.events set ordering_status='closed' where id=$1", [f.event]);
+    await assert.rejects(f.reserve(f.body([line(item)], 500)), /Ordering unavailable/);
+    assert.equal((await db.query('select available_quantity from public.get_event_stock(null,null) where menu_item_id=$1', [item])).rows[0].available_quantity, 6);
+    const order = await f.reserve(payload);
+    assert.equal(order.event_id, null);
+    assert.equal(order.pickup_starts_at, null);
+    assert.equal(order.pickup_ends_at, null);
+    assert.equal(order.pickup_location.event_title, 'Online Order');
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: item, quantity: 6, state: 'held' }]);
+    assert.equal((await db.query('select available_quantity from public.get_event_stock(null,null) where menu_item_id=$1', [item])).rows[0].available_quantity, 0);
+    assert.equal((await db.query('select available_quantity from public.get_event_stock($1,null) where menu_item_id=$2', [f.event, item])).rows[0].available_quantity, 4);
+    const version = (await db.query('select version from public.inventory_items where menu_item_id=$1', [item])).rows[0].version;
+    await assert.rejects(role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'correct',9,$2,'Correction')", [item, version])), /allocations or online stock holds uncovered/);
+    await assert.rejects(role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'waste',1,$2,'Waste')", [item, version])), /allocations or online stock holds uncovered/);
+    await assert.rejects(role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,$2,'allocate',5,0,'Event allocation')", [item, f.event])), /uncommitted stock/);
+    await assert.rejects(f.reserve({ ...payload, expectedTotal: 500, lines: [line(item)] }), /Stock changed/);
+
+    assert.equal(await f.pay(order), false);
+    assert.deepEqual(await stocks(db, order), [{ menu_item_id: item, quantity: 6, state: 'sold' }]);
+    assert.equal((await db.query('select on_hand from public.inventory_items where menu_item_id=$1', [item])).rows[0].on_hand, 4);
+    assert.equal((await db.query('select available_quantity from public.get_event_stock(null,null) where menu_item_id=$1', [item])).rows[0].available_quantity, 0);
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_set_order_status($1,'cancelled','Test cancellation')", [order.id]));
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_restock_order($1,'Test restock')", [order.id]));
+    assert.equal((await db.query('select on_hand from public.inventory_items where menu_item_id=$1', [item])).rows[0].on_hand, 10);
+    assert.equal((await db.query('select available_quantity from public.get_event_stock(null,null) where menu_item_id=$1', [item])).rows[0].available_quantity, 6);
+
+    const parent = await f.item('Online Meal', 0, 'group');
+    const child = await f.item('Stocked Side', 100, 'product', false, false);
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'configure',0,0,'Configure','global','each')", [child]));
+    await role(db, 'authenticated', admin, () => db.query(
+      "select public.admin_inventory_action($1,null,'receive',5,1,'Opening receipt')", [child]));
+    const modifierGroup = await f.group(parent);
+    const linkedOption = await f.option(modifierGroup, child, 2);
+    const linkedOrder = await f.reserve({
+      name: 'Customer', email: 'customer@example.test', phone: '07000000000', note: '',
+      expectedTotal: 200, lines: [line(parent, [linkedOption])],
+    });
+    assert.equal(linkedOrder.event_id, null);
+    assert.deepEqual(await stocks(db, linkedOrder), [{ menu_item_id: child, quantity: 2, state: 'held' }]);
+    assert.equal(await f.pay(linkedOrder), false);
+    assert.equal((await db.query('select on_hand from public.inventory_items where menu_item_id=$1', [child])).rows[0].on_hand, 3);
+  } finally { await db.close(); }
+});
 
 test('removals are optional free choices, preserve allergens and stock, and snapshot preparation instructions', async () => {
   const db = await database();

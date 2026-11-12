@@ -14,7 +14,7 @@ export const allocationSchema = z.object({
   version: z.number().int().nonnegative(),
 });
 export const orderStockSchema = z.object({
-  order_id: z.guid(), menu_item_id: z.guid(), event_id: z.guid(),
+  order_id: z.guid(), menu_item_id: z.guid(), event_id: z.guid().nullable(),
   quantity: stockQuantitySchema, state: z.enum(['held', 'sold', 'released', 'restocked']),
   expires_at: z.string().nullable(),
 });
@@ -24,7 +24,7 @@ export const movementSchema = z.object({
   reason: z.string().nullable(), created_at: z.string(),
 });
 export const inventorySaleSchema = z.object({
-  menu_item_id: z.guid(), event_id: z.guid(), sold_quantity: z.number().int().nonnegative(),
+  menu_item_id: z.guid(), event_id: z.guid().nullable(), sold_quantity: z.number().int().nonnegative(),
 });
 export const publicStockSchema = z.array(z.object({
   menu_item_id: z.guid(), tracking_mode: trackingModeSchema,

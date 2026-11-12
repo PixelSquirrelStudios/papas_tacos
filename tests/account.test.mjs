@@ -6,7 +6,7 @@ const customer = '00000000-0000-0000-0000-000000000001';
 const order = '00000000-0000-0000-0000-000000000002';
 const summary = {
   id: order, order_number: 12, status: 'preparing', payment_method: 'cash', payment_status: 'unpaid', total_pence: 1000,
-  created_at: '2026-06-01T10:00:00+00:00', pickup_starts_at: '2026-06-01T12:00:00+00:00', pickup_ends_at: '2026-06-01T12:15:00+00:00',
+  event_id: customer, created_at: '2026-06-01T10:00:00+00:00', pickup_starts_at: '2026-06-01T12:00:00+00:00', pickup_ends_at: '2026-06-01T12:15:00+00:00',
   pickup_location: { venue_name: 'Market', address_line_1: 'High Street', town: 'Town', postcode: 'AB1 2CD' },
 };
 
@@ -43,5 +43,6 @@ test('order snapshots validate amounts and format pickup in UK local time', () =
   assert.equal(detail.order_items[0].order_item_modifiers[0].option_name, 'Chicken');
   assert.equal(pickupWindow(summary), '1 Jun 2026, 13:00 - 13:15');
   assert.equal(pickupWindow({ ...summary, pickup_starts_at: '2026-12-01T12:00:00+00:00', pickup_ends_at: '2026-12-01T12:15:00+00:00' }), '1 Dec 2026, 12:00 - 12:15');
+  assert.equal(pickupWindow({ ...summary, event_id: null, pickup_starts_at: null, pickup_ends_at: null }), 'Online Order');
   assert.equal(pickupAddress(summary.pickup_location), 'Market, High Street, Town, AB1 2CD');
 });

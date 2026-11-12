@@ -291,6 +291,115 @@ test('table and car orders reserve without slots, snapshot locations, complete a
   } finally { await database.close(); }
 });
 
+test('Walk-Up Only events are listed without allowing order checkout', async () => {
+  const database = await createDatabase();
+  try {
+    await database.exec(await readFile(new URL('062_walk_up_only_events.sql', sqlDirectory), 'utf8'));
+    await database.exec("update public.business_settings set ordering_status='open',card_enabled=true");
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','walkup-meals',true) returning id")).rows[0].id;
+    const item = (await database.query("insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available) values ($1,'Tacos','walkup-tacos',800,true,true) returning id", [category])).rows[0].id;
+    const event = (await database.query(`insert into public.events(slug,title,venue_name,address_line_1,town,postcode,starts_at,ends_at,is_published,pickup_enabled,ordering_status,service_mode)
+      values ('walkup-market','Walk-Up Market','Square','High Street','Town','AB1 2CD',now()-interval '1 hour',now()+interval '2 hours',true,false,'open','walkup') returning id`)).rows[0].id;
+    await assert.rejects(database.query('update public.events set pickup_enabled=true where id=$1', [event]), /events_walkup_only_not_orderable/);
+    const payload = { eventId: event, locationNumber: '1', name: 'Customer', email: 'customer@example.test', phone: '07000000000', expectedTotal: 800, lines: [{ itemId: item, quantity: 1, optionIds: [] }] };
+    await assert.rejects(database.query('select * from public.reserve_card_order($1,$2,$3)', [customerId, crypto.randomUUID(), payload]), /walkup_only/);
+  } finally { await database.close(); }
+});
+
+test('homepage featured menu seeds existing picks and enforces three unique public items per section', async () => {
+  const database = await createDatabase();
+  try {
+    const category = (await database.query("insert into public.menu_categories(name,slug,is_published) values ('Meals','homepage-meals',true) returning id")).rows[0].id;
+    const items = [];
+    for (const [index, is_featured, is_crowd_favourite] of [[0, true, true], [1, true, true], [2, true, false], [3, true, true], [4, false, true], [5, false, true]]) {
+      items.push((await database.query(`insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available,is_featured,is_crowd_favourite,sort_order)
+        values ($1,$2,$3,800,true,true,$4,$5,$6) returning id`, [category, `Homepage Item ${index}`, `homepage-item-${index}`, is_featured, is_crowd_favourite, index])).rows[0].id);
+    }
+    await database.exec(await readFile(new URL('048_menu_sets.sql', sqlDirectory), 'utf8'));
+    await database.exec('alter table public.menu_items add column show_standalone boolean not null default true');
+    await database.exec(await readFile(new URL('052_public_menu_visibility.sql', sqlDirectory), 'utf8'));
+    const migration = await readFile(new URL('063_homepage_featured_menu.sql', sqlDirectory), 'utf8');
+    const anyMenuItemMigration = await readFile(new URL('064_homepage_featured_any_menu_item.sql', sqlDirectory), 'utf8');
+    const heroCopyMigration = await readFile(new URL('065_homepage_hero_copy.sql', sqlDirectory), 'utf8');
+    const deliveryOrderingMigration = await readFile(new URL('066_separate_delivery_ordering.sql', sqlDirectory), 'utf8');
+    await database.exec(migration);
+    const unlistedItem = (await database.query(`insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available,show_standalone)
+      values ($1,'Unlisted Feature','unlisted-feature',800,true,true,false) returning id`, [category])).rows[0].id;
+    const draftItem = (await database.query(`insert into public.menu_items(category_id,name,slug,price_pence,is_published,is_available)
+      values ($1,'Draft Feature','draft-feature',800,false,true) returning id`, [category])).rows[0].id;
+    await database.exec(anyMenuItemMigration);
+    await database.exec(heroCopyMigration);
+    await database.exec(deliveryOrderingMigration);
+    assert.deepEqual((await database.query('select ordering_status,delivery_ordering_enabled from public.business_settings')).rows[0], {
+      ordering_status: 'closed',
+      delivery_ordering_enabled: false,
+    });
+    await asRole(database, 'anon', null, async () => {
+      assert.equal((await database.query('select delivery_ordering_enabled from public.business_settings')).rows[0].delivery_ordering_enabled, false);
+      await assert.rejects(database.query('update public.business_settings set delivery_ordering_enabled=true'), /permission denied/);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      const savedDelivery = await database.query('update public.admin_business_settings set delivery_ordering_enabled=true returning delivery_ordering_enabled', []);
+      assert.equal(savedDelivery.rows[0].delivery_ordering_enabled, true);
+    });
+    await database.exec(deliveryOrderingMigration);
+    assert.deepEqual((await database.query('select ordering_status,delivery_ordering_enabled from public.business_settings')).rows[0], {
+      ordering_status: 'closed',
+      delivery_ordering_enabled: true,
+    });
+    const heroCopy = (await database.query('select homepage_hero_eyebrow,homepage_hero_description from public.business_settings')).rows[0];
+    assert.deepEqual(heroCopy, {
+      homepage_hero_eyebrow: 'Mexican-Inspired Street Food with a Global Twist',
+      homepage_hero_description: 'From slow cooked brisket to butter chicken tacos, we bring our own twist to street food across South Wales',
+    });
+    const settings = (await database.query('select homepage_papas_choice_ids,homepage_crowd_favourite_ids from public.business_settings')).rows[0];
+    assert.deepEqual(settings.homepage_papas_choice_ids, items.slice(0, 3));
+    assert.deepEqual(settings.homepage_crowd_favourite_ids, items.slice(3, 6));
+    await assert.rejects(database.query('update public.business_settings set homepage_papas_choice_ids=$1,homepage_crowd_favourite_ids=$2', [[...items.slice(0, 4)], []]), /business_settings_homepage_papas_choice_limit/);
+    await assert.rejects(database.query('update public.business_settings set homepage_crowd_favourite_ids=$1', [[items[0]]]), /business_settings_homepage_featured_items_unique/);
+    await asRole(database, 'anon', null, async () => {
+      assert.deepEqual((await database.query('select homepage_papas_choice_ids from public.business_settings')).rows[0].homepage_papas_choice_ids, items.slice(0, 3));
+      assert.equal((await database.query('select homepage_hero_eyebrow from public.business_settings')).rows[0].homepage_hero_eyebrow, heroCopy.homepage_hero_eyebrow);
+      await assert.rejects(database.query('update public.business_settings set homepage_papas_choice_ids=$1', [[items[5]]]), /permission denied/);
+    });
+    await asRole(database, 'authenticated', adminId, async () => {
+      assert.equal((await database.query('select homepage_crowd_favourite_ids from public.admin_business_settings')).rows[0].homepage_crowd_favourite_ids.length, 3);
+      const savedHeroCopy = await database.query(`update public.admin_business_settings
+        set homepage_hero_eyebrow='Fresh tacos. Global flavour.',
+          homepage_hero_description='A custom homepage description.'
+        returning homepage_hero_eyebrow,homepage_hero_description`);
+      assert.deepEqual(savedHeroCopy.rows[0], {
+        homepage_hero_eyebrow: 'Fresh tacos. Global flavour.',
+        homepage_hero_description: 'A custom homepage description.',
+      });
+      const saved = await database.query('update public.admin_business_settings set homepage_papas_choice_ids=$1,homepage_crowd_favourite_ids=$2 returning updated_at', [[items[3]], [items[0]]]);
+      assert.equal(saved.rows.length, 1);
+      const version = saved.rows[0].updated_at;
+      const curated = await database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [version, [unlistedItem], [items[3]]]);
+      assert.equal(curated.rows.length, 1);
+      assert.ok(curated.rows[0].updated_at);
+      await assert.rejects(database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [version, [items[1]], [items[4]]]), /Homepage menu settings changed/);
+      await assert.rejects(database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [curated.rows[0].updated_at, [items[0], items[0]], []]), /distinct items/);
+      await assert.rejects(database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [curated.rows[0].updated_at, ['00000000-0000-0000-0000-000000000099'], []]), /published menu items/);
+      await assert.rejects(database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [curated.rows[0].updated_at, [draftItem], []]), /published menu items/);
+    });
+    await asRole(database, 'authenticated', customerId, async () => {
+      await assert.rejects(database.query('select * from public.admin_save_homepage_featured_menu($1,$2,$3)', [new Date().toISOString(), [], []]), /Admin access required/);
+    });
+    await database.exec(migration);
+    await database.exec(anyMenuItemMigration);
+    await database.exec(heroCopyMigration);
+    const unchanged = (await database.query('select homepage_papas_choice_ids,homepage_crowd_favourite_ids from public.business_settings')).rows[0];
+    assert.deepEqual(unchanged.homepage_papas_choice_ids, [unlistedItem]);
+    assert.deepEqual(unchanged.homepage_crowd_favourite_ids, [items[3]]);
+    const unchangedCopy = (await database.query('select homepage_hero_eyebrow,homepage_hero_description from public.business_settings')).rows[0];
+    assert.deepEqual(unchangedCopy, {
+      homepage_hero_eyebrow: 'Fresh tacos. Global flavour.',
+      homepage_hero_description: 'A custom homepage description.',
+    });
+  } finally { await database.close(); }
+});
+
 test('service checkout enforces event matching, payment cutoffs and late-payment refunds', async () => {
   const database = await createDatabase();
   try {

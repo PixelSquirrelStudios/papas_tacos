@@ -68,7 +68,7 @@ export async function createReceipt(order: CustomerOrder, payment: { paidAt: str
   text(order.customer_name, 11, true);
   text(`Payment: ${order.payment_method === 'card' ? 'Card via Stripe' : 'Cash'}`);
   position -= 8;
-  text(serviceMode(order.pickup_location) === 'pickup' ? 'PICKUP' : 'TABLE / CAR DELIVERY', 9, true);
+  text(!order.event_id ? 'ONLINE ORDER' : serviceMode(order.pickup_location) === 'pickup' ? 'PICKUP' : 'TABLE / CAR DELIVERY', 9, true);
   if (order.pickup_location.event_title) text(order.pickup_location.event_title);
   text(pickupWindow(order));
   text(pickupAddress(order.pickup_location));

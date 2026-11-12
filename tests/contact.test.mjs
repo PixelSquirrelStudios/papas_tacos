@@ -20,6 +20,8 @@ test('branded booking emails escape customer input and include all customer and 
   const email = enquiryEmail(enquirySchema.parse({ ...enquiry, name: '<b>Alex</b>', message: '<img src=x onerror=alert(1)>\nSecond line' }), brand);
   assert.match(email.html, /<img[^>]+src="https:\/\/cpkzvicxoivdhxjkhexl\.supabase\.co\/storage\/v1\/object\/public\/images\/Papas_Tacos_Logo_Horizontal\.svg"[^>]+alt="Papa's Tacos"/);
   assert.match(email.html, /href="https:\/\/papas\.example"/);
+  assert.match(email.html, /Reply directly to this email to continue the conversation\./);
+  assert.doesNotMatch(email.html, /<a href="mailto:/);
   assert.match(email.html, /href="https:\/\/instagram\.com\/papas"[^>]*><img[^>]+alt="Instagram"[^>]*><span[^>]*>Instagram<\/span><\/a>/);
   assert.match(email.html, /href="https:\/\/facebook\.com\/papas"[^>]*><img[^>]+alt="Facebook"[^>]*><span[^>]*>Facebook<\/span><\/a>/);
   assert.match(email.html, /cdn\.simpleicons\.org\/instagram\/f0bb7d/);

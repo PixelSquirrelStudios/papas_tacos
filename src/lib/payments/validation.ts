@@ -10,7 +10,9 @@ export const checkoutSchema = z.object({
   note: z.string().trim().max(1000),
   expectedTotal: z.number().int().min(30).max(10020000),
   lines: bagSchema.shape.lines.min(1).max(50),
-}).strict().refine((input) => Boolean(input.slotId || (input.eventId && input.locationNumber)), 'Choose a pickup time or enter your table/car location.');
+}).strict().refine((input) => input.eventId
+  ? Boolean(input.slotId || input.locationNumber)
+  : !input.slotId && !input.locationNumber && !input.numberPlate, 'Choose a pickup time or enter your table/car location.');
 
 export type CheckoutInput = z.infer<typeof checkoutSchema>;
 export type CheckoutResult = { url?: string; orderId?: string; error?: string };

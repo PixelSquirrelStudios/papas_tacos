@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { aboutDefaults } from './about.ts';
-import { serviceModeSchema } from '../service-ordering.ts';
+import { homepageHeroDefaults } from './homepage.ts';
+import { eventServiceModeSchema } from '../service-ordering.ts';
 import type { MenuSets } from './menu-sets.ts';
 
 const id = z.guid();
@@ -25,6 +26,11 @@ export const optionSchema = z.object({
 export const associationSchema = z.object({ menu_item_id: id, modifier_group_id: id, sort_order: z.number() });
 export const settingsSchema = z.object({
   public_menu_enabled: z.boolean().default(true),
+  online_ordering_enabled: z.boolean().default(false),
+  homepage_papas_choice_ids: z.array(id).max(3).default([]),
+  homepage_crowd_favourite_ids: z.array(id).max(3).default([]),
+  homepage_hero_eyebrow: z.string().default(homepageHeroDefaults.homepage_hero_eyebrow),
+  homepage_hero_description: z.string().default(homepageHeroDefaults.homepage_hero_description),
   card_enabled: z.boolean().default(false),
   maintenance_enabled: z.boolean().default(false),
   about_eyebrow: z.string().default(aboutDefaults.about_eyebrow),
@@ -47,7 +53,7 @@ export const settingsSchema = z.object({
 export const eventSchema = z.object({
   is_private: z.boolean().default(false),
   menu_set_id: z.guid().nullable().default(null),
-  service_mode: serviceModeSchema.default('pickup'),
+  service_mode: eventServiceModeSchema.default('pickup'),
   sort_order: z.number().default(0),
   id, slug: z.string(), title: z.string(), description: z.string(), featured_image_path: z.string().nullable(), image_alt: z.string(),
   venue_name: z.string(), address_line_1: z.string(), address_line_2: z.string().nullable(), town: z.string(), postcode: z.string(), map_url: z.string().nullable(),

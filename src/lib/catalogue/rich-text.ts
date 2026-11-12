@@ -7,9 +7,21 @@ export function descriptionHtml(value: string) {
   if (!value.trim()) return '';
   return sanitizeHtml(input, {
     allowedTags: ['p', 'h2', 'h3', 'h4', 'br', 'strong', 'b', 'em', 'i', 'u', 's', 'ul', 'ol', 'li', 'blockquote', 'a'],
-    allowedAttributes: { a: ['href', 'title'] },
+    allowedAttributes: { a: ['href', 'title', 'target', 'rel'] },
     allowedSchemes: ['https', 'mailto'],
     allowProtocolRelative: false,
+    transformTags: {
+      a: (tagName, attribs) => {
+        const safeAttributes = { ...attribs };
+        const target = safeAttributes.target;
+        delete safeAttributes.target;
+        delete safeAttributes.rel;
+        return {
+          tagName,
+          attribs: target === '_blank' ? { ...safeAttributes, target, rel: 'noopener noreferrer' } : safeAttributes,
+        };
+      },
+    },
   });
 }
 

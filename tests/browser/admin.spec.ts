@@ -18,6 +18,7 @@ test.beforeAll(async () => {
         import { DashboardOverview } from '@/components/admin/dashboard-overview';
         import { Dashboard } from '@/components/admin/dashboard';
         import { AdminRefresh, OrderControls } from '@/components/admin/order-controls';
+        import { HomepageFeaturedMenu } from '@/components/admin/homepage-featured-menu';
         import { SiteMenu } from '@/components/site-menu';
         import { SiteUpdates } from '@/components/site-updates';
         import { AdminSidebar } from '@/components/admin/admin-sidebar';
@@ -49,13 +50,15 @@ test.beforeAll(async () => {
           rows[1].sort_order = 0;
         }
         const order = { id: ids[0], order_number: 1042, status: 'ready_for_pickup', payment_status: 'paid', payment_method: 'card', total_pence: 1850, created_at: '2026-09-21T12:00:00Z', pickup_starts_at: '2026-09-21T13:00:00Z', pickup_ends_at: '2026-09-21T13:15:00Z', pickup_location: { venue_name: 'Town Market' } };
-        const settingsRow = { business_name: "Papa's Tacos", ordering_status: 'closed', ordering_message: null, cash_enabled: true, card_enabled: false, service_fee_pence: 0, packaging_fee_pence: 0, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null, about_eyebrow: 'Our story', about_heading: 'A little about Papa’s', about_page_heading: 'About Papa’s Tacos', about_content: 'Original About copy.', about_full_story: '<p><strong>Original full story.</strong></p>', about_image_path: null, about_image_alt: 'Fresh tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Papa’s Tacos street food', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos at an event', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck', updated_at: '2026-09-22T12:00:00Z' };
+        const settingsRow = { business_name: "Papa's Tacos", homepage_hero_eyebrow: 'Mexican-Inspired Street Food with a Global Twist', homepage_hero_description: 'From slow cooked brisket to butter chicken tacos, we bring our own twist to street food across South Wales', ordering_status: 'closed', online_ordering_enabled: false, ordering_message: null, cash_enabled: true, card_enabled: false, service_fee_pence: 0, packaging_fee_pence: 0, minimum_order_pence: 0, contact_email: null, contact_phone: null, instagram_url: null, facebook_url: null, about_eyebrow: 'Our story', about_heading: 'A little about Papa’s', about_page_heading: 'About Papa’s Tacos', about_content: 'Original About copy.', about_full_story: '<p><strong>Original full story.</strong></p>', about_image_path: null, about_image_alt: 'Fresh tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Papa’s Tacos street food', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos at an event', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck', updated_at: '2026-09-22T12:00:00Z' };
         function DashboardFixture() {
           const [status, setStatus] = React.useState(kind === 'dashboard-paused' ? 'paused' : 'open');
+          const [onlineOrdering, setOnlineOrdering] = React.useState(false);
           const [publicMenu, setPublicMenu] = React.useState(true);
           window.__updatePublicMenu = setPublicMenu;
           window.__updateOrdering = setStatus;
-          return <DashboardOverview fullName="Sam" orders={[{...order, customer_name: 'Alex Taylor'}, {...order, id: ids[1], order_number: 1043, status: 'preparing', customer_name: 'Morgan Jones'}]} menu={rows} events={[{id: ids[0], title: 'Friday Street Food Market', venue_name: 'Town Square', address_line_1: '12 Market Street', address_line_2: 'Riverside Quarter', town: 'Cardiff', postcode: 'CF10 1AA', starts_at: '2026-09-25T17:00:00Z'}]} settings={kind === 'dashboard-unavailable' ? undefined : {ordering_status: status, public_menu_enabled: publicMenu, maintenance_enabled: false, updated_at: '2026-09-22T12:00:00Z'}} />;
+          window.__updateOnlineOrdering = setOnlineOrdering;
+          return <DashboardOverview fullName="Sam" orders={[{...order, customer_name: 'Alex Taylor'}, {...order, id: ids[1], order_number: 1043, status: 'preparing', customer_name: 'Morgan Jones'}]} menu={rows} events={[{id: ids[0], title: 'Friday Street Food Market', venue_name: 'Town Square', address_line_1: '12 Market Street', address_line_2: 'Riverside Quarter', town: 'Cardiff', postcode: 'CF10 1AA', starts_at: '2026-09-25T17:00:00Z'}]} settings={kind === 'dashboard-unavailable' ? undefined : {ordering_status: status, online_ordering_enabled: onlineOrdering, public_menu_enabled: publicMenu, maintenance_enabled: false, updated_at: '2026-09-22T12:00:00Z'}} />;
         }
         function LiveDashboardFixture() {
           const initialData = {orders: [{...order, customer_name: 'Alex Taylor'}], menu: rows, events: [], settings: {...settingsRow, public_menu_enabled: true, maintenance_enabled: false}};
@@ -67,6 +70,14 @@ test.beforeAll(async () => {
           return <main><h1>Car 27 / AB12 CDE</h1><p role="status">{status === 'collected' ? 'Complete' : 'Outstanding'}</p><OrderControls order={{...order,status,pickup_location:{service_mode:'car',location_number:'27',number_plate:'AB12 CDE'}}} /></main>;
         }
         const eventRow = {id:ids[0],title:'Friday Market',slug:'friday-market',venue_name:'Town Square',address_line_1:'Market Street',town:'Bristol',postcode:'BS1 1AA',starts_at:'2099-09-25T17:00:00Z',ends_at:'2099-09-25T21:00:00Z',pickup_enabled:true,ordering_status:'open',description:'<p><strong>Market night</strong> by the river.</p>',updated_at:'2026-09-27T12:00:00Z'};
+        const eventCardDescription = '<p>From locally made gifts and Christmas trees to delicious food and warming drinks, there is something for everyone.</p><p>We will also be running mini wreath workshops throughout the day, and there will be lots of dried flowers and gifts on offer at our stall.</p><p>' + 'Join us for seasonal food, local makers and family activities throughout the day. '.repeat(10) + '</p>';
+        const homepageMenuItems = [
+          {id:ids[0],name:'Ember Chicken',section:'Tacos',eligible:true,available:true},
+          {id:ids[1],name:'Birria Beef',section:'Tacos',eligible:true,available:false},
+          {id:ids[2],name:'Garden Tacos',section:'Tacos',eligible:true,available:true},
+          {id:'00000000-0000-0000-0000-000000000004',name:'Taco Supreme',section:'Tacos',eligible:true,available:true},
+          {id:'00000000-0000-0000-0000-000000000005',name:'Churros',section:'Desserts',eligible:true,available:true},
+        ];
         const root = createRoot(document.getElementById('fixture'));
         function PickupFixture() {
           const events = [{id:ids[0],title:'Friday Market',venue_name:'Friday Market',pickup_enabled:true,ordering_status:'open'}, {id:ids[1],title:'No Pickup',pickup_enabled:false,ordering_status:'open'}, {id:ids[2],title:'Closed Market',pickup_enabled:true,ordering_status:'closed'}, {id:category,title:'Saturday Market',pickup_enabled:true,ordering_status:'open'}];
@@ -86,8 +97,10 @@ test.beforeAll(async () => {
         else root.render(
           <>{['dashboard-realtime', 'realtime-menu'].includes(kind) && <SiteUpdates />}<AdminRefresh />{['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(kind) ? <LiveDashboardFixture /> : kind.startsWith('dashboard') ? <DashboardFixture /> :
           kind === 'sidebar' ? <TooltipProvider><SidebarProvider><AdminSidebar /><main className="min-w-0 flex-1"><SidebarTrigger /><h1>Sidebar Fixture</h1></main></SidebarProvider></TooltipProvider> :
+          kind === 'homepage-menu' ? <HomepageFeaturedMenu items={homepageMenuItems} papasChoiceIds={[ids[0]]} crowdFavouriteIds={[ids[1]]} updatedAt="2026-09-22T12:00:00Z" /> :
           kind === 'service-order' ? <ServiceOrderFixture /> : kind.startsWith('pickup') ? <PickupFixture /> :
           kind === 'event-posters' ? <ResourceManager resourceKey="events" rows={['car','table','pickup'].map((mode,index) => ({...eventRow,id:ids[index],title:mode + ' Event',service_mode:mode,is_private:true,address_line_2:index === 0 ? 'Riverside Quarter' : null,featured_image_path:'images/events/poster.jpg',image_alt:'Event poster'}))} references={{}} /> :
+          kind === 'event-layout' ? <ResourceManager resourceKey="events" rows={[{...eventRow,title:'Friday Market',service_mode:'car',description:eventCardDescription}, {...eventRow,id:ids[1],title:'Walk-Up Market',service_mode:'walkup',pickup_enabled:false,description:eventCardDescription}]} references={{}} /> :
           kind === 'event-orders' ? <ResourceManager resourceKey="events" rows={[eventRow, {...eventRow,id:ids[1],title:'No Outstanding Orders'}]} references={{orders:[{id:ids[2],event_id:ids[0]}]}} /> :
           kind === 'removal-counts' ? <ResourceManager resourceKey="modifiers" rows={[
             {id: ids[0], name: 'Nachos Options', group_type: 'removal', is_published: true},
@@ -106,7 +119,7 @@ test.beforeAll(async () => {
           ]} /> :
           kind === 'removal-option' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Cheese', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}, {id:ids[2],modifier_group_id:ids[1],name:'Extra Cheese',price_pence:125,allergens:[],is_available:true,updated_at:'2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Nachos Removals', group_type: 'removal'}]}} /> :
           kind === 'option-media' ? <ResourceManager resourceKey="options" rows={[{id: ids[0], modifier_group_id: ids[1], name: 'Mexican Cola', description: '<p>Original cola description.</p>', image_path: 'images/menu/fixture.jpg', image_alt: 'Cola bottle', price_pence: 0, allergens: [], is_available: true, updated_at: '2026-09-22T12:00:00Z'}]} references={{modifier_groups: [{id: ids[1], name: 'Flavour'}]}} /> :
-          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : {}} /> :
+          kind.startsWith('edit-') ? <ResourceManager resourceKey={kind.slice(5)} rows={kind === 'edit-settings' ? [settingsRow] : kind === 'edit-events' ? [eventRow] : [{id: ids[0], name: 'Original Name', author_name: 'Original Customer', body: 'Wonderful food.', updated_at: '2026-09-22T12:00:00Z'}]} references={kind === 'edit-modifiers' ? {modifier_groups: [{id: ids[0], name: 'Original Name'}, {id: ids[1], name: 'Sauces', is_published: true}, {id: ids[2], name: 'Extras', is_published: true}]} : kind === 'edit-events' ? {menu_sets: [{id: ids[1], name: 'Drive-In Set', is_default: false}]} : {}} /> :
           kind === 'reorder' ? <ResourceReorder resourceKey="menu" rows={ordered} scopes={groups} scope={category} /> :
           kind === 'order-filters' ? <OrdersFixture /> :
           ['menu', 'menu-rich', 'menu-modifiers', 'archived', 'grouped', 'realtime-menu'].includes(kind) ? <MenuFixture /> :
@@ -121,7 +134,7 @@ test.beforeAll(async () => {
       builder.onResolve({ filter: /^(next\/(navigation|image|link)|@\/app\/.*actions|@\/lib\/supabase\/(config|client)|@\/lib\/auth\/session|@\/lib\/account\/data)$/ }, (args) => ({ path: args.path, namespace: 'fixture' }));
       builder.onLoad({ filter: /.*/, namespace: 'fixture' }, (args) => {
         let contents = '';
-        if (args.path === 'next/navigation') contents = `export const useRouter = () => ({ refresh() { window.__refreshes = (window.__refreshes || 0) + 1; }, push(url) { window.__navigation = url; }, replace(url) { window.__navigation = url; window.__onNavigate?.(url); } }); export const usePathname = () => ['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(new URLSearchParams(location.search).get('kind')) ? '/admin' : '/admin/menu'; export const notFound = () => { throw new Error('Not found'); };`;
+        if (args.path === 'next/navigation') contents = `export const useRouter = () => ({ refresh() { window.__refreshes = (window.__refreshes || 0) + 1; }, push(url) { window.__navigation = url; }, replace(url) { window.__navigation = url; window.__onNavigate?.(url); } }); export const usePathname = () => ['dashboard-live', 'dashboard-initial-error', 'dashboard-realtime'].includes(new URLSearchParams(location.search).get('kind')) ? '/admin' : '/admin/menu'; export const useSearchParams = () => new URLSearchParams(location.search); export const notFound = () => { throw new Error('Not found'); };`;
         else if (args.path === '@/lib/auth/session') contents = `export const requireAdmin = async () => ({}); export const requireAccount = async () => ({user: {email: 'alexander.customer.with.a.long.email@example.com'}, profile: {full_name: 'Alex Taylor', phone: '', role: 'admin'}});`;
         else if (args.path === '@/lib/account/data') contents = `export const getCustomerOrders = async () => ({orders: [], total: 0}); export const getCustomerOrder = async () => null;`;
         else if (args.path === 'next/link') contents = `import React from 'react'; export default function Link({children, ...props}) { return <a {...props}>{children}</a>; }`;
@@ -142,6 +155,7 @@ test.beforeAll(async () => {
             return channel;
           }, async removeChannel() {}
         });`;
+        else if (args.path.endsWith('/homepage-menu/actions')) contents = `export async function saveHomepageFeaturedMenu(input) { window.__homepageMenuSaved = input; return window.__homepageMenuResponse || {ok:true,updatedAt:'2026-09-22T12:01:00Z'}; }`;
         else contents = `
           export async function reorderRecords(key, ids, previous, scope) {
             window.__savedRequest = {key, ids, previous, scope};
@@ -174,6 +188,11 @@ test.beforeAll(async () => {
             if (window.__holdOrdering) await new Promise(resolve => { window.__releaseOrdering = resolve; });
             if (window.__failOrdering) return {ok:false, error:'Ordering settings changed. Please try again.'};
             window.__updateOrdering?.(status); return {ok:true};
+          }
+          export async function setOnlineOrderingEnabled(enabled, version) {
+            window.__onlineOrderingRequest = {enabled, version};
+            if (window.__failOnlineOrdering) return {ok:false, error:'Online ordering settings changed. Please try again.'};
+            window.__updateOnlineOrdering?.(enabled); return {ok:true};
           }
           export async function assignGroups(...args) { window.__assignedGroups = args; return {ok:true}; }
           export async function requestMagicLink() { return {status:'success', message:'Fixture'}; }
@@ -232,6 +251,55 @@ test('admin menu images use the same 4:3 proportions as public menu cards', asyn
   expect(Math.abs(bounds.height - bounds.width * 3 / 4)).toBeLessThanOrEqual(1);
 });
 
+test('homepage menu curation enforces three unique selections per section and saves display order', async ({ page }) => {
+  await fixture(page, 'homepage-menu');
+  await expect(page.getByRole('heading', { level: 1, name: 'Homepage Featured Menu' })).toBeVisible();
+  const papas = page.getByRole('region', { name: "Papa's Choice" });
+  const crowd = page.getByRole('region', { name: 'Crowd Favourites' });
+  const papasSelect = papas.getByRole('combobox', { name: "Add item to Papa's Choice" });
+  const crowdSelect = crowd.getByRole('combobox', { name: 'Add item to Crowd Favourites' });
+  if (await page.evaluate(() => innerWidth >= 640)) {
+    const selectBounds = await crowdSelect.boundingBox();
+    const buttonBounds = await crowd.getByRole('button', { name: 'Add Item', exact: true }).boundingBox();
+    expect(buttonBounds!.y + buttonBounds!.height).toBeCloseTo(selectBounds!.y + selectBounds!.height, 0);
+  }
+  await papasSelect.selectOption('00000000-0000-0000-0000-000000000003');
+  await papas.getByRole('button', { name: 'Add Item', exact: true }).click();
+  await papasSelect.selectOption('00000000-0000-0000-0000-000000000004');
+  await papas.getByRole('button', { name: 'Add Item', exact: true }).click();
+  await expect(papas.getByText('3 / 3', { exact: true })).toBeVisible();
+  await expect(papas.getByText('Maximum of 3 items already added.')).toBeVisible();
+  await expect(papas.getByRole('combobox', { name: "Add item to Papa's Choice" })).toHaveCount(0);
+  await expect(papas.getByRole('button', { name: 'Add Item', exact: true })).toHaveCount(0);
+  await expect(crowd.locator('option[value="00000000-0000-0000-0000-000000000003"]')).toHaveCount(0);
+  const papasList = papas.getByRole('list', { name: "Papa's Choice selections" });
+  if (await page.evaluate(() => innerWidth >= 640)) {
+    const handle = papasList.getByRole('button', { name: 'Reorder Taco Supreme' });
+    const target = papasList.getByRole('listitem').filter({ hasText: 'Garden Tacos' });
+    const from = (await handle.boundingBox())!;
+    const to = (await target.boundingBox())!;
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2 + 12);
+    await page.mouse.move(to.x + to.width / 2, to.y + to.height / 2, { steps: 8 });
+    await expect(page.locator('[data-drag-preview]')).toBeVisible();
+    await expect(page.locator('[data-drop-marker] > div')).toBeVisible();
+    await page.mouse.up();
+  } else {
+    await papas.getByRole('button', { name: "Move Taco Supreme up in Papa's Choice" }).click();
+  }
+  await expect(papasList.locator('li > span > span:first-child')).toHaveText(['Ember Chicken', 'Taco Supreme', 'Garden Tacos']);
+  await page.evaluate(async () => { await Promise.all(document.getAnimations().map((animation) => animation.finished)); });
+  await page.getByRole('button', { name: 'Save Homepage Menu', exact: true }).click();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { __homepageMenuSaved?: { papasChoiceIds: string[]; crowdFavouriteIds: string[]; updatedAt: string } }).__homepageMenuSaved)).toMatchObject({
+    papasChoiceIds: ['00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000003'],
+    crowdFavouriteIds: ['00000000-0000-0000-0000-000000000002'],
+    updatedAt: '2026-09-22T12:00:00Z',
+  });
+  await expect(page.getByText('Saved', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save Homepage Menu', exact: true })).toBeDisabled();
+});
+
 test('admin cards show media, statuses, filters, actions and reorder navigation', async ({ page }, testInfo) => {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -265,13 +333,13 @@ test('admin cards show media, statuses, filters, actions and reorder navigation'
   expect(errors).toEqual([]);
 });
 
-test('dashboard cards and ordering switch handle saving, failure and recovery', async ({ page }, testInfo) => {
+test('dashboard cards and pickup ordering switch handle saving, failure and recovery', async ({ page }, testInfo) => {
   await fixture(page, 'dashboard');
-  const toggle = page.getByRole('switch', { name: 'Online Ordering' });
+  const toggle = page.getByRole('switch', { name: 'Pickup Ordering' });
   const eventAddress = page.getByRole('region', { name: 'Upcoming Events' }).locator('address');
   await expect(eventAddress.locator('span')).toHaveText(['Town Square', '12 Market Street', 'Riverside Quarter', 'Cardiff, CF10 1AA']);
   await expect(toggle).toBeChecked();
-  await expect(page.getByText('Open for Orders', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pickup Orders Open', { exact: true })).toBeVisible();
   for (const label of ['Active Orders: 2', 'Ready for Pickup: 1', 'Published Dishes: 2', 'Upcoming Events: 1']) await expect(page.getByRole('link', { name: label, exact: true })).toBeVisible();
   const shortcuts = page.getByRole('region', { name: 'Quick Shortcuts' });
   const expectedShortcuts = [
@@ -316,7 +384,7 @@ test('dashboard cards and ordering switch handle saving, failure and recovery', 
   await page.evaluate(() => { const state = window as unknown as { __holdOrdering: boolean; __releaseOrdering: () => void }; state.__holdOrdering = false; state.__releaseOrdering(); });
   await expect(toggle).toBeEnabled();
   await expect(toggle).not.toBeChecked();
-  await expect(page.getByText('Orders Closed', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pickup Orders Closed', { exact: true })).toBeVisible();
   await page.evaluate(() => { (window as unknown as { __failOrdering: boolean }).__failOrdering = true; });
   await toggle.click();
   await expect(page.getByRole('alert')).toContainText('Ordering settings changed');
@@ -337,6 +405,9 @@ test('desktop sidebar collapses to an accessible icon rail with tooltips and exp
   await page.setViewportSize({ width: 1440, height: 960 });
   await fixture(page, 'sidebar');
   const sidebar = page.locator('[data-slot="sidebar"][data-state]');
+  const homepageMenu = sidebar.getByRole('link', { name: 'Homepage Menu', exact: true });
+  const menuItems = sidebar.getByRole('link', { name: 'Menu Items', exact: true });
+  expect((await homepageMenu.boundingBox())!.y).toBeLessThan((await menuItems.boundingBox())!.y);
   const expandedWidth = (await sidebar.boundingBox())!.width;
   await page.getByRole('button', { name: 'Toggle Sidebar' }).click();
   await expect(sidebar).toHaveAttribute('data-state', 'collapsed');
@@ -369,24 +440,28 @@ test('mobile sidebar stays a drawer and closes when a navigation item is selecte
   await expect(drawer).not.toBeVisible();
 });
 
-test('public menu switch sits between ordering and maintenance and recovers from failed saves', async ({ page }) => {
+test('separate ordering controls sit with public menu and maintenance', async ({ page }) => {
   await fixture(page, 'dashboard');
   const toggle = page.getByRole('switch', { name: 'Show Public Menu', exact: true });
-  const ordering = page.getByRole('region', { name: 'Online Ordering', exact: true });
+  const pickup = page.getByRole('region', { name: 'Pickup Ordering', exact: true });
+  const online = page.getByRole('region', { name: 'Online Ordering', exact: true });
   const menu = page.getByRole('region', { name: 'Public Menu', exact: true });
   const maintenance = page.getByRole('region', { name: 'Maintenance Mode', exact: true });
-  for (const width of [1440, 390]) {
+  for (const width of [1627, 390]) {
     await page.setViewportSize({ width, height: 960 });
-    const orderingBox = (await ordering.boundingBox())!;
+    const pickupBox = (await pickup.boundingBox())!;
+    const onlineBox = (await online.boundingBox())!;
     const menuBox = (await menu.boundingBox())!;
     const maintenanceBox = (await maintenance.boundingBox())!;
     if (width >= 1024) {
-      expect(menuBox.y).toBe(orderingBox.y);
+      expect(onlineBox.y).toBe(pickupBox.y);
+      expect(onlineBox.x).toBeGreaterThan(pickupBox.x);
+      expect(menuBox.y).toBeGreaterThan(pickupBox.y);
       expect(maintenanceBox.y).toBe(menuBox.y);
-      expect(menuBox.x).toBeGreaterThan(orderingBox.x);
       expect(maintenanceBox.x).toBeGreaterThan(menuBox.x);
     } else {
-      expect(menuBox.y).toBeGreaterThan(orderingBox.y);
+      expect(onlineBox.y).toBeGreaterThan(pickupBox.y);
+      expect(menuBox.y).toBeGreaterThan(onlineBox.y);
       expect(maintenanceBox.y).toBeGreaterThan(menuBox.y);
     }
   }
@@ -397,7 +472,7 @@ test('public menu switch sits between ordering and maintenance and recovers from
   await expect(menu).toContainText('Public Menu Hidden');
   await expect(menu.getByRole('alert')).toHaveCount(0);
   expect(await page.evaluate(() => Reflect.get(window, '__publicMenuRequest'))).toEqual({ enabled: false, version: '2026-09-22T12:00:00Z' });
-  await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Pickup Ordering', exact: true })).toBeChecked();
   await page.evaluate(() => Reflect.set(window, '__failPublicMenu', true));
   await toggle.click();
   await expect(menu.getByRole('alert')).toContainText('Site settings changed');
@@ -414,7 +489,7 @@ test('dashboard background refresh keeps a disabled public menu valid without wa
   let requests = 0;
   await page.route('**/api/admin/dashboard', async (route) => {
     requests++;
-    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', online_ordering_enabled: false, public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
   });
   await fixture(page, 'dashboard-live');
   const menu = page.getByRole('region', { name: 'Public Menu', exact: true });
@@ -430,15 +505,38 @@ test('dashboard background refresh keeps a disabled public menu valid without wa
   }
 });
 
-test('dashboard distinguishes paused ordering and disables unavailable settings', async ({ page }) => {
+test('dashboard distinguishes paused pickup and disables unavailable settings', async ({ page }) => {
   await fixture(page, 'dashboard-paused');
-  await expect(page.getByText('Orders Paused', { exact: true })).toBeVisible();
-  await expect(page.getByRole('switch', { name: 'Online Ordering' })).not.toBeChecked();
-  await page.getByRole('switch', { name: 'Online Ordering' }).click();
-  await expect(page.getByText('Open for Orders', { exact: true })).toBeVisible();
+  await expect(page.getByText('Pickup Orders Paused', { exact: true })).toBeVisible();
+  await expect(page.getByRole('switch', { name: 'Pickup Ordering' })).not.toBeChecked();
+  await page.getByRole('switch', { name: 'Pickup Ordering' }).click();
+  await expect(page.getByText('Pickup Orders Open', { exact: true })).toBeVisible();
   await fixture(page, 'dashboard-unavailable');
-  await expect(page.getByRole('switch', { name: 'Online Ordering' })).toBeDisabled();
-  await expect(page.getByRole('region', { name: 'Online Ordering' }).getByRole('alert')).toContainText('Ordering settings are unavailable');
+  await expect(page.getByRole('switch', { name: 'Pickup Ordering' })).toBeDisabled();
+  await expect(page.getByRole('region', { name: 'Pickup Ordering' }).getByRole('alert')).toContainText('Pickup ordering settings are unavailable');
+});
+
+test('online ordering dashboard control saves independently from pickup', async ({ page }) => {
+  await fixture(page, 'dashboard');
+  const pickup = page.getByRole('switch', { name: 'Pickup Ordering', exact: true });
+  const online = page.getByRole('switch', { name: 'Online Ordering', exact: true });
+  await expect(pickup).toBeChecked();
+  await expect(online).not.toBeChecked();
+  await expect(page.getByText('Online Orders Closed', { exact: true })).toBeVisible();
+  await online.click();
+  await expect(online).toBeChecked();
+  await expect(page.getByText('Online Orders Open', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => Reflect.get(window, '__onlineOrderingRequest'))).toEqual({ enabled: true, version: '2026-09-22T12:00:00Z' });
+  await page.evaluate(() => Reflect.set(window, '__failOnlineOrdering', true));
+  await online.click();
+  await expect(page.getByRole('region', { name: 'Online Ordering' }).getByRole('alert')).toContainText('Online ordering settings changed');
+  await expect(online).toBeChecked();
+  await page.evaluate(() => Reflect.set(window, '__failOnlineOrdering', false));
+  await online.click();
+  await expect(online).not.toBeChecked();
+  await expect(pickup).toBeChecked();
+  await fixture(page, 'dashboard-unavailable');
+  await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeDisabled();
 });
 
 test('menu availability action toggles between states and preserves failed saves', async ({ page }, testInfo) => {
@@ -621,6 +719,11 @@ test('events retain dates and expose optional ordering windows without preparati
   await fixture(page,'edit-events');
   await page.getByRole('button',{name:'Add Event',exact:true}).click();
   const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Menu Set' }).click();
+  await expect(page.getByRole('option', { name: 'Default Menu', exact: true })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Drive-In Set', exact: true })).toBeVisible();
+  await expect(page.getByRole('option', { name: 'Default Public Menu', exact: true })).toHaveCount(0);
+  await page.keyboard.press('Escape');
   await dialog.getByRole('switch',{name:'Event Ordering Enabled',exact:true}).check();
   await expect(dialog.locator('input[type="datetime-local"]')).toHaveCount(4);
   const starts = dialog.getByLabel('Event Starts (Europe/London) *', { exact: true });
@@ -638,6 +741,53 @@ test('events retain dates and expose optional ordering windows without preparati
   await dialog.getByRole('switch',{name:'Event Ordering Enabled',exact:true}).check();
   await expect(starts).toHaveValue('2026-09-28T12:00');
   await expect(ends).toHaveValue('2026-09-28T18:00');
+});
+
+test('event directions use the address by default and allow a custom map URL override', async ({ page }) => {
+  await fixture(page, 'edit-events');
+  await page.getByRole('button', { name: 'Edit Friday Market', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  const checkbox = dialog.getByRole('checkbox', { name: /Use a custom Google Maps directions URL/ });
+  const mapUrl = dialog.getByLabel('Google Maps URL Override', { exact: true });
+  await expect(checkbox).not.toBeChecked();
+  await expect(mapUrl).toHaveCount(0);
+  await checkbox.check();
+  await expect(mapUrl).toBeVisible();
+  await mapUrl.fill('https://maps.google.com/?q=Town+Square');
+  await checkbox.uncheck();
+  await expect(mapUrl).toHaveCount(0);
+  await checkbox.check();
+  await expect(mapUrl).toHaveValue('');
+  const customMapUrl = 'https://maps.google.com/?q=Town+Square';
+  await mapUrl.fill(customMapUrl);
+  await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[3].map_url).toBe(customMapUrl);
+});
+
+test('Walk-Up Only event type hides ordering controls and saves without online ordering', async ({ page }) => {
+  await fixture(page, 'edit-events');
+  await page.getByRole('button', { name: 'Add Event', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await dialog.getByRole('combobox', { name: 'Service Type' }).click();
+  await page.getByRole('option', { name: 'Walk-Up Only' }).click();
+  await expect(dialog.locator('[data-admin-field="pickup_enabled"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-admin-field="ordering_status"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-admin-field="orders_open_at"]')).toHaveCount(0);
+  await expect(dialog.locator('[data-admin-field="orders_close_at"]')).toHaveCount(0);
+  await dialog.getByLabel('Title *').fill('Walk-Up Market');
+  await dialog.getByLabel('Venue *').fill('Town Square');
+  await dialog.getByLabel('Address *').fill('Market Street');
+  await dialog.getByLabel('Town *').fill('Bristol');
+  await dialog.getByLabel('Postcode *').fill('BS1 1AA');
+  await dialog.getByLabel('Event Starts (Europe/London) *', { exact: true }).fill('2026-10-21T18:00');
+  await dialog.getByLabel('Event Ends (Europe/London) *', { exact: true }).fill('2026-10-21T21:00');
+  await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
+  expect(saved[3]).toMatchObject({ service_mode: 'walkup', pickup_enabled: false });
+  expect(saved[3].map_url).toBeNull();
 });
 
 test('new slugs follow names and titles until customised while existing URLs stay fixed', async ({ page }) => {
@@ -831,6 +981,7 @@ test('event editor formats and saves descriptions without changing event times',
   const dialog = page.getByRole('dialog');
   const body = page.frameLocator('iframe.tox-edit-area__iframe').locator('body');
   await expect(body).toBeVisible();
+  await expect(dialog.getByRole('button', { name: /Insert\/edit link/i })).toBeVisible();
   await expect(body.locator('strong')).toHaveText('Market night');
   await body.fill('Fresh tacos at the market');
   await body.press('ControlOrMeta+A');
@@ -840,12 +991,29 @@ test('event editor formats and saves descriptions without changing event times',
   }
   await dialog.getByRole('button', { name: 'Bold', exact: true }).click();
   await expect(body.locator('strong')).toHaveText('Fresh tacos at the market');
+  await body.press('ControlOrMeta+A');
+  await dialog.getByRole('button', { name: /Insert\/edit link/i }).click();
+  const linkDialog = page.locator('.tox-dialog');
+  await expect(linkDialog).toBeVisible();
+  await expect(page.locator('[data-slot="dialog-content"] .tox-tinymce-aux')).toBeAttached();
+  await expect(page.locator('.tox-dialog-wrap__backdrop')).toHaveCSS('background-color', 'rgba(0, 0, 0, 0.25)');
+  const urlInput = linkDialog.locator('input').first();
+  await urlInput.click();
+  await expect(urlInput).toBeFocused();
+  await urlInput.fill('https://example.com/menu');
+  await linkDialog.getByRole('combobox', { name: /Open link in/ }).click();
+  await page.getByRole('option', { name: 'New window' }).click();
+  await linkDialog.getByRole('button', { name: 'Save', exact: true }).click();
+  await expect(body.getByRole('link', { name: 'Fresh tacos at the market' })).toHaveAttribute('href', 'https://example.com/menu');
+  await expect(body.getByRole('link', { name: 'Fresh tacos at the market' })).toHaveAttribute('target', '_blank');
   expect(await dialog.locator('[data-admin-form-scroll]').evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
   await page.screenshot({ path: testInfo.outputPath('event-editor.png'), fullPage: true });
   await dialog.getByRole('button', { name: 'Save Changes', exact: true }).click();
   await expect(dialog).not.toBeVisible();
   const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, string, string, Record<string, unknown>] }).__savedRecord);
   expect(saved[0]).toBe('events');
+  expect(saved[3].description).toContain('href="https://example.com/menu"');
+  expect(saved[3].description).toContain('target="_blank"');
   expect(saved[3].description).toContain('<strong>Fresh tacos at the market</strong>');
   expect(saved[3].starts_at).toBe('2099-09-25T17:00:00.000Z');
   expect(saved[3].ends_at).toBe('2099-09-25T21:00:00.000Z');
@@ -1037,6 +1205,24 @@ test('event cards contain full posters in taller images and highlight service ba
   }
 });
 
+test('event card details follow equal-height description previews', async ({ page }) => {
+  await fixture(page, 'event-layout');
+  const cards = page.getByRole('article');
+  const dateOffsets: number[] = [];
+  for (const title of ['Friday Market', 'Walk-Up Market']) {
+    const card = cards.filter({ has: page.getByRole('heading', { name: title, exact: true }) });
+    const toggle = card.getByRole('button', { name: `Show full description for ${title}` });
+    const date = card.getByText('25 Sept 2099, 18:00', { exact: true });
+    await expect(toggle).toBeVisible();
+    const cardBox = (await card.boundingBox())!;
+    const toggleBox = (await toggle.boundingBox())!;
+    const dateBox = (await date.boundingBox())!;
+    expect(dateBox.y - toggleBox.y - toggleBox.height).toBeLessThan(32);
+    dateOffsets.push(dateBox.y - cardBox.y);
+  }
+  expect(Math.abs(dateOffsets[0] - dateOffsets[1])).toBeLessThan(2);
+});
+
 test('event cards only show full-width outstanding orders buttons for events with outstanding orders', async ({ page }) => {
   await fixture(page, 'event-orders');
   const withOrders = page.getByRole('article').filter({ has: page.getByRole('heading', { name: 'Friday Market', exact: true }) });
@@ -1060,7 +1246,7 @@ test('dashboard retains its last successful data through failed realtime updates
     if (mode === 'missing-setting') return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
     if (mode === 'unauthorized') return route.fulfill({ status: 401, json: { error: 'Unable to verify your session.' } });
     if (mode === 'unavailable') return route.fulfill({ status: 503, json: { error: 'Temporary database outage.' } });
-    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: true, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', online_ordering_enabled: false, public_menu_enabled: true, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
   });
   await fixture(page, 'dashboard-live');
   await expect(page.getByRole('link', { name: 'Active Orders: 1', exact: true })).toBeVisible();
@@ -1071,6 +1257,7 @@ test('dashboard retains its last successful data through failed realtime updates
     await expect.poll(() => requests).toBeGreaterThan(before);
     await expect(page.getByRole('status').filter({ hasText: 'Showing the last successful update' })).toBeVisible();
     await expect(page.getByRole('link', { name: 'Active Orders: 1', exact: true })).toBeVisible();
+    await expect(page.getByRole('switch', { name: 'Pickup Ordering', exact: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeVisible();
     await expect(page.getByRole('switch', { name: 'Show Public Menu', exact: true })).toBeChecked();
     await expect(page.getByRole('region', { name: 'Public Menu', exact: true }).getByRole('alert')).toHaveCount(0);
@@ -1080,7 +1267,7 @@ test('dashboard retains its last successful data through failed realtime updates
   await page.evaluate(() => window.dispatchEvent(new Event('papas:site-updated')));
   await expect(page.getByRole('link', { name: 'Active Orders: 0', exact: true })).toBeVisible();
   await expect(page.getByText('Showing the last successful update', { exact: false })).toHaveCount(0);
-  await expect(page.getByRole('switch', { name: 'Online Ordering', exact: true })).toBeChecked();
+  await expect(page.getByRole('switch', { name: 'Pickup Ordering', exact: true })).toBeChecked();
   expect(await page.evaluate(() => (window as unknown as { __refreshes?: number }).__refreshes ?? 0)).toBe(0);
 });
 
@@ -1129,7 +1316,7 @@ test('supabase realtime updates dashboard, catches up after reconnect and report
   let requests = 0;
   await page.route('**/api/admin/dashboard', (route) => {
     requests++;
-    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
+    return route.fulfill({ json: { orders: [], menu: [], events: [], settings: { ordering_status: 'open', online_ordering_enabled: false, public_menu_enabled: false, maintenance_enabled: false, updated_at: '2026-10-21T12:00:00Z' } } });
   });
   await fixture(page, 'dashboard-realtime');
   await page.clock.fastForward(250);
@@ -1378,7 +1565,7 @@ test('menu editor preserves descriptions when its CDN is unavailable', async ({ 
   expect(saved[3].description).toBe('Fresh salsa, coriander and lime with your choice of filling.');
 });
 
-test('site settings card summarizes operations and form saves all About content', async ({ page }, testInfo) => {
+test('site settings card summarizes operations and form saves homepage and About copy', async ({ page }, testInfo) => {
   await fixture(page, 'edit-settings');
   const settingsCard = page.getByRole('article');
   for (const name of ['Ordering Overview', 'Public Menu Visibility', 'Payments and Charges', 'Contact and Social', 'About Content']) await expect(settingsCard.getByRole('region', { name })).toBeVisible();
@@ -1406,6 +1593,8 @@ test('site settings card summarizes operations and form saves all About content'
   const publicMenu = dialog.getByRole('switch', { name: 'Show Public Menu', exact: true });
   await expect(publicMenu).toBeChecked();
   await publicMenu.click();
+  await dialog.getByLabel('Homepage Hero Eyebrow').fill('Street food with a twist');
+  await dialog.getByLabel('Homepage Hero Description').fill('Tacos and more, made fresh across South Wales.');
   await dialog.getByLabel('About Eyebrow').fill('Meet Papa');
   await dialog.getByLabel('About Heading').fill('Our flavour, our story');
   await dialog.getByLabel('About Page Heading').fill('The Full Papa’s Story');
@@ -1431,7 +1620,9 @@ test('site settings card summarizes operations and form saves all About content'
   const actionBounds = (await dialog.locator('[data-admin-form-actions]').boundingBox())!;
   const dialogBounds = (await dialog.boundingBox())!;
   expect(lastFieldBounds.y + lastFieldBounds.height).toBeLessThanOrEqual(actionBounds.y);
-  expect(Math.abs(actionBounds.y + actionBounds.height - (dialogBounds.y + dialogBounds.height))).toBeLessThanOrEqual(2);
+  const footerGap = dialogBounds.y + dialogBounds.height - (actionBounds.y + actionBounds.height);
+  expect(footerGap).toBeGreaterThanOrEqual(0);
+  expect(footerGap).toBeLessThanOrEqual(12);
   await dialog.getByRole('button', { name: 'Save Changes' }).click();
   await expect(dialog).not.toBeVisible();
   const saved = await page.evaluate(() => (window as unknown as { __savedRecord: [string, null, string, Record<string, unknown>] }).__savedRecord);
@@ -1439,5 +1630,5 @@ test('site settings card summarizes operations and form saves all About content'
   expect(saved[1]).toBeNull();
   expect(saved[3]).not.toHaveProperty('maintenance_allowed_emails');
   expect(saved[3].public_menu_enabled).toBe(false);
-  expect(saved[3]).toMatchObject({ about_eyebrow: 'Meet Papa', about_heading: 'Our flavour, our story', about_page_heading: 'The Full Papa’s Story', about_content: 'Fresh ingredients and bold flavours.\n\nMade for South Wales events.', about_full_story: '<h2><strong>A longer story for the About page.</strong></h2>', about_image_path: null, about_image_alt: 'Papa serving freshly made tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Tacos being prepared for an event', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos serving at a festival', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck at a market' });
+  expect(saved[3]).toMatchObject({ homepage_hero_eyebrow: 'Street food with a twist', homepage_hero_description: 'Tacos and more, made fresh across South Wales.', about_eyebrow: 'Meet Papa', about_heading: 'Our flavour, our story', about_page_heading: 'The Full Papa’s Story', about_content: 'Fresh ingredients and bold flavours.\n\nMade for South Wales events.', about_full_story: '<h2><strong>A longer story for the About page.</strong></h2>', about_image_path: null, about_image_alt: 'Papa serving freshly made tacos', about_page_image_1_path: null, about_page_image_1_alt: 'Tacos being prepared for an event', about_page_image_2_path: null, about_page_image_2_alt: 'Papa’s Tacos serving at a festival', about_page_image_3_path: null, about_page_image_3_alt: 'Papa’s Tacos food truck at a market' });
 });

@@ -1,6 +1,7 @@
 'use client';
 
 import { createContext, useContext, useEffect, useState } from 'react';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { lineKey, mergeLine, parseBag, type BagLine } from '@/lib/bag';
 import type { Catalogue, Settings, TruckEvent } from '@/lib/catalogue/types';
 import { canOrder } from '@/lib/catalogue/format';
@@ -15,6 +16,7 @@ import { toast } from 'sonner';
 const storageKey = 'papas-tacos:bag:v1';
 type BagContextValue = {
   lines: BagLine[]; ready: boolean; storageError: boolean; catalogue: Catalogue; settings: Settings | null; orderingOpen: boolean;
+  onlineStockAvailable: boolean;
   sourceCatalogue: Catalogue;
   collectionEvents: TruckEvent[];
   events: TruckEvent[]; selectedEventId: string; selectedEvent?: TruckEvent;
@@ -36,10 +38,14 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
   const selectedEvent = data.events?.find((event) => event.id === selectedEventId);
   const stock = useStock(selectedEventId, data.catalogue.available && hasStockAccess(selectedEventId, selectedEvent));
   const stockAvailable = stock?.available === true;
+  const onlineStock = useStock('', data.catalogue.available && Boolean(selectedEventId));
+  const onlineStockAvailable = selectedEventId ? onlineStock?.available === true : stockAvailable;
   const baseCatalogue = menuCatalogue(data.catalogue, selectedEvent?.menu_set_id);
   const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const eligibleEvents = selectedEventId ? (selectedEvent ? [selectedEvent] : []) : (data.events ?? []).filter(isPublicPickupEvent);
-  const orderingOpen = stockAvailable && catalogue.available && canOrder(eligibleEvents, data.settings, now);
+  const orderingOpen = stockAvailable && catalogue.available && (selectedEventId
+    ? canOrder(eligibleEvents, data.settings, now)
+    : data.settings?.online_ordering_enabled === true);
   const collectionEvents = (data.events ?? []).filter((event) => canOrder([event], data.settings, now));
 
   useEffect(() => {
@@ -126,7 +132,10 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     const target = (data.events ?? []).find((event) => event.id === eventId);
     const availableStock = contextStock ?? (stockAvailable && eventId === selectedEventId ? stock?.stock : undefined);
     const menu = applyStock(menuCatalogue(data.catalogue, target?.menu_set_id), availableStock ?? []);
-    if (!availableStock || !menu.available || !canOrder(events, data.settings, Date.now()) || !menu.items.some((item) => item.id === line.itemId && item.is_available)) {
+    const orderingEnabled = eventId
+      ? canOrder(events, data.settings, Date.now())
+      : data.settings?.online_ordering_enabled === true;
+    if (!availableStock || !menu.available || !orderingEnabled || !menu.items.some((item) => item.id === line.itemId && item.is_available)) {
       toast.error('Availability has changed. Refresh the menu and review your item.');
       return false;
     }
@@ -158,7 +167,7 @@ export function BagProvider({ children }: { children: React.ReactNode }) {
     setSelectedEventId(id);
     try { localStorage.setItem('papas-tacos:event', id); } catch { setStorageError(true); }
   }
-  return <BagContext.Provider value={{ lines, ready: ready && catalogueLoaded, storageError, ...data, catalogue, stockAvailable, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
+  return <BagContext.Provider value={{ lines, ready: ready && catalogueLoaded, storageError, ...data, catalogue, stockAvailable, onlineStockAvailable, sourceCatalogue: data.catalogue, events: data.events ?? [], selectedEventId, selectedEvent, selectEvent, orderingOpen, collectionEvents, add, setQuantity, clearIfMatches, remove: (key) => save(lines.filter((line) => lineKey(line) !== key)) }}>{children}</BagContext.Provider>;
 }
 
 function isPublicPickupEvent(event: TruckEvent) {
@@ -169,19 +178,22 @@ function hasStockAccess(eventId: string, event: TruckEvent | undefined) {
   return !eventId || Boolean(event && (!event.is_private || event.ordering_access === true));
 }
 
-export function MenuOrderingProvider({ eventId = '', children }: { eventId?: string; children: React.ReactNode }) {
+export function MenuOrderingProvider({ eventId = '', readOnly = false, children }: { eventId?: string; readOnly?: boolean; children: React.ReactNode }) {
   const bag = useBag();
   const [pending, setPending] = useState<{ line: BagLine; replacing?: string } | null>(null);
   const [error, setError] = useState('');
   const selectedEvent = bag.events.find((event) => event.id === eventId);
-  const stock = useStock(eventId, bag.sourceCatalogue.available && hasStockAccess(eventId, selectedEvent));
+  const displayOnly = readOnly || selectedEvent?.service_mode === 'walkup';
+  const stock = useStock(eventId, !displayOnly && bag.sourceCatalogue.available && hasStockAccess(eventId, selectedEvent));
   const stockAvailable = stock?.available === true;
   const baseCatalogue = menuCatalogue(bag.sourceCatalogue, selectedEvent?.menu_set_id);
   const catalogue = stockAvailable ? applyStock(baseCatalogue, stock.stock) : baseCatalogue;
   const events = eventId ? (selectedEvent ? [selectedEvent] : []) : bag.events.filter(isPublicPickupEvent);
-  const orderingOpen = stockAvailable && catalogue.available && canOrder(events, bag.settings);
+  const orderingOpen = stockAvailable && catalogue.available && (eventId
+    ? canOrder(events, bag.settings)
+    : bag.settings?.online_ordering_enabled === true);
   function commit(line: BagLine, replacing?: string) {
-    if (!stockAvailable || !catalogue.available || !canOrder(events, bag.settings) || !catalogue.items.some((item) => item.id === line.itemId && item.is_available)) {
+    if (!stockAvailable || !catalogue.available || !orderingOpen || !catalogue.items.some((item) => item.id === line.itemId && item.is_available)) {
       setError('Ordering availability has changed. Please review the current ordering information before trying again.');
       return false;
     }
@@ -199,12 +211,12 @@ export function MenuOrderingProvider({ eventId = '', children }: { eventId?: str
     },
   };
   return <BagContext.Provider value={value}>
-    {eventId && bag.ready && <section aria-label="Ordering Event" className="my-6 space-y-3">
+    {eventId && bag.ready && !displayOnly && <section aria-label="Ordering Event" className="my-6 space-y-3">
       {selectedEvent ? <><h2 className="text-xl font-semibold">Ordering for {selectedEvent.title}</h2><EventOrderingInfo event={selectedEvent} settings={bag.settings} /></> : <p role="alert" className="rounded-lg border border-brand-yellow/25 bg-brand-yellow/5 p-4 text-sm">This event is closed, expired or unavailable. Please check the event link or speak to our team. You can still browse the menu.</p>}
     </section>}
     {error && <p role="alert" className="my-4 text-sm text-destructive">{error}</p>}
     {pending && <section role="alert" aria-label="Switch Ordering Context" className="my-6 space-y-3 rounded-lg border border-brand-yellow/25 bg-card p-4">
-      <p>Your bag is currently for {bag.selectedEvent?.title || (bag.selectedEventId ? 'another event' : 'public pickup')}. Switch it to {selectedEvent?.title || 'public pickup ordering'} and add this item? Your existing items will be kept and availability will be checked again.</p>
+      <p>Your bag is currently for {bag.selectedEvent?.title || (bag.selectedEventId ? 'another event' : 'the public menu')}. Switch it to {selectedEvent?.title || 'the public menu'} and add this item? Your existing items will be kept and availability will be checked again.</p>
       <div className="flex flex-wrap gap-3"><Button onClick={() => commit(pending.line, pending.replacing)}>Switch and Add Item</Button><Button variant="outline" onClick={() => setPending(null)}>Keep Current Bag</Button></div>
     </section>}
     {children}
@@ -234,5 +246,15 @@ export function useBag() {
 }
 
 export function useOrderingOpen() {
-  return useContext(BagContext)?.orderingOpen ?? false;
+  const context = useContext(BagContext);
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  if (!context) return false;
+  const eventContext = ['/menu', '/bag', '/checkout'].includes(pathname) && searchParams.has('event');
+  if (eventContext) {
+    const eventId = searchParams.get('event');
+    const event = context.events.find((candidate) => candidate.id === eventId);
+    return Boolean(event && context.catalogue.available && canOrder([event], context.settings));
+  }
+  return context.settings?.online_ordering_enabled === true && context.onlineStockAvailable && context.sourceCatalogue.available;
 }

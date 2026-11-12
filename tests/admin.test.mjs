@@ -5,13 +5,84 @@ import { formDefaults, formPayload, slugFromTitle } from '../src/lib/admin/form-
 import { orderFilterParams, orderOperations, parseOrderFilters } from '../src/lib/admin/orders.ts';
 import { testimonialSchema, eventSchema, settingsSchema, optionSchema } from '../src/lib/catalogue/types.ts';
 import { aboutDefaults } from '../src/lib/catalogue/about.ts';
+import { homepageHeroDefaults } from '../src/lib/catalogue/homepage.ts';
 import { build } from 'esbuild';
 import path from 'node:path';
 import { deliveryLabel, serviceMode, eventMenuLink } from '../src/lib/service-ordering.ts';
 import { trackingLabels } from '../src/lib/inventory.ts';
+import { homepageFeaturedItems } from '../src/lib/catalogue/menu-sets.ts';
 
-test('modifier listing loads option counts and composite-key item assignments for cards', async () => {
-  const state = { calls: [] };
+test('homepage featured items follow saved order, including items outside menu sets', () => {
+  const ids = ['00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004'];
+  const items = ids.map((id) => ({ id, show_standalone: true, name: id }));
+  items[3].show_standalone = false;
+  const catalogue = {
+    available: true, categories: [], items,
+    menuSets: {
+      sets: [{ id: '00000000-0000-0000-0000-000000000010', name: 'Public', is_default: true, updated_at: '' }],
+      sections: [{ id: '00000000-0000-0000-0000-000000000011', menu_set_id: '00000000-0000-0000-0000-000000000010', title: 'Tacos', sort_order: 0 }],
+      entries: ids.slice(0, 3).map((menu_item_id, sort_order) => ({ menu_set_id: '00000000-0000-0000-0000-000000000010', section_id: '00000000-0000-0000-0000-000000000011', menu_item_id, sort_order, price_pence: null })),
+    },
+  };
+  const currentItems = [items[0], items[2], items[3]].map((item) => ({ ...item, groups: [], imageUrl: null }));
+  assert.deepEqual(homepageFeaturedItems(catalogue, currentItems, [ids[3], ids[2], ids[0], ids[1]]).map((item) => item.id), [ids[3], ids[2], ids[0]]);
+});
+
+test('homepage menu saves only distinct item selections', async () => {
+  const ids = ['00000000-0000-0000-0000-000000000001', '00000000-0000-0000-0000-000000000002', '00000000-0000-0000-0000-000000000003', '00000000-0000-0000-0000-000000000004', '00000000-0000-0000-0000-000000000005'];
+  const state = {
+    allowed: true,
+    calls: [], revalidated: [], savedRows: [{ updated_at: '2026-09-22T12:00:00Z' }],
+  };
+  globalThis.__homepageMenuActionTest = state;
+  try {
+    const bundle = await build({ entryPoints: ['src/app/admin/homepage-menu/actions.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'homepage-menu-action-boundaries', setup(builder) {
+      builder.onResolve({ filter: /^(next\/cache|@\/lib\/auth\/session|@\/lib\/admin\/data)$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+      builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache'
+        ? 'export function revalidatePath(...args) { globalThis.__homepageMenuActionTest.revalidated.push(args); }'
+        : args.path.endsWith('/session')
+          ? 'export async function requireAdmin() { if (!globalThis.__homepageMenuActionTest.allowed) throw new Error("Admin access required"); }'
+          : `export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } }
+            export function adminError(error) { return error.message; }
+            export async function adminRequest(...args) {
+              const state = globalThis.__homepageMenuActionTest;
+              state.calls.push(args);
+              return state.savedRows;
+            }`,
+      }));
+      builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+    } }] });
+    const { saveHomepageFeaturedMenu } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const updatedAt = '2026-09-22T12:00:00Z';
+    const input = { papasChoiceIds: [ids[1], ids[0]], crowdFavouriteIds: [ids[2]], updatedAt };
+    assert.equal((await saveHomepageFeaturedMenu(input)).ok, true);
+    assert.deepEqual(state.calls.at(-1), ['rpc/admin_save_homepage_featured_menu', {}, 'POST', {
+      expected_version: updatedAt,
+      papas_choice_ids: input.papasChoiceIds,
+      crowd_favourite_ids: input.crowdFavouriteIds,
+    }]);
+    assert.deepEqual(state.revalidated, [['/'], ['/admin/homepage-menu']]);
+    const callCount = state.calls.length;
+    for (const invalid of [
+      { ...input, papasChoiceIds: [ids[0], ids[0]] },
+      { ...input, papasChoiceIds: [ids[0]], crowdFavouriteIds: [ids[0]] },
+      { ...input, papasChoiceIds: ids.slice(0, 4), crowdFavouriteIds: [] },
+    ]) assert.equal((await saveHomepageFeaturedMenu(invalid)).ok, false);
+    assert.equal(state.calls.length, callCount);
+    state.allowed = false;
+    await assert.rejects(saveHomepageFeaturedMenu(input), /Admin access required/);
+    assert.equal(state.calls.length, callCount);
+  } finally { delete globalThis.__homepageMenuActionTest; }
+});
+
+test('resource pages load modifier summaries and hide default event menu-set options', async () => {
+  const defaultMenuSetId = '00000000-0000-4000-8000-000000000010';
+  const customMenuSetId = '00000000-0000-4000-8000-000000000011';
+  const state = {
+    calls: [],
+    events: [{ id: 'event-default', menu_set_id: defaultMenuSetId }, { id: 'event-custom', menu_set_id: customMenuSetId }],
+    menuSets: [{ id: defaultMenuSetId, name: 'Default Menu', is_default: true }, { id: customMenuSetId, name: 'Drive-In Set', is_default: false }],
+  };
   globalThis.__modifierCountsTest = state;
   try {
     const bundle = await build({
@@ -30,9 +101,12 @@ test('modifier listing loads option counts and composite-key item assignments fo
                   : `export function adminError(error) { throw error; }
                     export async function adminRequest() { return []; }
                     export async function adminRows(table, query) {
-                      globalThis.__modifierCountsTest.calls.push([table, query]);
+                      const state = globalThis.__modifierCountsTest;
+                      state.calls.push([table, query]);
                       if (table === 'modifier_options') return [{id:'option',modifier_group_id:'group'}];
                       if (table === 'menu_item_modifier_groups') return [{menu_item_id:'item',modifier_group_id:'group'}];
+                      if (table === 'events') return state.events;
+                      if (table === 'menu_sets') return state.menuSets;
                       return [];
                     }` }));
         builder.onResolve({ filter: /^@\// }, args => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
@@ -45,12 +119,15 @@ test('modifier listing loads option counts and composite-key item assignments fo
     assert.deepEqual(state.calls.find(([table]) => table === 'modifier_options')[1], { order: 'id.asc', select: 'id,modifier_group_id' });
     assert.equal(state.calls.find(([table]) => table === 'menu_item_modifier_groups')[1].order, 'sort_order.asc,modifier_group_id.asc');
     state.calls = [];
-    await render('events');
+    const eventsPage = await render('events');
+    assert.deepEqual(eventsPage.props.references.menu_sets, [{ id: customMenuSetId, name: 'Drive-In Set', is_default: false }]);
+    assert.deepEqual(eventsPage.props.rows.map((row) => row.menu_set_id), [null, customMenuSetId]);
     assert.deepEqual(state.calls.find(([table]) => table === 'orders')[1], {
       order: 'id.asc', select: 'id,event_id',
       status: 'in.(ordered,preparing,ready_for_pickup)',
       payment_status: 'in.(paid,partially_refunded,refunded)',
     });
+    assert.equal(resources.events.fields.find((field) => field.key === 'menu_set_id').emptyLabel, 'Default Menu');
   } finally { delete globalThis.__modifierCountsTest; }
 });
 
@@ -265,6 +342,40 @@ test('dashboard refresh API requires an administrator and returns explicit uncac
   } finally { delete globalThis.__dashboardApiTest; }
 });
 
+test('dashboard settings request includes online ordering availability', async () => {
+  const previousFetch = globalThis.fetch;
+  const requests = [];
+  globalThis.fetch = async (input) => {
+    const url = new URL(String(input));
+    requests.push(url);
+    const rows = url.pathname.endsWith('/admin_business_settings')
+      ? [{ ordering_status: 'closed', online_ordering_enabled: true, public_menu_enabled: true, updated_at: '2026-11-12T12:00:00Z' }]
+      : [];
+    return new Response(JSON.stringify(rows), { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const bundle = await build({
+      entryPoints: ['src/lib/admin/data.ts'], bundle: true, write: false, platform: 'node', format: 'esm',
+      plugins: [{ name: 'dashboard-settings-boundaries', setup(builder) {
+        builder.onResolve({ filter: /^(server-only|react|@\/lib\/auth\/session|@\/lib\/supabase\/(server|config))$/ }, (args) => ({ path: args.path, namespace: 'test' }));
+        builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents:
+          args.path === 'react' ? 'export const cache = (fn) => fn;'
+            : args.path.endsWith('/session') ? 'export async function requireAdmin() {}'
+              : args.path.endsWith('/server') ? 'export async function createServerSupabase() { return { auth: { getSession: async () => ({ data: { session: { access_token: "test-token" } } }) } }; }'
+                : args.path.endsWith('/config') ? 'export function supabaseConfig() { return { url: "https://example.test", key: "test-key" }; }'
+                  : '', loader: 'js' }));
+        builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
+      } }],
+    });
+    const { getDashboardData } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const snapshot = await getDashboardData();
+    const settingsRequest = requests.find((url) => url.pathname.endsWith('/admin_business_settings'));
+    assert.ok(settingsRequest);
+    assert.ok(settingsRequest.searchParams.get('select').split(',').includes('online_ordering_enabled'));
+    assert.equal(snapshot.settings.online_ordering_enabled, true);
+  } finally { globalThis.fetch = previousFetch; }
+});
+
 test('admin schema and reference errors identify menu-item deletion requirements', async () => {
   const bundle = await build({ entryPoints: ['src/lib/admin/data.ts'], bundle: true, write: false, platform: 'node', format: 'esm', plugins: [{ name: 'schema-error-boundaries', setup(builder) {
     builder.onResolve({ filter: /^(server-only|@\/lib\/auth\/session|@\/lib\/supabase\/(server|config))$/ }, (args) => ({ path: args.path, namespace: 'test' }));
@@ -286,6 +397,7 @@ test('admin schema and reference errors identify menu-item deletion requirements
   assert.match(adminError(new AdminDataError('PGRST204', "Could not find the 'child_group_ids' column of 'modifier_groups' in the schema cache")), /034_modifier_group_nesting.sql/);
   assert.match(adminError(new AdminDataError('PGRST202', 'Could not find public.admin_order_counts in the schema cache')), /045_table_car_ordering.sql/);
   assert.match(adminError(new AdminDataError('42703', 'column events.service_mode does not exist')), /045_table_car_ordering.sql/);
+  assert.match(adminError(new AdminDataError('42703', 'column business_settings.homepage_hero_eyebrow does not exist')), /065_homepage_hero_copy.sql/);
   const otherColumn = adminError(new AdminDataError('42703', 'column unrelated does not exist'));
   assert.match(otherColumn, /42703/);
   assert.doesNotMatch(otherColumn, /031_|032_/);
@@ -302,7 +414,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
       builder.onLoad({ filter: /.*/, namespace: 'test' }, (args) => ({ contents: args.path === 'next/cache' ? 'export function revalidatePath(...args) { globalThis.__adminActionTest.revalidated.push(args); }' : args.path.endsWith('/session') ? 'export async function requireAdmin() { if (!globalThis.__adminActionTest.allowed) throw new Error("Admin access required"); }' : 'export class AdminDataError extends Error { constructor(code, message) { super(message); this.code = code; } } export function adminError(error) { return error.message; } export async function adminRequest(...args) { globalThis.__adminActionTest.calls.push(args); return globalThis.__adminActionTest.rows; }' }));
       builder.onResolve({ filter: /^@\// }, (args) => builder.resolve(path.resolve('src', args.path.slice(2)), { kind: args.kind, resolveDir: process.cwd() }));
     } }] });
-    const { unarchiveMenuItem, setOrderingStatus, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, removeRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
+    const { unarchiveMenuItem, setOrderingStatus, setOnlineOrderingEnabled, setMaintenanceMode, setPublicMenuEnabled, setMenuAvailability, saveRecord, assignGroups, removeRecord, updateOrder } = await import(`data:text/javascript;base64,${Buffer.from(bundle.outputFiles[0].text).toString('base64')}`);
     const id = state.rows[0].id;
     const version = '2026-09-21T12:00:00Z';
     assert.equal((await updateOrder(id, 'preparing')).ok, true);
@@ -316,6 +428,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
     await assert.rejects(updateOrder(id, 'collected'), /Admin access required/);
     await assert.rejects(unarchiveMenuItem(id, version), /Admin access required/);
     await assert.rejects(setOrderingStatus('open', version), /Admin access required/);
+    await assert.rejects(setOnlineOrderingEnabled(true, version), /Admin access required/);
     await assert.rejects(setMaintenanceMode(true, version), /Admin access required/);
     await assert.rejects(setPublicMenuEnabled(false, version), /Admin access required/);
     await assert.rejects(setMenuAvailability(id, version, true), /Admin access required/);
@@ -325,6 +438,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.equal((await unarchiveMenuItem(id, 'invalid')).ok, false);
     assert.equal((await setOrderingStatus('invalid', version)).ok, false);
     assert.equal((await setOrderingStatus('open', 'invalid')).ok, false);
+    assert.equal((await setOnlineOrderingEnabled('true', version)).ok, false);
+    assert.equal((await setOnlineOrderingEnabled(true, 'invalid')).ok, false);
     assert.equal((await setMaintenanceMode('true', version)).ok, false);
     assert.equal((await setMaintenanceMode(true, 'invalid')).ok, false);
     assert.equal((await setPublicMenuEnabled('false', version)).ok, false);
@@ -337,6 +452,8 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.deepEqual(state.calls[0], ['menu_items', { id: `eq.${id}`, updated_at: `eq.${version}`, archived_at: 'not.is.null' }, 'PATCH', { archived_at: null, is_published: false, is_available: false }]);
     assert.equal((await setOrderingStatus('closed', version)).ok, true);
     assert.deepEqual(state.calls[1], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { ordering_status: 'closed' }]);
+    assert.equal((await setOnlineOrderingEnabled(true, version)).ok, true);
+    assert.deepEqual(state.calls[2], ['business_settings', { singleton: 'eq.true', updated_at: `eq.${version}` }, 'PATCH', { online_ordering_enabled: true }]);
     assert.equal((await removeRecord('menu', id, version, false, true)).ok, true);
     assert.deepEqual(state.calls.at(-1), ['rpc/admin_delete_menu_item', {}, 'POST', { item_uuid: id, expected_updated_at: version, override_references: true }]);
     assert.equal((await removeRecord('menu', id, version, false, 'true')).ok, false);
@@ -406,6 +523,7 @@ test('admin mutations protect unarchive and ordering settings with authorization
     assert.match((await setMenuAvailability(id, version, true)).error, /changed or was archived/);
     assert.match((await unarchiveMenuItem(id, version)).error, /changed or is no longer archived/);
     assert.match((await setOrderingStatus('open', version)).error, /Ordering settings changed/);
+    assert.match((await setOnlineOrderingEnabled(true, version)).error, /Online ordering settings changed/);
     assert.match((await setMaintenanceMode(true, version)).error, /Site settings changed/);
     assert.match((await setPublicMenuEnabled(false, version)).error, /Site settings changed/);
     assert.ok(state.revalidated.some(([route]) => route === '/admin/menu'));
@@ -434,10 +552,12 @@ test('About settings validate editable content and supply defaults for legacy se
   assert.equal(resourceSchema(resources.settings).parse({ ...values, maintenance_enabled: true }).maintenance_enabled, true);
   assert.equal(resourceSchema(resources.settings).safeParse({ ...values, maintenance_enabled: 'true' }).success, false);
   assert.equal(settingsSchema.shape.maintenance_enabled.parse(undefined), false);
+  assert.equal(resourceSchema(resources.settings).parse(values).homepage_hero_eyebrow, homepageHeroDefaults.homepage_hero_eyebrow);
+  assert.equal(resourceSchema(resources.settings).parse(values).homepage_hero_description, homepageHeroDefaults.homepage_hero_description);
   assert.equal(resourceSchema(resources.settings).parse(values).about_content, aboutDefaults.about_content);
   assert.equal(resourceSchema(resources.settings).parse(values).about_full_story, aboutDefaults.about_full_story);
-  for (const [key, value] of Object.entries(aboutDefaults)) assert.equal(settingsSchema.shape[key].parse(undefined), value);
-  for (const override of [{ about_heading: '' }, { about_eyebrow: 'x'.repeat(101) }, { about_content: 'x'.repeat(10001) }, { about_full_story: 'x'.repeat(20001) }, { about_image_path: 'javascript:alert(1)' }]) {
+  for (const [key, value] of Object.entries({ ...aboutDefaults, ...homepageHeroDefaults })) assert.equal(settingsSchema.shape[key].parse(undefined), value);
+  for (const override of [{ about_heading: '' }, { about_eyebrow: 'x'.repeat(101) }, { homepage_hero_eyebrow: 'x'.repeat(121) }, { homepage_hero_description: 'x'.repeat(501) }, { about_content: 'x'.repeat(10001) }, { about_full_story: 'x'.repeat(20001) }, { about_image_path: 'javascript:alert(1)' }]) {
     assert.equal(resourceSchema(resources.settings).safeParse({ ...values, ...override }).success, false);
   }
   assert.equal(resourceSchema(resources.settings).parse({ ...values, about_full_story: '<p onclick="alert(1)"><strong>Our story</strong></p><script>alert(1)</script>' }).about_full_story, '<p><strong>Our story</strong></p>');
@@ -464,6 +584,16 @@ test('admin event serving windows may start before and end after event dates but
   assert.equal(schema.safeParse({ ...event, orders_open_at: null, orders_close_at: null }).success, true);
   assert.equal(schema.safeParse({ ...event, orders_open_at: event.orders_close_at }).success, false);
   assert.equal(schema.safeParse({ ...event, orders_open_at: null, orders_close_at: '2026-10-21T17:00:00Z' }).success, false);
+});
+
+test('Walk-Up Only events must disable online ordering in admin validation', () => {
+  const event = { ...formPayload(resources.events, formDefaults(resources.events)), title: 'Market', slug: 'market', venue_name: 'Square', address_line_1: 'High Street', town: 'Town', postcode: 'AB1 2CD',
+    starts_at: '2026-10-21T18:00:00Z', ends_at: '2026-10-21T21:00:00Z', service_mode: 'walkup' };
+  assert.equal(eventSchema.shape.service_mode.parse('walkup'), 'walkup');
+  assert.equal(resourceSchema(resources.events).safeParse({ ...event, pickup_enabled: false }).success, true);
+  assert.equal(resourceSchema(resources.events).safeParse({ ...event, pickup_enabled: true }).success, false);
+  const serviceType = resources.events.fields.find((field) => field.key === 'service_mode');
+  assert.equal(serviceType?.optionLabels?.walkup, 'Walk-Up Only');
 });
 
 test('admin resources whitelist fields and validate prices and choices', () => {

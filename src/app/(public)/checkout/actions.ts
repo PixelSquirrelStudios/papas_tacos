@@ -14,7 +14,7 @@ import { savedEventAccess } from '@/lib/event-access';
 
 export async function startCheckout(input: unknown): Promise<CheckoutResult> {
   const parsed = checkoutSchema.safeParse(input);
-  if (!parsed.success) return { error: 'Check your contact details, pickup time and bag before continuing.' };
+  if (!parsed.success) return { error: 'Check your details and bag before continuing.' };
   const viewer = await getViewer();
   if (!viewer?.user.email) return { error: 'Sign in before checking out.' };
   if (!checkoutConfigured()) return { error: 'Card checkout is temporarily unavailable.' };
@@ -39,7 +39,7 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       if (error.message === 'Scan the QR code provided at this event before ordering') return { error: error.message };
       if (['Stock changed. Review your bag before paying.', 'Stock availability is unavailable. Please try again shortly.'].includes(error.message)) return { error: error.message };
       if (['Group items require at least one required choice with options', 'Group items require at least one selected linked product'].includes(error.message)) return { error: 'This listing is not ready to order. Please choose another item or contact our team.' };
-      const safeMessages = ['Card checkout is unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time', 'Enter a valid table or car number', 'The selected event does not match this order', 'Choose an event and an available pickup time if required'];
+      const safeMessages = ['Card checkout is unavailable', 'Online ordering unavailable', 'Complete or cancel an existing checkout first', 'Checkout request changed. Start a new checkout.', 'A menu item is no longer available', 'A selected choice is no longer available', 'Review the required choices for your items', 'Prices have changed. Refresh your bag before paying.', 'Pickup slot is full', 'Pickup slot unavailable', 'Minimum food order amount not met', 'Pickup slot outside trading hours or preparation lead time', 'Enter a valid table or car number', 'The selected event does not match this order', 'Choose an event and an available pickup time if required'];
       return { error: safeMessages.includes(error.message) ? error.message : error.message.startsWith('Ordering unavailable:') ? 'Ordering for this event is currently closed or paused.' : 'Checkout is unavailable. Refresh your bag and try again.' };
     }
     if (order.customer_id !== viewer.user.id || order.status !== 'pending_payment') return { error: 'This checkout has already finished. Check your account orders.' };
@@ -73,7 +73,7 @@ export async function startCheckout(input: unknown): Promise<CheckoutResult> {
       line_items: lineItems, expires_at: expiresAt,
       custom_text: { submit: { message: `Complete payment by ${deadlineLabel} UK time. Payments completed after this deadline will be cancelled and refunded.` } },
       success_url: `${origin}/account?view=orders&order=${order.id}&payment=returned`,
-      cancel_url: `${origin}/checkout?order=${order.id}`,
+      cancel_url: `${origin}/checkout?order=${order.id}${order.event_id ? `&event=${encodeURIComponent(order.event_id)}` : ''}`,
     }, { idempotencyKey: `checkout-${order.id}` });
     const { error: attachError } = await database.rpc('attach_stripe_checkout', {
       order_uuid: order.id, session_id: session.id, expires_at: new Date(session.expires_at * 1000).toISOString(),

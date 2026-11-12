@@ -29,10 +29,13 @@ updates retry on the next change, reconnection or window focus. There is no peri
 dashboard polling. A disconnected Realtime channel displays a warning and catches
 up when it reconnects. Data is kept only in memory, not browser storage.
 
-Events support pickup, table service and car service. Table/car checkout uses a required location number
+Events support pickup, table service, car service and Walk-Up Only. Walk-Up Only events display the truck's
+location and serving times but do not accept online, pickup or QR ordering; customers order at the truck.
+Table/car checkout uses a required location number
 instead of pickup slots, with event QR codes, an outstanding/completed admin queue, and confirmation plus
-completion thank-you emails. Apply SQL upgrade 045 after 044 before using this feature.
-See [table/car ordering setup](docs/STRIPE_SETUP.md#table-and-car-service).
+completion thank-you emails. Apply SQL upgrade 045 after 044 before using table/car ordering and 062 after
+upgrades through 061 before using Walk-Up Only. See
+[table/car ordering setup](docs/STRIPE_SETUP.md#table-and-car-service).
 
 Stock management supports global products with event allocations and event-only
 meal portions, temporary checkout holds, automatic depletion, audited adjustments
